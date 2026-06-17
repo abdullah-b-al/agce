@@ -5,7 +5,24 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     switch (target.result.os.tag) {
-        .windows => {},
+        .windows => {
+            const win32 = b.dependency("win32", .{});
+            const exe = b.addExecutable(.{
+                .name = "agce",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/main_windows.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .imports = &.{
+                        .{ .name = "win32", .module = win32.module("win32") },
+                    },
+                }),
+            });
+
+            b.installArtifact(exe);
+            const check = b.step("check", "Check the compilation");
+            check.dependOn(&exe.step);
+        },
         .linux => {
             const Scanner = @import("wayland").Scanner;
             const scanner = Scanner.create(b, .{});
