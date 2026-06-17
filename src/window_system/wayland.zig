@@ -38,7 +38,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io) !*State {
     return state;
 }
 
-pub fn new_window(state: *State) !void {
+pub fn window_create(state: *State) !void {
     const buffer = try Buffer.init(state.shm, 128, 128);
 
     const surface = try state.compositor.createSurface();

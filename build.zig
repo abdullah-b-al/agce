@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) !void {
             const exe = b.addExecutable(.{
                 .name = "agce",
                 .root_module = b.createModule(.{
-                    .root_source_file = b.path("src/main_windows.zig"),
+                    .root_source_file = b.path("src/main.zig"),
                     .target = target,
                     .optimize = optimize,
                     .imports = &.{
@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) !void {
             const exe = b.addExecutable(.{
                 .name = "agce",
                 .root_module = b.createModule(.{
-                    .root_source_file = b.path("src/main_wayland.zig"),
+                    .root_source_file = b.path("src/main.zig"),
                     .target = target,
                     .optimize = optimize,
                     .imports = &.{

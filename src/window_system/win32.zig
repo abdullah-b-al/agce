@@ -1,9 +1,42 @@
+pub fn init(gpa: std.mem.Allocator, instance: foundation.HINSTANCE, cmd_show: c_int) !State {
+    const wc: win.WNDCLASSA = .{
+        .style = .{},
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .lpszMenuName = null,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpfnWndProc = window_proc,
+        .hInstance = instance,
+        .lpszClassName = "agce",
+    };
+
+    if (win.RegisterClassA(&wc) == 0) {
+        const err = foundation.GetLastError();
+        std.log.err("{}", .{err});
+        return error.FailedToRegisterClass;
+    }
+
+    return .{
+        .gpa = gpa,
+        .instance = instance,
+        .windows = .empty,
+        .class = wc,
+        .cmd_show = cmd_show,
+    };
+}
+
+pub fn deinit(state: *State) void {
+    state.deinit();
+}
+
 fn window_proc(
-    hwnd: win32.foundation.HWND,
+    hwnd: foundation.HWND,
     msg: u32,
-    wparam: win32.foundation.WPARAM,
-    lparam: win32.foundation.LPARAM,
-) callconv(.winapi) win32.foundation.LRESULT {
+    wparam: foundation.WPARAM,
+    lparam: foundation.LPARAM,
+) callconv(.winapi) foundation.LRESULT {
     const long: usize = @intCast(win.GetWindowLongPtrA(hwnd, .P_USERDATA));
 
     // Window has not been created yet. Pass through msg
@@ -43,80 +76,7 @@ fn window_proc(
     return win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
-pub fn wWinMain(
-    instance: win32.foundation.HINSTANCE,
-    _: ?win32.foundation.HINSTANCE,
-    _: win32.foundation.PWSTR,
-    cmd_show: c_int,
-) c_int {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-
-    const wc: win.WNDCLASSA = .{
-        .style = .{},
-        .cbClsExtra = 0,
-        .cbWndExtra = 0,
-        .lpszMenuName = null,
-        .hIcon = null,
-        .hCursor = null,
-        .hbrBackground = null,
-        .lpfnWndProc = window_proc,
-        .hInstance = instance,
-        .lpszClassName = "agce",
-    };
-
-    if (win.RegisterClassA(&wc) == 0) {
-        const err = win32.foundation.GetLastError();
-        std.log.err("{}", .{err});
-        return 1;
-    }
-
-    var state: State = .{
-        .gpa = debug_allocator.allocator(),
-        .instance = instance,
-        .windows = .empty,
-        .class = wc,
-    };
-    defer state.deinit();
-
-    _ = window_create(&state) catch return 1;
-    _ = window_create(&state) catch return 1;
-
-    while (state.windows.items.len != 0) {
-        for (state.windows.items) |*window| {
-            if (!window.shown) {
-                window_show(window, cmd_show);
-            }
-        }
-
-        for (state.windows.items) |*window| {
-            var msg: win.MSG = undefined;
-            while (win.PeekMessageA(&msg, window.handle, 0, 0, .{ .REMOVE = 1 }) != 0) {
-                _ = win.TranslateMessage(&msg);
-                _ = win.DispatchMessageA(&msg);
-            }
-        }
-
-        for (state.windows.items) |*window| {
-            render(window);
-        }
-
-        var i = state.windows.items.len;
-        while (i > 0) {
-            i -= 1;
-            const window = &state.windows.items[i];
-            if (window.exit) {
-                _ = win.CloseWindow(window.handle);
-                window.deinit(state.gpa);
-                _ = state.windows.orderedRemove(i);
-            }
-        }
-    }
-
-    return 0;
-}
-
-fn window_create(state: *State) !Window {
+pub fn window_create(state: *State) !void {
     try state.windows.ensureUnusedCapacity(state.gpa, 1);
     const width = 400;
     const height = 400;
@@ -141,7 +101,7 @@ fn window_create(state: *State) !Window {
         state.instance,
         null,
     ) orelse {
-        const err = win32.foundation.GetLastError();
+        const err = foundation.GetLastError();
         std.log.err("{}", .{err});
         return error.FailedToCreateWindow;
     };
@@ -171,16 +131,15 @@ fn window_create(state: *State) !Window {
     // TODO: Check success
     _ = win.SetWindowLongPtrA(hwnd, .P_USERDATA, ilong);
     state.windows.appendAssumeCapacity(window);
-    return window;
 }
 
-fn window_show(window: *Window, cmd_show: c_int) void {
+pub fn window_show(window: *Window, cmd_show: c_int) void {
     std.debug.assert(!window.shown);
     _ = win.ShowWindow(window.handle, @bitCast(cmd_show));
     window.shown = true;
 }
 
-fn render(window: *Window) void {
+pub fn render(window: *Window) void {
     const hdc = win32.graphics.gdi.GetDC(window.handle);
     // zig fmt: off
         _ = win32.graphics.gdi.StretchDIBits(
@@ -201,8 +160,9 @@ fn render(window: *Window) void {
 pub const State = struct {
     gpa: std.mem.Allocator,
 
-    instance: win32.foundation.HINSTANCE,
+    instance: foundation.HINSTANCE,
     windows: std.ArrayList(Window),
+    cmd_show: c_int,
     class: win.WNDCLASSA,
 
     pub fn deinit(state: *State) void {
@@ -214,7 +174,7 @@ pub const State = struct {
 };
 
 pub const Window = struct {
-    handle: win32.foundation.HWND,
+    handle: foundation.HWND,
     buffer: []u8,
     bitmap_info: win32.graphics.gdi.BITMAPINFO,
     width: i32,
@@ -245,5 +205,6 @@ pub const Window = struct {
 const std = @import("std");
 const Io = std.Io;
 const win32 = @import("win32");
-const win = @import("win32").ui.windows_and_messaging;
+const win = win32.ui.windows_and_messaging;
+const foundation = @import("win32").foundation;
 const kbm = win32.ui.input.keyboard_and_mouse;
