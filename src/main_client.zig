@@ -4,6 +4,7 @@ pub fn main(init: std.process.Init) !void {
     const address = try net.UnixAddress.init(path);
 
     const stream = try address.connect(init.io);
+    defer stream.close(init.io);
 
     const size: protocol.ViewportSize = .{
         .width = 1280,
@@ -11,51 +12,16 @@ pub fn main(init: std.process.Init) !void {
         .bpp = 4,
     };
     const s = size.width * size.height * size.bpp;
-    const first_fd, _ = try create_fd(s);
-    const second_fd, const back_buffer = try create_fd(s);
-
-    const red_row = try init.gpa.alloc(u8, size.width * size.bpp);
-    defer init.gpa.free(red_row);
-    const white_row = try init.gpa.alloc(u8, size.width * size.bpp);
-    defer init.gpa.free(white_row);
-
-    {
-        var i: usize = 0;
-        while (i < red_row.len) : (i += 4) {
-            red_row[i + 0] = 0;
-            red_row[i + 1] = 0;
-            red_row[i + 2] = 0xFF;
-            red_row[i + 3] = 0xFF;
-        }
-    }
-    {
-        var i: usize = 0;
-        while (i < white_row.len) : (i += 4) {
-            white_row[i + 0] = 0xFF;
-            white_row[i + 1] = 0xFF;
-            white_row[i + 2] = 0xFF;
-            white_row[i + 3] = 0xFF;
-        }
-    }
-
-    for (0..size.height) |row| {
-        const red = if (row % 2 == 0) true else false;
-        const i = row * size.width * size.bpp;
-
-        if (red) {
-            std.mem.copyForwards(u8, back_buffer[i..], red_row);
-        } else {
-            std.mem.copyForwards(u8, back_buffer[i..], white_row);
-        }
-    }
+    const front_fd, const front_buffer = try create_fd(s);
+    const back_fd, const back_buffer = try create_fd(s);
 
     try messaging.message_send_viewport_create_with_fds(
         init.gpa,
         stream,
         @enumFromInt(1),
         size,
-        first_fd,
-        second_fd,
+        front_fd,
+        back_fd,
     );
 
     try messaging.message_send_json(
@@ -69,19 +35,48 @@ pub fn main(init: std.process.Init) !void {
         },
     );
 
-    try messaging.message_send_json(
-        init.io,
-        init.gpa,
-        stream,
-        .{
-            .viewport_buffers_swap = .{
-                .viewport_id = @enumFromInt(1),
-            },
-        },
-    );
+    var rand: std.Random.DefaultPrng = .init(0);
+    var random = rand.random();
+    var buffers: Buffers = .{ .back = back_buffer, .front = front_buffer };
+    while (true) {
+        const r: u8 = random.int(u8);
+        const g: u8 = random.int(u8);
+        const b: u8 = random.int(u8);
+        const a: u8 = 0xFF;
 
-    stream.close(init.io);
+        var i: usize = 0;
+        while (i < back_buffer.len) : (i += 4) {
+            buffers.back[i + 0] = @intCast(b); // B
+            buffers.back[i + 1] = @intCast(g); // G
+            buffers.back[i + 2] = @intCast(r); // R
+            buffers.back[i + 3] = @intCast(a); // A
+        }
+
+        std.log.info("Sent {x} {x} {x} {x}\n", .{ r, g, b, a });
+        try messaging.message_send_json(
+            init.io,
+            init.gpa,
+            stream,
+            .{
+                .viewport_buffers_swap = .{
+                    .viewport_id = @enumFromInt(1),
+                },
+            },
+        );
+        buffers.swap();
+
+        try init.io.sleep(.fromSeconds(1), .awake);
+    }
 }
+
+const Buffers = struct {
+    front: []u8,
+    back: []u8,
+
+    fn swap(b: *Buffers) void {
+        std.mem.swap([]u8, &b.front, &b.back);
+    }
+};
 
 fn create_fd(size: usize) !struct { c_int, []u8 } {
     const fd = try std.posix.memfd_create("agce-buffer", 0);
