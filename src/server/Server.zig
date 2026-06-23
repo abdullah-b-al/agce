@@ -36,9 +36,10 @@ pub fn destroy(server: *Server) void {
 pub fn message_handle(server: *Server, client: *Client, message: protocol.MessageFromClient) !void {
     switch (message) {
         .viewport_create_with_fds => |msg| {
+            const size = msg.size.width * msg.size.height * msg.size.bpp;
             const front_buffer = try std.posix.mmap(
                 null,
-                msg.size,
+                size,
                 .{ .READ = true, .WRITE = false },
                 .{ .TYPE = .SHARED },
                 msg.fds.front,
@@ -48,7 +49,7 @@ pub fn message_handle(server: *Server, client: *Client, message: protocol.Messag
 
             const back_buffer = try std.posix.mmap(
                 null,
-                msg.size,
+                size,
                 .{ .READ = true, .WRITE = false },
                 .{ .TYPE = .SHARED },
                 msg.fds.back,
@@ -66,6 +67,7 @@ pub fn message_handle(server: *Server, client: *Client, message: protocol.Messag
 
                         .back_fd = msg.fds.back,
                         .back_buffer = back_buffer,
+                        .size = msg.size,
                     },
                 },
             });

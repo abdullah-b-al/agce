@@ -58,7 +58,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                         if (!std.meta.eql(win.base.viewport_key, key))
                             continue;
 
-                        wl.window_buffer_copy_from_back_buffer(ws, win) catch |err| switch (err) {
+                        wl.window_buffer_copy_from_front_buffer(ws, win) catch |err| switch (err) {
                             error.ViewportDoesNotExist => unreachable,
                         };
 
@@ -93,7 +93,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                     };
 
                     wl.window_buffer_resize(win, args.width, args.height);
-                    try wl.window_buffer_copy_from_back_buffer(ws, win);
+                    try wl.window_buffer_copy_from_front_buffer(ws, win);
 
                     wl.window_commit(win);
                     wl.dispatch();

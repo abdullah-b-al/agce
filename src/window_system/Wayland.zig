@@ -81,6 +81,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, base: WindowBase) !*Window
     errdefer xdg_surface.destroy();
 
     const xdg_toplevel = try xdg_surface.getToplevel();
+    xdg_toplevel.setAppId("agce-server");
 
     window.* = .{
         .base = base,
@@ -126,34 +127,50 @@ pub fn window_ensure_configured(state: *Wayland, window: *Window) void {
 }
 
 pub fn window_buffer_resize(wl: *Wayland, window: *Window, width: i32, height: i32) void {
-    const old_size = window.buffer.width * window.buffer.height;
-    const new_size = width * height;
+    const old_size = window.buffer.width * window.buffer.height * window.buffer.bpp;
+    const new_size = width * height * window.buffer.bpp;
 
-    if (new_size == old_size) {
-        return;
-    } else if (new_size > old_size) {
+    if (new_size > old_size) {
         const new_buffer = Buffer.init(
             wl.shm,
             width,
             height,
         ) catch return;
-
         window.buffer.deinit();
         window.buffer = new_buffer;
-    } else if (new_size < old_size) {
+    } else if (width != window.buffer.width or height != window.buffer.height) {
         window.buffer.down_size(width, height) catch return;
     }
 }
 
-pub fn window_buffer_copy_from_back_buffer(_: *Wayland, ws: *const WindowSystem, win: *Window) !void {
+pub fn window_buffer_copy_from_front_buffer(_: *Wayland, ws: *const WindowSystem, win: *Window) !void {
     const viewport = ws.viewports.getPtr(win.base.viewport_key) orelse return error.ViewportDoesNotExist;
 
-    const len = @min(win.buffer.data.len, viewport.back_buffer.len);
+    if (viewport.size.bpp != win.buffer.bpp) {
+        @panic("TODO: Support any BPP");
+    }
 
-    std.mem.copyForwards(
-        u8,
+    for (0..@intCast(win.buffer.width * win.buffer.height)) |i| {
+        const pi = i * win.buffer.bpp;
+        win.buffer.data[pi + 0] = 0x00; // B
+        win.buffer.data[pi + 1] = 0x00; // G
+        win.buffer.data[pi + 2] = 0x00; // R
+        win.buffer.data[pi + 3] = 0xFF; // A
+    }
+
+    utils.pixels_copy(
         win.buffer.data,
-        viewport.back_buffer[0..len],
+        .{
+            .width = win.buffer.width,
+            .height = win.buffer.height,
+            .bpp = win.buffer.bpp,
+        },
+        viewport.front_buffer,
+        .{
+            .width = @intCast(viewport.size.width),
+            .height = @intCast(viewport.size.height),
+            .bpp = viewport.size.bpp,
+        },
     );
 }
 
@@ -196,13 +213,15 @@ fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *Wind
         .configure => |configure| {
             if (configure.width == 0 or configure.height == 0) return;
 
-            ws.event_handle(.{
-                .window_resize_by_display_server = .{
-                    .id = window_id,
-                    .width = configure.width,
-                    .height = configure.height,
-                },
-            }) catch return;
+            if (configure.width != window.buffer.width or configure.height != window.buffer.height) {
+                ws.event_handle(.{
+                    .window_resize_by_display_server = .{
+                        .id = window_id,
+                        .width = configure.width,
+                        .height = configure.height,
+                    },
+                }) catch return;
+            }
         },
 
         .close => {
@@ -267,10 +286,12 @@ pub const Buffer = struct {
     memfd: c_int,
     width: i32,
     height: i32,
+    bpp: u8,
     format: cwl.Shm.Format,
 
     pub fn init(shm: *cwl.Shm, width: i32, height: i32) !Buffer {
-        const stride = width * 4;
+        const bpp = 4;
+        const stride = width * bpp;
         const size = stride * height;
 
         const fd = try std.posix.memfd_create("agce-wayland", 0);
@@ -293,6 +314,7 @@ pub const Buffer = struct {
             .memfd = fd,
             .width = width,
             .height = height,
+            .bpp = bpp,
             .data = data,
             .format = format,
         };
@@ -306,13 +328,16 @@ pub const Buffer = struct {
     }
 
     pub fn down_size(buffer: *Buffer, width: i32, height: i32) !void {
-        std.debug.assert(width * height < buffer.width * buffer.height);
+        std.debug.assert(
+            width * height * buffer.bpp <
+                buffer.width * buffer.height * buffer.bpp,
+        );
 
         const new_buffer = try buffer.pool.createBuffer(
             0,
             width,
             height,
-            width * 4,
+            width * buffer.bpp,
             buffer.format,
         );
 
@@ -333,3 +358,4 @@ const WindowSystem = @import("WindowSystem.zig");
 const WindowBase = @import("WindowBase.zig");
 const WindowID = WindowBase.WindowID;
 const log = std.log.scoped(.Wayland);
+const utils = @import("../server/utils.zig");

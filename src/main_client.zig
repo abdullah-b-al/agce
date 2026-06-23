@@ -5,29 +5,47 @@ pub fn main(init: std.process.Init) !void {
 
     const stream = try address.connect(init.io);
 
-    const size = 1280 * 720;
-    const first_fd, const first_buffer = try create_fd(size);
-    const second_fd, const second_buffer = try create_fd(size);
+    const size: protocol.ViewportSize = .{
+        .width = 1280,
+        .height = 720,
+        .bpp = 4,
+    };
+    const s = size.width * size.height * size.bpp;
+    const first_fd, _ = try create_fd(s);
+    const second_fd, const back_buffer = try create_fd(s);
+
+    const red_row = try init.gpa.alloc(u8, size.width * size.bpp);
+    defer init.gpa.free(red_row);
+    const white_row = try init.gpa.alloc(u8, size.width * size.bpp);
+    defer init.gpa.free(white_row);
 
     {
         var i: usize = 0;
-        while (i < first_buffer.len) {
-            defer i += 4;
-            first_buffer[i + 0] = 0xFF;
-            first_buffer[i + 1] = 0xFF;
-            first_buffer[i + 2] = 0xFF;
-            first_buffer[i + 3] = 0xFF;
+        while (i < red_row.len) : (i += 4) {
+            red_row[i + 0] = 0;
+            red_row[i + 1] = 0;
+            red_row[i + 2] = 0xFF;
+            red_row[i + 3] = 0xFF;
+        }
+    }
+    {
+        var i: usize = 0;
+        while (i < white_row.len) : (i += 4) {
+            white_row[i + 0] = 0xFF;
+            white_row[i + 1] = 0xFF;
+            white_row[i + 2] = 0xFF;
+            white_row[i + 3] = 0xFF;
         }
     }
 
-    {
-        var i: usize = 0;
-        while (i < second_buffer.len) {
-            defer i += 4;
-            second_buffer[i + 0] = 0xFF;
-            second_buffer[i + 1] = 0xFF;
-            second_buffer[i + 2] = 0xFF;
-            second_buffer[i + 3] = 0xFF;
+    for (0..size.height) |row| {
+        const red = if (row % 2 == 0) true else false;
+        const i = row * size.width * size.bpp;
+
+        if (red) {
+            std.mem.copyForwards(u8, back_buffer[i..], red_row);
+        } else {
+            std.mem.copyForwards(u8, back_buffer[i..], white_row);
         }
     }
 
@@ -86,5 +104,6 @@ const net = Io.net;
 const constants = @import("constants.zig");
 const utils = @import("server/utils.zig");
 const messaging = @import("server/messaging.zig");
+const protocol = @import("server/protocol.zig");
 const MessageFromClient = messaging.MessageFromClient;
 const c_linux = @import("c_linux");

@@ -82,6 +82,12 @@ pub const ViewportFds = extern struct {
     back: c_int,
 };
 
+pub const ViewportSize = struct {
+    width: u32,
+    height: u32,
+    bpp: u8,
+};
+
 pub const MessageFromClient = union(MessageTag) {
     viewport_create_with_fds: ViewportCreateWithSharedFd,
     viewport_buffers_swap: ViewportBuffersSwap,
@@ -90,7 +96,7 @@ pub const MessageFromClient = union(MessageTag) {
 
     pub const ViewportCreateWithSharedFd = struct {
         id: ViewportID,
-        size: usize,
+        size: ViewportSize,
         fds: ViewportFds,
     };
 };
@@ -103,7 +109,7 @@ pub const MessageToServer = union(MessageTag) {
 
     pub const ViewportCreateWithSharedFd = struct {
         id: ViewportID,
-        size: usize,
+        size: ViewportSize,
     };
 };
 

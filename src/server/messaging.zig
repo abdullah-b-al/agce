@@ -43,7 +43,7 @@ pub fn message_send_viewport_create_with_fds(
     gpa: std.mem.Allocator,
     stream: net.Stream,
     id: protocol.ViewportID,
-    size: usize,
+    size: protocol.ViewportSize,
     front_fd: c_int,
     back_fd: c_int,
 ) !void {
