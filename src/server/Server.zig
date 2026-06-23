@@ -33,7 +33,7 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn message_handle(server: *Server, client: *Client, message: protocol.MessageFromClient) !void {
+pub fn window_system_event_from_message(_: *Server, client: *Client, message: protocol.MessageFromClient) !event.Event {
     switch (message) {
         .viewport_create_with_fds => |msg| {
             const size = msg.size.width * msg.size.height * msg.size.bpp;
@@ -57,7 +57,7 @@ pub fn message_handle(server: *Server, client: *Client, message: protocol.Messag
             );
             errdefer std.posix.munmap(back_buffer);
 
-            server.ws_event_queue.put(.{
+            return .{
                 .viewport_create_with_fds = .{
                     .client_id = client.id,
                     .viewport_id = msg.id,
@@ -70,25 +70,25 @@ pub fn message_handle(server: *Server, client: *Client, message: protocol.Messag
                         .size = msg.size,
                     },
                 },
-            });
+            };
         },
 
         .viewport_buffers_swap => |msg| {
-            server.ws_event_queue.put(.{
+            return .{
                 .viewport_buffers_swap = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
                 },
-            });
+            };
         },
 
         .window_create => |msg| {
-            server.ws_event_queue.put(.{
+            return .{
                 .window_create = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
                 },
-            });
+            };
         },
     }
 }
@@ -103,3 +103,4 @@ const utils = @import("utils.zig");
 const Clients = @import("Clients.zig");
 const Client = @import("Client.zig");
 const event = @import("../window_system/event.zig");
+const log = std.log.scoped(.Server);

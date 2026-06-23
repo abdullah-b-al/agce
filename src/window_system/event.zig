@@ -12,7 +12,42 @@ pub const Event = union(enum) {
         width: i32,
         height: i32,
     },
-    wayland_dispatch,
+    wayland_dispatch: struct {
+        result_queue: *EventResultQueue,
+    },
+};
+
+pub const EventResult = union(enum) {
+    wayland_dispatch: bool,
+};
+
+pub const EventResultQueue = struct {
+    io: Io,
+    gpa: std.mem.Allocator,
+    buffer: []EventResult,
+    queue: Io.Queue(EventResult),
+
+    pub fn init(io: Io, gpa: std.mem.Allocator) !EventResultQueue {
+        const buffer = try gpa.alloc(EventResult, 1024);
+        return .{
+            .io = io,
+            .gpa = gpa,
+            .buffer = buffer,
+            .queue = .init(buffer),
+        };
+    }
+
+    pub fn put(queue: *EventResultQueue, event: EventResult) void {
+        queue.queue.putOneUncancelable(queue.io, event) catch |err| switch (err) {
+            error.Closed => unreachable,
+        };
+    }
+
+    pub fn get(queue: *EventResultQueue) EventResult {
+        return queue.queue.getOneUncancelable(queue.io) catch |err| switch (err) {
+            error.Closed => unreachable,
+        };
+    }
 };
 
 pub const EventQueue = struct {
@@ -33,6 +68,12 @@ pub const EventQueue = struct {
 
     pub fn put(queue: *EventQueue, event: Event) void {
         queue.queue.putOneUncancelable(queue.io, event) catch |err| switch (err) {
+            error.Closed => unreachable,
+        };
+    }
+
+    pub fn get(queue: *EventQueue) Event {
+        return queue.queue.getOneUncancelable(queue.io) catch |err| switch (err) {
             error.Closed => unreachable,
         };
     }

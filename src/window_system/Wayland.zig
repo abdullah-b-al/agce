@@ -101,6 +101,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, base: WindowBase) !*Window
 }
 
 pub fn window_commit(_: *Wayland, win: *Window) void {
+    win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
     win.surface.attach(win.buffer.buffer, 0, 0);
     win.surface.commit();
 }
@@ -117,6 +118,7 @@ pub fn window_ensure_configured(state: *Wayland, window: *Window) void {
         window.surface.commit();
         while (!window.configured) {
             if (state.display.dispatch() != .SUCCESS) {
+                // TODO: Should we break from here ?
                 log.err("Dispatch failed", .{});
             }
         }
@@ -359,3 +361,4 @@ const WindowBase = @import("WindowBase.zig");
 const WindowID = WindowBase.WindowID;
 const log = std.log.scoped(.Wayland);
 const utils = @import("../server/utils.zig");
+const Event = @import("event.zig").Event;

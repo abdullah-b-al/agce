@@ -18,7 +18,10 @@ pub fn main(init: std.process.Init) !void {
 
     try group.concurrent(init.io, main_server, .{server});
     try group.concurrent(init.io, accept_clients, .{server});
-    try group.concurrent(init.io, notify_when_wayland_event_arrives, .{ws});
+    try group.concurrent(init.io, notify_when_wayland_event_arrives, .{
+        ws.event_queue,
+        ws.native.wayland.display.getFd(),
+    });
 
     main_wayland(ws);
 }
@@ -42,21 +45,23 @@ pub fn wWinMain(
     return 0;
 }
 
-fn notify_when_wayland_event_arrives(ws: *WindowSystem) void {
+fn notify_when_wayland_event_arrives(event_queue: *event.EventQueue, fd: c_int) void {
     var polls = [_]std.os.linux.pollfd{
         .{
-            .fd = ws.native.wayland.display.getFd(),
+            .fd = fd,
             .events = std.os.linux.POLL.IN,
             .revents = 0,
         },
     };
 
+    var result = event.EventResultQueue.init(event_queue.io, event_queue.gpa) catch unreachable;
+
     while (true) {
         const poll = std.os.linux.poll(&polls, @intCast(polls.len), -1);
         if (poll > 0) {
-            for (0..poll) |_| {
-                ws.event_queue.queue.putOneUncancelable(ws.io, .wayland_dispatch) catch unreachable;
-            }
+            event_queue.put(.{ .wayland_dispatch = .{ .result_queue = &result } });
+            // Wait for the main thread to finish processing the compositers events
+            _ = result.get();
         }
     }
 }
@@ -64,8 +69,10 @@ fn notify_when_wayland_event_arrives(ws: *WindowSystem) void {
 fn main_wayland(ws: *WindowSystem) void {
     const wl = ws.native.wayland;
     while (true) {
-        const e = ws.event_queue.queue.getOneUncancelable(ws.io) catch unreachable;
-        ws.event_handle(e) catch {};
+        const e = ws.event_queue.get();
+        ws.event_handle(e) catch |err| {
+            log.err("event_handle {}", .{err});
+        };
 
         var i: usize = wl.windows.count();
         while (i > 0) {
@@ -156,6 +163,7 @@ fn main_server(server: *Server) void {
                     error.HeaderInvalidMessageTag,
                     error.ConnectionClosed,
                     => {
+                        log.err("{} closing client\n", .{err});
                         client.stream.close(io);
                         _ = server.clients.map.orderedRemove(id);
                         continue;
@@ -167,9 +175,12 @@ fn main_server(server: *Server) void {
                 };
 
             if (maybe_message) |message| {
-                server.message_handle(client, message) catch |err| {
-                    std.log.err("{}", .{err});
-                };
+                if (server.window_system_event_from_message(client, message)) |e| {
+                    server.ws_event_queue.put(e);
+                    log.debug("Server dispatched event {}", .{e});
+                } else |err| {
+                    log.err("{}", .{err});
+                }
             }
         }
     }

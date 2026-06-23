@@ -65,7 +65,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                         wl.window_commit(win);
                     }
 
-                    wl.dispatch();
+                    _ = wl.display.flush();
                 },
                 .win32 => @panic("TODO"),
             }
@@ -96,16 +96,20 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                     try wl.window_buffer_copy_from_front_buffer(ws, win);
 
                     wl.window_commit(win);
-                    wl.dispatch();
+                    _ = wl.display.flush();
                     // TODO: Inform the client of the resize
 
                 },
                 .win32 => @panic("TODO"),
             }
         },
-        .wayland_dispatch => {
+        .wayland_dispatch => |dis| {
             switch (ws.native) {
-                .wayland => |wl| _ = wl.display.dispatch(),
+                .wayland => |wl| {
+                    _ = wl.display.dispatch();
+
+                    dis.result_queue.put(.{ .wayland_dispatch = true });
+                },
                 else => {},
             }
         },
