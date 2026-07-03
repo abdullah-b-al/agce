@@ -17,6 +17,7 @@ pub fn create(io: Io, environ: *const std.process.Environ.Map, gpa: std.mem.Allo
         error.NameTooLong => unreachable,
     };
     const net_server = try address.listen(io, .{});
+    log.info("Created server on {s}", .{address.path});
 
     server.* = .{
         .server = net_server,
@@ -36,6 +37,10 @@ pub fn destroy(server: *Server) void {
 pub fn window_system_event_from_message(_: *Server, client: *Client, message: protocol.MessageFromClient) !event.Event {
     switch (message) {
         .viewport_create_with_fds => |msg| {
+            if (os_tag != .linux) {
+                return error.UnsupportedMessageOnOs;
+            }
+
             const size = msg.size.width * msg.size.height * msg.size.bpp;
             const front_buffer = try std.posix.mmap(
                 null,
@@ -104,3 +109,4 @@ const Clients = @import("Clients.zig");
 const Client = @import("Client.zig");
 const event = @import("../window_system/event.zig");
 const log = std.log.scoped(.Server);
+const os_tag = @import("builtin").os.tag;

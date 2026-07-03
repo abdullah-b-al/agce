@@ -1,4 +1,13 @@
-pub fn init(gpa: std.mem.Allocator, instance: foundation.HINSTANCE, cmd_show: c_int) !State {
+const Win32 = @This();
+
+gpa: std.mem.Allocator,
+
+instance: foundation.HINSTANCE,
+windows: std.ArrayList(Window),
+cmd_show: c_int,
+class: win.WNDCLASSA,
+
+pub fn init(gpa: std.mem.Allocator, instance: foundation.HINSTANCE, cmd_show: c_int) !Win32 {
     const wc: win.WNDCLASSA = .{
         .style = .{},
         .cbClsExtra = 0,
@@ -27,8 +36,11 @@ pub fn init(gpa: std.mem.Allocator, instance: foundation.HINSTANCE, cmd_show: c_
     };
 }
 
-pub fn deinit(state: *State) void {
-    state.deinit();
+pub fn deinit(state: *Win32) void {
+    for (state.windows.items) |*window| {
+        window.deinit(state.gpa);
+    }
+    state.windows.deinit(state.gpa);
 }
 
 fn window_proc(
@@ -44,7 +56,7 @@ fn window_proc(
         return win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
-    const state: *State = @ptrFromInt(long);
+    const state: *Win32 = @ptrFromInt(long);
     const window = blk: {
         for (state.windows.items) |*window| {
             if (window.handle == hwnd) break :blk window;
@@ -76,7 +88,7 @@ fn window_proc(
     return win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
-pub fn window_create(state: *State) !void {
+pub fn window_create(state: *Win32) !void {
     try state.windows.ensureUnusedCapacity(state.gpa, 1);
     const width = 400;
     const height = 400;
@@ -133,13 +145,13 @@ pub fn window_create(state: *State) !void {
     state.windows.appendAssumeCapacity(window);
 }
 
-pub fn window_show(window: *Window, cmd_show: c_int) void {
+pub fn window_show(_: *Win32, window: *Window, cmd_show: c_int) void {
     std.debug.assert(!window.shown);
     _ = win.ShowWindow(window.handle, @bitCast(cmd_show));
     window.shown = true;
 }
 
-pub fn render(window: *Window) void {
+pub fn render(_: *Win32, window: *Window) void {
     const hdc = win32.graphics.gdi.GetDC(window.handle);
     // zig fmt: off
         _ = win32.graphics.gdi.StretchDIBits(
@@ -156,22 +168,6 @@ pub fn render(window: *Window) void {
 
     _ = win32.graphics.gdi.ReleaseDC(window.handle, hdc);
 }
-
-pub const State = struct {
-    gpa: std.mem.Allocator,
-
-    instance: foundation.HINSTANCE,
-    windows: std.ArrayList(Window),
-    cmd_show: c_int,
-    class: win.WNDCLASSA,
-
-    pub fn deinit(state: *State) void {
-        for (state.windows.items) |*window| {
-            window.deinit(state.gpa);
-        }
-        state.windows.deinit(state.gpa);
-    }
-};
 
 pub const Window = struct {
     handle: foundation.HWND,
@@ -201,6 +197,8 @@ pub const Window = struct {
         window.bitmap_info.bmiHeader.biHeight = -height;
     }
 };
+
+pub const HINSTANCE = foundation.HINSTANCE;
 
 const std = @import("std");
 const Io = std.Io;

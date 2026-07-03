@@ -77,16 +77,15 @@ pub fn parse_message_header(data: []const u8) !MessageHeader {
     return header;
 }
 
-pub fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader) !MessageFromClient {
+pub fn read_and_parse_data_json_linux(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader, receive_buf: []u8) !MessageFromClient {
     std.debug.assert(header.format == .json);
-
-    const buf = try arena.alloc(u8, header.len);
+    std.debug.assert(receive_buf.len == header.len);
 
     switch (header.message_tag) {
         .viewport_create_with_fds => {
             const result = try recv_fds_peek(stream.socket.handle);
 
-            const msg = try stream.socket.receive(io, buf);
+            const msg = try stream.socket.receive(io, receive_buf);
             const data = msg.data[@sizeOf(MessageHeader)..];
 
             const parsed = try std.json.parseFromSliceLeaky(MessageToServer, arena, data, .{
@@ -107,17 +106,29 @@ pub fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.St
             };
         },
         else => {
-            const msg = try stream.socket.receive(io, buf);
-            const data = msg.data[@sizeOf(MessageHeader)..];
-            const parsed = try std.json.parseFromSliceLeaky(MessageFromClient, arena, data, .{
-                .allocate = .alloc_if_needed,
-            });
-            if (parsed != header.message_tag) {
-                return error.MessageTagFromHeaderDoesNotMatchData;
-            }
-            return parsed;
+            return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
         },
     }
+}
+
+pub fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader, receive_buf: []u8) !MessageFromClient {
+    std.debug.assert(header.format == .json);
+    std.debug.assert(receive_buf.len == header.len);
+
+    switch (header.message_tag) {
+        .viewport_create_with_fds => return error.UnsupportedMessageOnOs,
+        else => {},
+    }
+
+    const msg = try stream.socket.receive(io, receive_buf);
+    const data = msg.data[@sizeOf(MessageHeader)..];
+    const parsed = try std.json.parseFromSliceLeaky(MessageFromClient, arena, data, .{
+        .allocate = .alloc_if_needed,
+    });
+    if (parsed != header.message_tag) {
+        return error.MessageTagFromHeaderDoesNotMatchData;
+    }
+    return parsed;
 }
 
 pub fn send_fds(socket: c_int, fds: protocol.ViewportFds, data_to_send: []const u8) isize {
@@ -217,11 +228,21 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
 
     const header = try parse_message_header(peek.data);
 
-    const message = switch (header.format) {
-        .json => try read_and_parse_data_json(io, arena, stream, header),
-    };
-
-    return message;
+    const message_buf = try arena.alloc(u8, header.len);
+    switch (header.format) {
+        .json => {
+            return switch (os_tag) {
+                .linux => {
+                    const message = try read_and_parse_data_json_linux(io, arena, stream, header, message_buf);
+                    return message;
+                },
+                else => {
+                    const message = try read_and_parse_data_json(io, arena, stream, header, message_buf);
+                    return message;
+                },
+            };
+        },
+    }
 }
 
 const std = @import("std");
@@ -230,6 +251,7 @@ const net = Io.net;
 const constants = @import("../constants.zig");
 const c_linux = @import("c_linux");
 const protocol = @import("protocol.zig");
+const os_tag = @import("builtin").os.tag;
 const Message = protocol.Message;
 const MessageTag = protocol.MessageTag;
 const MessageHeader = protocol.MessageHeader;

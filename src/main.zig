@@ -1,29 +1,47 @@
-pub fn main(init: std.process.Init) !void {
-    if (@import("builtin").os.tag != .linux) {
-        @compileError("Unsupported OS");
-    }
-
-    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa);
-
+fn main_common(
+    io: Io,
+    gpa: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    ws: *WindowSystem,
+) !void {
     var group: Io.Group = .init;
-    const server = Server.create(init.io, init.environ_map, init.gpa, ws.event_queue) catch |err| switch (err) {
+    const server = Server.create(io, environ_map, gpa, ws.event_queue) catch |err| switch (err) {
         else => {
             var path_buf: [constants.socket_max_path]u8 = undefined;
-            const path = utils.unix_address_path(init.environ_map, &path_buf);
+            const path = utils.unix_address_path(environ_map, &path_buf);
             log.err("{}: {s}", .{ err, path });
             return err;
         },
     };
     defer server.destroy();
 
-    try group.concurrent(init.io, main_server, .{server});
-    try group.concurrent(init.io, accept_clients, .{server});
-    try group.concurrent(init.io, notify_when_wayland_event_arrives, .{
-        ws.event_queue,
-        ws.native.wayland.display.getFd(),
-    });
+    try group.concurrent(io, main_server, .{server});
+    try group.concurrent(io, accept_clients, .{server});
 
-    main_wayland(ws);
+    switch (ws.native) {
+        .wayland => {
+            if (os_tag == .linux) {
+                try group.concurrent(io, notify_when_wayland_event_arrives, .{
+                    ws.event_queue,
+                    ws.native.wayland.display.getFd(),
+                });
+
+                main_wayland(ws);
+            }
+        },
+        .win32 => {
+            try group.await(io);
+        },
+    }
+}
+
+pub fn main(init: std.process.Init) !void {
+    if (@import("builtin").os.tag != .linux) {
+        @compileError("Unsupported OS");
+    }
+
+    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa);
+    try main_common(init.io, init.gpa, init.environ_map, ws);
 }
 
 pub fn wWinMain(
@@ -33,14 +51,23 @@ pub fn wWinMain(
     cmd_show: c_int,
 ) c_int {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
+    // defer _ = debug_allocator.deinit();
+    const gpa = debug_allocator.allocator();
 
-    var state = win32.init(debug_allocator.allocator(), instance, cmd_show) catch return 1;
-    defer win32.deinit(&state);
+    var threaded: Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
 
-    var threaded = std.Io.Threaded.init(debug_allocator.allocator(), .{});
-    defer threaded.deinit();
-    main_win32(&state) catch return 1;
+    const environ = threaded.environ.process_environ;
+    var environ_map = std.process.Environ.createMap(environ, gpa) catch return 1;
+    defer environ_map.deinit();
+
+    const ws: *WindowSystem = WindowSystem.init_win32(io, gpa, instance, cmd_show) catch |err| {
+        log.err("{}", .{err});
+        return 1;
+    };
+    defer ws.native.win32.deinit();
+
+    main_common(io, gpa, &environ_map, ws) catch return 1;
 
     return 0;
 }
@@ -87,15 +114,17 @@ fn main_wayland(ws: *WindowSystem) void {
     }
 }
 
-fn main_win32(state: *win32.State) !void {
-    while (state.windows.items.len != 0) {
-        for (state.windows.items) |*window| {
+fn main_win32(ws: *WindowSystem) !void {
+    const win32 = ws.native.win32;
+
+    while (win32.windows.items.len != 0) {
+        for (win32.windows.items) |*window| {
             if (!window.shown) {
-                win32.window_show(window, state.cmd_show);
+                win32.window_show(window, win32.cmd_show);
             }
         }
 
-        for (state.windows.items) |*window| {
+        for (win32.windows.items) |*window| {
             var msg: win32_win.MSG = undefined;
             while (win32_win.PeekMessageA(&msg, window.handle, 0, 0, .{ .REMOVE = 1 }) != 0) {
                 _ = win32_win.TranslateMessage(&msg);
@@ -103,18 +132,18 @@ fn main_win32(state: *win32.State) !void {
             }
         }
 
-        for (state.windows.items) |*window| {
+        for (win32.windows.items) |*window| {
             win32.render(window);
         }
 
-        var i = state.windows.items.len;
+        var i = win32.windows.items.len;
         while (i > 0) {
             i -= 1;
-            const window = &state.windows.items[i];
+            const window = &win32.windows.items[i];
             if (window.exit) {
                 _ = win32_win.CloseWindow(window.handle);
-                window.deinit(state.gpa);
-                _ = state.windows.orderedRemove(i);
+                window.deinit(win32.gpa);
+                _ = win32.windows.orderedRemove(i);
             }
         }
     }
@@ -190,8 +219,8 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const Wayland = @import("window_system/Wayland.zig");
+const Win32 = @import("window_system/Win32.zig");
 const WindowSystem = @import("window_system/WindowSystem.zig");
-const win32 = @import("window_system/win32.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
 const Server = @import("server/Server.zig");
 const constants = @import("constants.zig");
@@ -201,3 +230,4 @@ const Message = messaging.Message;
 const c_linux = @import("c_linux");
 const event = @import("window_system/event.zig");
 const log = std.log.scoped(.main);
+const os_tag = @import("builtin").os.tag;

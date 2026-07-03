@@ -4,13 +4,25 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    if (target.result.os.tag == .windows) {
+        const meets_minimum_version =
+            target.result.os.version_range.windows.isAtLeast(.win10_rs4) orelse false;
+        if (!meets_minimum_version) {
+            return error.UnsupportedWindowsVersion;
+        }
+    }
+
     const check = b.step("check", "Check the compilation");
-    const c_linux = b.addTranslateC(.{
-        .root_source_file = b.path("src/c_linux.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
+    const c_linux =
+        switch (target.result.os.tag) {
+            .linux => b.addTranslateC(.{
+                .root_source_file = b.path("src/c_linux.h"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+            else => null,
+        };
 
     { // client cli
         const exe = b.addExecutable(.{
@@ -20,11 +32,13 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = optimize,
                 .link_libc = true,
-                .imports = &.{
-                    .{ .name = "c_linux", .module = c_linux.createModule() },
-                },
+                .imports = &.{},
             }),
         });
+        if (c_linux) |c| {
+            exe.root_module.addImport("c_linux", c.createModule());
+        }
+
         b.installArtifact(exe);
         check.dependOn(&exe.step);
     }
@@ -68,7 +82,7 @@ pub fn build(b: *std.Build) !void {
                     .optimize = optimize,
                     .imports = &.{
                         .{ .name = "wayland", .module = wayland },
-                        .{ .name = "c_linux", .module = c_linux.createModule() },
+                        .{ .name = "c_linux", .module = c_linux.?.createModule() },
                     },
                 }),
             });

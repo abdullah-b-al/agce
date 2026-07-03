@@ -11,11 +11,31 @@ window_next_id: WindowBase.WindowID,
 native: NativeWindowSystem,
 
 pub fn init_wayland(io: Io, gpa: std.mem.Allocator) !*WindowSystem {
+    const ws: *WindowSystem = try .init_undefined_native(io, gpa);
+
+    const wl: *Wayland = try .init(gpa, io);
+    ws.native = .{ .wayland = wl };
+
+    try wl.set_listeners(ws);
+
+    return ws;
+}
+
+pub fn init_win32(io: Io, gpa: std.mem.Allocator, instance: Win32.HINSTANCE, cmd_show: c_int) !*WindowSystem {
+    const ws: *WindowSystem = try .init_undefined_native(io, gpa);
+
+    const win32 = try gpa.create(Win32);
+    win32.* = try .init(gpa, instance, cmd_show);
+    ws.native = .{ .win32 = win32 };
+
+    return ws;
+}
+
+fn init_undefined_native(io: Io, gpa: std.mem.Allocator) !*WindowSystem {
     const event_queue = try gpa.create(EventQueue);
     errdefer gpa.destroy(event_queue);
     event_queue.* = try .init(io, gpa);
 
-    const wl: *Wayland = try .init(gpa, io);
     const ws = try gpa.create(WindowSystem);
     errdefer gpa.destroy(ws);
     ws.* = .{
@@ -26,10 +46,8 @@ pub fn init_wayland(io: Io, gpa: std.mem.Allocator) !*WindowSystem {
         .viewports = .empty,
         .window_next_id = .first,
 
-        .native = .{ .wayland = wl },
+        .native = undefined,
     };
-
-    try wl.set_listeners(ws);
 
     return ws;
 }
@@ -123,7 +141,7 @@ pub const ViewportKey = struct {
 
 pub const NativeWindowSystem = union(enum) {
     wayland: *Wayland,
-    win32: *win32.State,
+    win32: *Win32,
 };
 
 const std = @import("std");
@@ -134,5 +152,6 @@ const Viewport = @import("Viewport.zig");
 const ClientID = @import("../server/Clients.zig").ClientID;
 const protocol = @import("../server/protocol.zig");
 const Wayland = @import("Wayland.zig");
-const win32 = @import("win32.zig");
+const Win32 = @import("Win32.zig");
 const WindowBase = @import("WindowBase.zig");
+const os_tag = @import("builtin").os.tag;

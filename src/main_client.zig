@@ -1,4 +1,5 @@
 pub fn main(init: std.process.Init) !void {
+    if (true) return;
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(init.environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
