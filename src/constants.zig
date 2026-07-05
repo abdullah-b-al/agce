@@ -5,4 +5,3 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const math = std.math;
-const messaging = @import("server/messaging.zig");

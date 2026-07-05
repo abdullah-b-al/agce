@@ -1,5 +1,9 @@
 pub fn main(init: std.process.Init) !void {
-    if (true) return;
+    if (@import("builtin").os.tag == .windows) {
+        // silence compile errors for now
+        return;
+    }
+
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(init.environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
@@ -7,25 +11,23 @@ pub fn main(init: std.process.Init) !void {
     const stream = try address.connect(init.io);
     defer stream.close(init.io);
 
-    const size: protocol.ViewportSize = .{
-        .width = 1280,
-        .height = 720,
-        .bpp = 4,
+    var viewport: Viewport = try .init(1280, 720);
+    const size: protocol_types.ViewportSize = .{
+        .width = viewport.width,
+        .height = viewport.height,
+        .bpp = viewport.bpp,
     };
-    const s = size.width * size.height * size.bpp;
-    const front_fd, const front_buffer = try create_fd(s);
-    const back_fd, const back_buffer = try create_fd(s);
 
-    try messaging.message_send_viewport_create_with_fds(
+    try client_to_server.message_send_viewport_create_with_fds(
         init.gpa,
         stream,
         @enumFromInt(1),
         size,
-        front_fd,
-        back_fd,
+        viewport.front_fd,
+        viewport.back_fd,
     );
 
-    try messaging.message_send_json(
+    try client_to_server.message_send_json(
         init.io,
         init.gpa,
         stream,
@@ -38,7 +40,6 @@ pub fn main(init: std.process.Init) !void {
 
     var rand: std.Random.DefaultPrng = .init(0);
     var random = rand.random();
-    var buffers: Buffers = .{ .back = back_buffer, .front = front_buffer };
     while (true) {
         const r: u8 = random.int(u8);
         const g: u8 = random.int(u8);
@@ -46,15 +47,15 @@ pub fn main(init: std.process.Init) !void {
         const a: u8 = 0xFF;
 
         var i: usize = 0;
-        while (i < back_buffer.len) : (i += 4) {
-            buffers.back[i + 0] = @intCast(b); // B
-            buffers.back[i + 1] = @intCast(g); // G
-            buffers.back[i + 2] = @intCast(r); // R
-            buffers.back[i + 3] = @intCast(a); // A
+        while (i < viewport.back_buffer.len) : (i += 4) {
+            viewport.back_buffer[i + 0] = @intCast(b); // B
+            viewport.back_buffer[i + 1] = @intCast(g); // G
+            viewport.back_buffer[i + 2] = @intCast(r); // R
+            viewport.back_buffer[i + 3] = @intCast(a); // A
         }
 
-        std.log.info("Sent {x} {x} {x} {x}\n", .{ r, g, b, a });
-        try messaging.message_send_json(
+        std.log.info("Sent {x} {x} {x} {x}", .{ r, g, b, a });
+        try client_to_server.message_send_json(
             init.io,
             init.gpa,
             stream,
@@ -64,18 +65,139 @@ pub fn main(init: std.process.Init) !void {
                 },
             },
         );
-        buffers.swap();
+        viewport.swap();
+
+        const timeout: Io.Timeout =
+            .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
+        try handle_server_message_all(
+            init.gpa,
+            init.io,
+            init.arena.allocator(),
+            stream,
+            timeout,
+            &viewport,
+        );
 
         try init.io.sleep(.fromSeconds(1), .awake);
     }
 }
 
-const Buffers = struct {
-    front: []u8,
-    back: []u8,
+fn handle_server_message_all(
+    gpa: std.mem.Allocator,
+    io: Io,
+    arena: std.mem.Allocator,
+    stream: net.Stream,
+    timeout: Io.Timeout,
+    viewport: *Viewport,
+) !void {
+    while (true) {
+        handle_server_message(
+            gpa,
+            io,
+            arena,
+            stream,
+            timeout,
+            viewport,
+        ) catch |err| switch (err) {
+            error.Timeout => return,
+            else => |e| return e,
+        };
+    }
+}
+fn handle_server_message(
+    gpa: std.mem.Allocator,
+    io: Io,
+    arena: std.mem.Allocator,
+    stream: net.Stream,
+    timeout: Io.Timeout,
+    viewport: *Viewport,
+) !void {
+    const message = try server_to_client.message_receive(
+        io,
+        arena,
+        stream,
+        timeout,
+    ) orelse return error.Timeout;
 
-    fn swap(b: *Buffers) void {
-        std.mem.swap([]u8, &b.front, &b.back);
+    switch (message) {
+        .viewport_resize => |resize| {
+            std.debug.print("got msg {}\n", .{resize});
+
+            const new_size = resize.width * resize.height * viewport.bpp;
+
+            if (new_size <= viewport.back_buffer.len) {
+                viewport.width = resize.width;
+                viewport.height = resize.height;
+
+                try client_to_server.message_send_json(
+                    io,
+                    gpa,
+                    stream,
+                    .{
+                        .viewport_resize = .{
+                            .viewport_id = resize.viewport_id,
+                            .width = resize.width,
+                            .height = resize.height,
+                        },
+                    },
+                );
+            } else {
+                const new_viewport: Viewport = try .init(resize.width, resize.height);
+                viewport.* = new_viewport;
+
+                try client_to_server.message_send_viewport_create_with_fds(
+                    gpa,
+                    stream,
+                    @enumFromInt(1),
+                    .{
+                        .width = viewport.width,
+                        .height = viewport.height,
+                        .bpp = viewport.bpp,
+                    },
+                    viewport.front_fd,
+                    viewport.back_fd,
+                );
+            }
+        },
+    }
+}
+
+const Viewport = struct {
+    width: u32,
+    height: u32,
+    bpp: u8,
+
+    front_fd: c_int,
+    back_fd: c_int,
+    front_buffer: []u8,
+    back_buffer: []u8,
+
+    pub fn init(width: u32, height: u32) !Viewport {
+        const size: protocol_types.ViewportSize = .{
+            .width = width,
+            .height = height,
+            .bpp = 4,
+        };
+        const s = size.width * size.height * size.bpp;
+        const front_fd, const front_buffer = try create_fd(s);
+        const back_fd, const back_buffer = try create_fd(s);
+
+        return .{
+            .width = size.width,
+            .height = size.height,
+            .bpp = size.bpp,
+
+            .front_fd = front_fd,
+            .back_fd = back_fd,
+
+            .front_buffer = front_buffer,
+            .back_buffer = back_buffer,
+        };
+    }
+
+    fn swap(vp: *Viewport) void {
+        std.mem.swap([]u8, &vp.front_buffer, &vp.back_buffer);
+        std.mem.swap(c_int, &vp.front_fd, &vp.back_fd);
     }
 };
 
@@ -99,7 +221,8 @@ const Io = std.Io;
 const net = Io.net;
 const constants = @import("constants.zig");
 const utils = @import("server/utils.zig");
-const messaging = @import("server/messaging.zig");
-const protocol = @import("server/protocol.zig");
-const MessageFromClient = messaging.MessageFromClient;
+const client_to_server = @import("protocol/client_to_server.zig");
+const server_to_client = @import("protocol/server_to_client.zig");
+const common = @import("protocol/common.zig");
+const protocol_types = @import("protocol/types.zig");
 const c_linux = @import("c_linux");

@@ -3,9 +3,10 @@ fn main_common(
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
     ws: *WindowSystem,
+    server_event_queue: *events.ServerQueue,
 ) !void {
     var group: Io.Group = .init;
-    const server = Server.create(io, environ_map, gpa, ws.event_queue) catch |err| switch (err) {
+    const server = Server.create(io, environ_map, gpa, ws.event_queue, server_event_queue) catch |err| switch (err) {
         else => {
             var path_buf: [constants.socket_max_path]u8 = undefined;
             const path = utils.unix_address_path(environ_map, &path_buf);
@@ -15,8 +16,9 @@ fn main_common(
     };
     defer server.destroy();
 
-    try group.concurrent(io, main_server, .{server});
-    try group.concurrent(io, accept_clients, .{server});
+    try group.concurrent(io, server_send, .{server});
+    try group.concurrent(io, server_receive, .{server});
+    try group.concurrent(io, server_accept_clients, .{server});
 
     switch (ws.native) {
         .wayland => {
@@ -40,8 +42,10 @@ pub fn main(init: std.process.Init) !void {
         @compileError("Unsupported OS");
     }
 
-    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa);
-    try main_common(init.io, init.gpa, init.environ_map, ws);
+    const server_event_queue: *events.ServerQueue = try .create(init.io, init.gpa);
+    const ws_event_queue: *events.WindowSystemQueue = try .create(init.io, init.gpa);
+    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa, ws_event_queue, server_event_queue);
+    try main_common(init.io, init.gpa, init.environ_map, ws, server_event_queue);
 }
 
 pub fn wWinMain(
@@ -61,18 +65,27 @@ pub fn wWinMain(
     var environ_map = std.process.Environ.createMap(environ, gpa) catch return 1;
     defer environ_map.deinit();
 
-    const ws: *WindowSystem = WindowSystem.init_win32(io, gpa, instance, cmd_show) catch |err| {
+    const server_event_queue = events.ServerQueue.create(io, gpa) catch return 1;
+    const ws_event_queue = events.WindowSystemQueue.create(io, gpa) catch return 1;
+    const ws: *WindowSystem = WindowSystem.init_win32(
+        io,
+        gpa,
+        instance,
+        cmd_show,
+        ws_event_queue,
+        server_event_queue,
+    ) catch |err| {
         log.err("{}", .{err});
         return 1;
     };
     defer ws.native.win32.deinit();
 
-    main_common(io, gpa, &environ_map, ws) catch return 1;
+    main_common(io, gpa, &environ_map, ws, server_event_queue) catch return 1;
 
     return 0;
 }
 
-fn notify_when_wayland_event_arrives(event_queue: *event.EventQueue, fd: c_int) void {
+fn notify_when_wayland_event_arrives(event_queue: *events.WindowSystemQueue, fd: c_int) void {
     var polls = [_]std.os.linux.pollfd{
         .{
             .fd = fd,
@@ -81,7 +94,7 @@ fn notify_when_wayland_event_arrives(event_queue: *event.EventQueue, fd: c_int) 
         },
     };
 
-    var result = event.EventResultQueue.init(event_queue.io, event_queue.gpa) catch unreachable;
+    var result = events.WindowSystemResultQueue.init(event_queue.io, event_queue.gpa) catch unreachable;
 
     while (true) {
         const poll = std.os.linux.poll(&polls, @intCast(polls.len), -1);
@@ -149,7 +162,7 @@ fn main_win32(ws: *WindowSystem) !void {
     }
 }
 
-fn accept_clients(server: *Server) void {
+fn server_accept_clients(server: *Server) void {
     while (true) {
         // TODO: Better error handling
         server.clients.ensure_unused_capacity(server.io, server.gpa, 1) catch continue;
@@ -162,7 +175,22 @@ fn accept_clients(server: *Server) void {
     }
 }
 
-fn main_server(server: *Server) void {
+fn server_send(server: *Server) void {
+    while (true) {
+        const event = server.event_queue.get();
+
+        switch (event) {
+            .viewport_resize => |e| {
+                const client = server.clients.map.getPtr(e.client_id) orelse continue;
+                client.event_handle(server, event) catch |err| {
+                    log.err("{}", .{err});
+                };
+            },
+        }
+    }
+}
+
+fn server_receive(server: *Server) void {
     const io = server.io;
 
     var arena_instance: std.heap.ArenaAllocator = .init(server.gpa);
@@ -186,7 +214,7 @@ fn main_server(server: *Server) void {
             const timeout: Io.Timeout =
                 .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } };
 
-            const maybe_message = messaging.message_receive(io, arena, client.stream, timeout) catch |err|
+            const maybe_message = client_to_server.message_receive(io, arena, client, timeout) catch |err|
                 switch (err) {
                     error.HeaderInvalidFormat,
                     error.HeaderInvalidMessageTag,
@@ -225,9 +253,9 @@ const win32_win = @import("win32").ui.windows_and_messaging;
 const Server = @import("server/Server.zig");
 const constants = @import("constants.zig");
 const utils = @import("server/utils.zig");
-const messaging = @import("server/messaging.zig");
-const Message = messaging.Message;
 const c_linux = @import("c_linux");
-const event = @import("window_system/event.zig");
+const client_to_server = @import("protocol/client_to_server.zig");
+const server_to_client = @import("protocol/server_to_client.zig");
 const log = std.log.scoped(.main);
 const os_tag = @import("builtin").os.tag;
+const events = @import("events.zig");

@@ -5,9 +5,16 @@ gpa: std.mem.Allocator,
 io: Io,
 
 clients: Clients,
-ws_event_queue: *event.EventQueue,
+ws_event_queue: *events.WindowSystemQueue,
+event_queue: *events.ServerQueue,
 
-pub fn create(io: Io, environ: *const std.process.Environ.Map, gpa: std.mem.Allocator, ws_event_queue: *event.EventQueue) !*Server {
+pub fn create(
+    io: Io,
+    environ: *const std.process.Environ.Map,
+    gpa: std.mem.Allocator,
+    ws_event_queue: *events.WindowSystemQueue,
+    event_queue: *events.ServerQueue,
+) !*Server {
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
 
@@ -25,6 +32,7 @@ pub fn create(io: Io, environ: *const std.process.Environ.Map, gpa: std.mem.Allo
         .io = io,
         .clients = .init,
         .ws_event_queue = ws_event_queue,
+        .event_queue = event_queue,
     };
     return server;
 }
@@ -34,46 +42,19 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn window_system_event_from_message(_: *Server, client: *Client, message: protocol.MessageFromClient) !event.Event {
+pub fn window_system_event_from_message(_: *Server, client: *Client, message: MessageFromClient) !events.WindowSystem {
     switch (message) {
         .viewport_create_with_fds => |msg| {
             if (os_tag != .linux) {
                 return error.UnsupportedMessageOnOs;
             }
 
-            const size = msg.size.width * msg.size.height * msg.size.bpp;
-            const front_buffer = try std.posix.mmap(
-                null,
-                size,
-                .{ .READ = true, .WRITE = false },
-                .{ .TYPE = .SHARED },
-                msg.fds.front,
-                0,
-            );
-            errdefer std.posix.munmap(front_buffer);
-
-            const back_buffer = try std.posix.mmap(
-                null,
-                size,
-                .{ .READ = true, .WRITE = false },
-                .{ .TYPE = .SHARED },
-                msg.fds.back,
-                0,
-            );
-            errdefer std.posix.munmap(back_buffer);
-
             return .{
                 .viewport_create_with_fds = .{
                     .client_id = client.id,
                     .viewport_id = msg.id,
-                    .viewport = .{
-                        .front_fd = msg.fds.front,
-                        .front_buffer = front_buffer,
-
-                        .back_fd = msg.fds.back,
-                        .back_buffer = back_buffer,
-                        .size = msg.size,
-                    },
+                    .size = msg.size,
+                    .fds = msg.fds,
                 },
             };
         },
@@ -83,6 +64,14 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, message: pr
                 .viewport_buffers_swap = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
+                },
+            };
+        },
+        .viewport_resize => |msg| {
+            return .{
+                .viewport_resize = .{
+                    .client_id = client.id,
+                    .resize = msg.resize,
                 },
             };
         },
@@ -102,11 +91,12 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const constants = @import("../constants.zig");
-const messaging = @import("messaging.zig");
-const protocol = @import("protocol.zig");
 const utils = @import("utils.zig");
 const Clients = @import("Clients.zig");
 const Client = @import("Client.zig");
-const event = @import("../window_system/event.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
+const events = @import("../events.zig");
+const MessageFromClient = @import("../protocol/client_to_server.zig").MessageFromClient;
+const MessageToServer = @import("../protocol/client_to_server.zig").MessageToServer;
+const Viewport = @import("../window_system/Viewport.zig");
