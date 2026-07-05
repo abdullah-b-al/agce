@@ -42,8 +42,8 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn window_system_event_from_message(_: *Server, client: *Client, message: MessageFromClient) !events.WindowSystem {
-    switch (message) {
+pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !events.WindowSystem {
+    switch (payload) {
         .viewport_create_with_fds => |msg| {
             if (os_tag != .linux) {
                 return error.UnsupportedMessageOnOs;
@@ -71,7 +71,7 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, message: Me
             return .{
                 .viewport_resize = .{
                     .client_id = client.id,
-                    .resize = msg.resize,
+                    .resize = msg,
                 },
             };
         },
@@ -97,6 +97,5 @@ const Client = @import("Client.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
 const events = @import("../events.zig");
-const MessageFromClient = @import("../protocol/client_to_server.zig").MessageFromClient;
-const MessageToServer = @import("../protocol/client_to_server.zig").MessageToServer;
+const MessagePayload = @import("../protocol/client_to_server.zig").MessagePayload;
 const Viewport = @import("../window_system/Viewport.zig");

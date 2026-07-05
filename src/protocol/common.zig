@@ -40,9 +40,6 @@ pub fn read_and_parse_data_json(
     const parsed = try std.json.parseFromSliceLeaky(Message, arena, data, .{
         .allocate = .alloc_if_needed,
     });
-    if (parsed != header.message_tag) {
-        return error.MessageTagFromHeaderDoesNotMatchData;
-    }
     return parsed;
 }
 
@@ -56,6 +53,16 @@ pub fn parse_message_header(comptime Header: type, data: []const u8) !Header {
     const data_header = data[0..len];
     const header: Header = try .parse(data_header);
     return header;
+}
+
+pub fn TypeOfUnionField(comptime U: type, comptime tag: []const u8) type {
+    inline for (@typeInfo(U).@"union".fields) |f| {
+        if (std.mem.eql(u8, tag, f.name)) {
+            return f.type;
+        }
+    }
+
+    unreachable;
 }
 
 const std = @import("std");

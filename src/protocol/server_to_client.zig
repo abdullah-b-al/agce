@@ -16,22 +16,21 @@ pub const Message = struct {
     }
 };
 
-pub const MessageData = union(MessageTag) {
+pub const MessageTag = std.meta.Tag(MessagePayload);
+pub const MessagePayload = union(enum(u32)) {
     viewport_resize: types.ViewportResize,
 };
 
-pub const MessageTag = enum(u32) {
-    viewport_resize,
-};
-
-pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, message: MessageData) !void {
-    const payload = try std.json.Stringify.valueAlloc(gpa, message, .{});
-    defer gpa.free(payload);
+pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {
+    const json = switch (payload) {
+        inline else => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
+    };
+    defer gpa.free(json);
 
     const header: MessageHeader = .{
-        .len = @intCast(@sizeOf(MessageHeader) + payload.len),
+        .len = @intCast(@sizeOf(MessageHeader) + json.len),
         .format = .json,
-        .message_tag = message,
+        .message_tag = payload,
     };
     const header_bytes = std.mem.toBytes(header);
 
@@ -39,23 +38,11 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, mes
     var writer = stream.writer(io, &buf);
 
     try writer.interface.writeAll(&header_bytes);
-    try writer.interface.writeAll(payload);
+    try writer.interface.writeAll(json);
     try writer.interface.flush();
 }
 
-pub fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader, receive_buf: []u8) !MessageData {
-    return try common.read_and_parse_data_json(
-        MessageHeader,
-        MessageData,
-        io,
-        arena,
-        stream,
-        header,
-        receive_buf,
-    );
-}
-
-pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !?MessageData {
+pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !?MessagePayload {
     var buf: [@sizeOf(MessageHeader)]u8 = undefined;
     const peek = common.operation_net_receive_peek(MessageHeader, io, stream, timeout, &buf) catch |err|
         switch (err) {
@@ -74,6 +61,25 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
         .json => {
             const message = try read_and_parse_data_json(io, arena, stream, header, message_buf);
             return message;
+        },
+    }
+}
+
+fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader, receive_buf: []u8) !MessagePayload {
+    switch (header.message_tag) {
+        inline else => |tag| {
+            const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
+            const parsed = try common.read_and_parse_data_json(
+                MessageHeader,
+                T,
+                io,
+                arena,
+                stream,
+                header,
+                receive_buf,
+            );
+
+            return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
     }
 }

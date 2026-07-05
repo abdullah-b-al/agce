@@ -18,13 +18,20 @@ pub fn main(init: std.process.Init) !void {
         .bpp = viewport.bpp,
     };
 
-    try client_to_server.message_send_viewport_create_with_fds(
+    try client_to_server.message_send_json(
+        init.io,
         init.gpa,
         stream,
-        @enumFromInt(1),
-        size,
-        viewport.front_fd,
-        viewport.back_fd,
+        .{
+            .viewport_create_with_fds = .{
+                .id = @enumFromInt(1),
+                .size = size,
+                .fds = .{
+                    .front = viewport.front_fd,
+                    .back = viewport.back_fd,
+                },
+            },
+        },
     );
 
     try client_to_server.message_send_json(
@@ -121,8 +128,6 @@ fn handle_server_message(
 
     switch (message) {
         .viewport_resize => |resize| {
-            std.debug.print("got msg {}\n", .{resize});
-
             const new_size = resize.width * resize.height * viewport.bpp;
 
             if (new_size <= viewport.back_buffer.len) {
@@ -145,17 +150,24 @@ fn handle_server_message(
                 const new_viewport: Viewport = try .init(resize.width, resize.height);
                 viewport.* = new_viewport;
 
-                try client_to_server.message_send_viewport_create_with_fds(
+                try client_to_server.message_send_json(
+                    io,
                     gpa,
                     stream,
-                    @enumFromInt(1),
                     .{
-                        .width = viewport.width,
-                        .height = viewport.height,
-                        .bpp = viewport.bpp,
+                        .viewport_create_with_fds = .{
+                            .id = @enumFromInt(1),
+                            .size = .{
+                                .width = viewport.width,
+                                .height = viewport.height,
+                                .bpp = viewport.bpp,
+                            },
+                            .fds = .{
+                                .front = viewport.front_fd,
+                                .back = viewport.back_fd,
+                            },
+                        },
                     },
-                    viewport.front_fd,
-                    viewport.back_fd,
                 );
             }
         },
