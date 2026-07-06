@@ -6,14 +6,7 @@ fn main_common(
     server_event_queue: *events.ServerQueue,
 ) !void {
     var group: Io.Group = .init;
-    const server = Server.create(io, environ_map, gpa, ws.event_queue, server_event_queue) catch |err| switch (err) {
-        else => {
-            var path_buf: [constants.socket_max_path]u8 = undefined;
-            const path = utils.unix_address_path(environ_map, &path_buf);
-            log.err("{}: {s}", .{ err, path });
-            return err;
-        },
-    };
+    const server = try Server.create(io, environ_map, gpa, ws.event_queue, server_event_queue);
     defer server.destroy();
 
     try group.concurrent(io, server_send, .{server});
@@ -121,7 +114,7 @@ fn main_wayland(ws: *WindowSystem) void {
             if (win.configured and !win.running) {
                 // TODO: Proper deinit
                 win.destroy();
-                _ = wl.windows.orderedRemove(win.base.id);
+                _ = wl.windows.orderedRemove(win.id);
             }
         }
     }

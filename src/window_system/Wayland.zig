@@ -5,6 +5,7 @@ gpa: std.mem.Allocator,
 
 shm: *cwl.Shm,
 compositor: *cwl.Compositor,
+subcompositor: *cwl.Subcompositor,
 wm_base: *xdg.WmBase,
 seat: *cwl.Seat,
 display: *cwl.Display,
@@ -22,6 +23,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
         .compositor = null,
         .wm_base = null,
         .seat = null,
+        .subcompositor = null,
     };
 
     registry.setListener(*MaybeGlobals, registry_listener, &globals);
@@ -31,6 +33,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
     const compositor = globals.compositor orelse return error.NoWlCompositor;
     const wm_base = globals.wm_base orelse return error.NoXdgWmBase;
     const seat = globals.seat orelse return error.NoWlSeat;
+    const subcompositor = globals.subcompositor orelse return error.NoWlSubcompositor;
 
     state.* = .{
         .io = io,
@@ -38,6 +41,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
 
         .shm = shm,
         .compositor = compositor,
+        .subcompositor = subcompositor,
         .wm_base = wm_base,
         .seat = seat,
         .registry = registry,
@@ -65,7 +69,7 @@ pub fn set_listeners(wl: *Wayland, ws: *WindowSystem) !void {
     keyboard.setListener(*WindowSystem, keyboard_listener, ws);
 }
 
-pub fn window_create(wl: *Wayland, ws: *WindowSystem, base: WindowBase) !*Window {
+pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey) !*Window {
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
     const window = try wl.gpa.create(Window);
@@ -83,16 +87,19 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, base: WindowBase) !*Window
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
+    const subsurface = try wl.window_subsurface_create(surface, viewport_key);
+
     window.* = .{
-        .base = base,
+        .id = window_id,
         .surface = surface,
+        .subsurface = subsurface,
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
         .configured = false,
         .running = true,
         .buffer = buffer,
     };
-    wl.windows.putAssumeCapacityNoClobber(base.id, window);
+    wl.windows.putAssumeCapacityNoClobber(window_id, window);
 
     xdg_surface.setListener(*WindowSystem, xdg_surface_listener, ws);
     xdg_toplevel.setListener(*WindowSystem, xdg_toplevel_listener, ws);
@@ -100,7 +107,32 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, base: WindowBase) !*Window
     return window;
 }
 
+pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, viewport_key: ViewportKey) !Subsurface {
+    var buffer = try Buffer.init(wl.shm, 1280, 720);
+    errdefer buffer.deinit();
+
+    const surface = try wl.compositor.createSurface();
+    errdefer surface.destroy();
+
+    const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
+
+    return .{
+        .surface = surface,
+        .subsurface = subsurface,
+        .buffer = buffer,
+        .viewport_key = viewport_key,
+        .damaged = true,
+    };
+}
+
 pub fn window_commit(_: *Wayland, win: *Window) void {
+    if (win.subsurface.damaged) {
+        win.subsurface.surface.damage(0, 0, win.subsurface.buffer.width, win.subsurface.buffer.height);
+        win.subsurface.surface.attach(win.subsurface.buffer.buffer, 0, 0);
+        win.subsurface.surface.commit();
+        win.subsurface.damaged = false;
+    }
+
     win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
     win.surface.attach(win.buffer.buffer, 0, 0);
     win.surface.commit();
@@ -128,9 +160,9 @@ pub fn window_ensure_configured(state: *Wayland, window: *Window) void {
     }
 }
 
-pub fn window_buffer_resize(wl: *Wayland, window: *Window, width: i32, height: i32) void {
-    const old_size = window.buffer.width * window.buffer.height * window.buffer.bpp;
-    const new_size = width * height * window.buffer.bpp;
+pub fn buffer_resize(wl: *Wayland, buffer: *Buffer, width: i32, height: i32) void {
+    const old_size = buffer.width * buffer.height * buffer.bpp;
+    const new_size = width * height * buffer.bpp;
 
     if (new_size > old_size) {
         const new_buffer = Buffer.init(
@@ -138,42 +170,17 @@ pub fn window_buffer_resize(wl: *Wayland, window: *Window, width: i32, height: i
             width,
             height,
         ) catch return;
-        window.buffer.deinit();
-        window.buffer = new_buffer;
-    } else if (width != window.buffer.width or height != window.buffer.height) {
-        window.buffer.down_size(width, height) catch return;
+        buffer.deinit();
+        buffer.* = new_buffer;
+    } else if (width != buffer.width or height != buffer.height) {
+        buffer.down_size(width, height) catch return;
     }
 }
 
-pub fn window_buffer_copy_from_front_buffer(_: *Wayland, ws: *const WindowSystem, win: *Window) !void {
-    const viewport = ws.viewports.getPtr(win.base.viewport_key) orelse return error.ViewportDoesNotExist;
-
-    if (viewport.size.bpp != win.buffer.bpp) {
-        @panic("TODO: Support any BPP");
-    }
-
-    for (0..@intCast(win.buffer.width * win.buffer.height)) |i| {
-        const pi = i * win.buffer.bpp;
-        win.buffer.data[pi + 0] = 0x00; // B
-        win.buffer.data[pi + 1] = 0x00; // G
-        win.buffer.data[pi + 2] = 0x00; // R
-        win.buffer.data[pi + 3] = 0xFF; // A
-    }
-
-    utils.pixels_copy(
-        win.buffer.data,
-        .{
-            .width = win.buffer.width,
-            .height = win.buffer.height,
-            .bpp = win.buffer.bpp,
-        },
-        viewport.front_buffer,
-        .{
-            .width = @intCast(viewport.size.width),
-            .height = @intCast(viewport.size.height),
-            .bpp = viewport.size.bpp,
-        },
-    );
+pub fn subsurface_buffer_copy_from_front_buffer(_: *Wayland, ws: *const WindowSystem, subsurface: *Subsurface) !void {
+    const viewport = ws.viewports.getPtr(subsurface.viewport_key) orelse return error.ViewportDoesNotExist;
+    subsurface.damaged = true;
+    subsurface.buffer.copy_from_front_buffer(viewport);
 }
 
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
@@ -187,6 +194,8 @@ fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals
                 globals.wm_base = registry.bind(global.name, xdg.WmBase, 1) catch return;
             } else if (std.mem.orderZ(u8, global.interface, cwl.Seat.interface.name) == .eq) {
                 globals.seat = registry.bind(global.name, cwl.Seat, 1) catch return;
+            } else if (std.mem.orderZ(u8, global.interface, cwl.Subcompositor.interface.name) == .eq) {
+                globals.subcompositor = registry.bind(global.name, cwl.Subcompositor, 1) catch return;
             }
         },
         .global_remove => {},
@@ -241,7 +250,7 @@ fn keyboard_listener(keyboard: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *Wi
 pub fn window_id_from_toplevel(wl: *const Wayland, tl: *xdg.Toplevel) WindowID {
     const id = tl.getId();
     for (wl.windows.values()) |win| {
-        if (win.xdg_toplevel.getId() == id) return win.base.id;
+        if (win.xdg_toplevel.getId() == id) return win.id;
     }
 
     unreachable;
@@ -250,7 +259,7 @@ pub fn window_id_from_toplevel(wl: *const Wayland, tl: *xdg.Toplevel) WindowID {
 pub fn window_id_from_xdg_surface(wl: *const Wayland, xdg_surface: *xdg.Surface) WindowID {
     const id = xdg_surface.getId();
     for (wl.windows.values()) |win| {
-        if (win.xdg_surface.getId() == id) return win.base.id;
+        if (win.xdg_surface.getId() == id) return win.id;
     }
 
     unreachable;
@@ -261,11 +270,14 @@ pub const MaybeGlobals = struct {
     compositor: ?*cwl.Compositor,
     wm_base: ?*xdg.WmBase,
     seat: ?*cwl.Seat,
+    subcompositor: ?*cwl.Subcompositor,
 };
 
 pub const Window = struct {
-    base: WindowBase,
+    id: WindowID,
     surface: *cwl.Surface,
+    subsurface: Subsurface,
+
     xdg_surface: *xdg.Surface,
     xdg_toplevel: *xdg.Toplevel,
 
@@ -279,6 +291,14 @@ pub const Window = struct {
         window.xdg_surface.destroy();
         window.surface.destroy();
     }
+};
+
+pub const Subsurface = struct {
+    surface: *cwl.Surface,
+    subsurface: *cwl.Subsurface,
+    buffer: Buffer,
+    viewport_key: ViewportKey,
+    damaged: bool,
 };
 
 pub const Buffer = struct {
@@ -348,6 +368,38 @@ pub const Buffer = struct {
         buffer.width = width;
         buffer.height = height;
     }
+
+    pub fn copy_from_front_buffer(buffer: *Buffer, viewport: *Viewport) void {
+        if (viewport.size.bpp != buffer.bpp) {
+            @panic("TODO: Support any BPP");
+        }
+
+        buffer.fill_black();
+
+        utils.pixels_copy(
+            buffer.data,
+            .{
+                .width = buffer.width,
+                .height = buffer.height,
+                .bpp = buffer.bpp,
+            },
+            viewport.front_buffer,
+            .{
+                .width = @intCast(viewport.size.width),
+                .height = @intCast(viewport.size.height),
+                .bpp = viewport.size.bpp,
+            },
+        );
+    }
+    pub fn fill_black(buffer: *Buffer) void {
+        for (0..@intCast(buffer.width * buffer.height)) |i| {
+            const pi = i * buffer.bpp;
+            buffer.data[pi + 0] = 0x00; // B
+            buffer.data[pi + 1] = 0x00; // G
+            buffer.data[pi + 2] = 0x00; // R
+            buffer.data[pi + 3] = 0xFF; // A
+        }
+    }
 };
 
 const std = @import("std");
@@ -356,6 +408,7 @@ const xdg = @import("wayland").client.xdg;
 const ClientID = @import("../server/Clients.zig").ClientID;
 const Viewport = @import("Viewport.zig");
 const WindowSystem = @import("WindowSystem.zig");
+const ViewportKey = WindowSystem.ViewportKey;
 const WindowBase = @import("WindowBase.zig");
 const WindowID = WindowBase.WindowID;
 const log = std.log.scoped(.Wayland);

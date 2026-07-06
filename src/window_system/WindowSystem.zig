@@ -103,10 +103,10 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
             switch (ws.native) {
                 .wayland => |wl| {
                     for (wl.windows.values()) |win| {
-                        if (!std.meta.eql(win.base.viewport_key, key))
+                        if (!std.meta.eql(win.subsurface.viewport_key, key))
                             continue;
 
-                        wl.window_buffer_copy_from_front_buffer(ws, win) catch |err| switch (err) {
+                        wl.subsurface_buffer_copy_from_front_buffer(ws, &win.subsurface) catch |err| switch (err) {
                             error.ViewportDoesNotExist => unreachable,
                         };
 
@@ -139,10 +139,7 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                     const id = ws.window_next_id;
                     ws.window_next_id = @enumFromInt(@intFromEnum(id) + 1);
 
-                    const window = try wl.window_create(ws, .{
-                        .id = id,
-                        .viewport_key = key,
-                    });
+                    const window = try wl.window_create(ws, id, key);
                     wl.window_ensure_configured(window);
                 },
                 .win32 => @panic("TODO"),
@@ -155,20 +152,26 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                         return;
                     };
 
-                    wl.window_buffer_resize(win, args.width, args.height);
-                    try wl.window_buffer_copy_from_front_buffer(ws, win);
+                    wl.buffer_resize(&win.subsurface.buffer, args.width, args.height);
+                    try wl.subsurface_buffer_copy_from_front_buffer(ws, &win.subsurface);
 
+                    wl.buffer_resize(&win.buffer, args.width, args.height);
+                    win.buffer.fill_black();
                     wl.window_commit(win);
                     _ = wl.display.flush();
 
-                    ws.server_event_queue.put(.{ .viewport_resize = .{
-                        .client_id = win.base.viewport_key.client_id,
-                        .resize = .{
-                            .viewport_id = win.base.viewport_key.viewport_id,
-                            .width = @intCast(args.width),
-                            .height = @intCast(args.height),
+                    ws.server_event_queue.put(
+                        .{
+                            .viewport_resize = .{
+                                .client_id = win.subsurface.viewport_key.client_id,
+                                .resize = .{
+                                    .viewport_id = win.subsurface.viewport_key.viewport_id,
+                                    .width = @intCast(args.width),
+                                    .height = @intCast(args.height),
+                                },
+                            },
                         },
-                    } });
+                    );
                 },
                 .win32 => @panic("TODO"),
             }

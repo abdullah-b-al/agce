@@ -23,7 +23,10 @@ pub fn create(
     const address = net.UnixAddress.init(path) catch |err| switch (err) {
         error.NameTooLong => unreachable,
     };
-    const net_server = try address.listen(io, .{});
+    const net_server = address.listen(io, .{}) catch |err| {
+        log.err("Failed to listen to socket {s} {}", .{ path, err });
+        return err;
+    };
     log.info("Created server on {s}", .{address.path});
 
     server.* = .{
