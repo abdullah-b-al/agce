@@ -79,13 +79,13 @@ fn init_undefined_native(
 
 pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
     switch (event) {
-        .viewport_create_with_fds => |e| {
+        .viewport_create_with_fds_cpu => |e| {
             const key: ViewportKey = .{
                 .client_id = e.client_id,
                 .viewport_id = e.viewport_id,
             };
             try ws.viewports.ensureUnusedCapacity(ws.gpa, 1);
-            const viewport: Viewport = try .init(e.size, e.fds.front, e.fds.back);
+            const viewport: Viewport = try .init_cpu(key, e.size, e.fds.front, e.fds.back);
 
             errdefer comptime unreachable;
 
@@ -136,10 +136,11 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
         .window_create => |key| {
             switch (ws.native) {
                 .wayland => |wl| {
+                    const viewport = ws.viewports.get(key) orelse return error.ViewportDoesNotExist;
                     const id = ws.window_next_id;
                     ws.window_next_id = @enumFromInt(@intFromEnum(id) + 1);
 
-                    const window = try wl.window_create(ws, id, key);
+                    const window = try wl.window_create(ws, id, viewport);
                     wl.window_ensure_configured(window);
                 },
                 .win32 => @panic("TODO"),
@@ -152,11 +153,22 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                         return;
                     };
 
-                    wl.buffer_resize(&win.subsurface.buffer, args.width, args.height);
-                    try wl.subsurface_buffer_copy_from_front_buffer(ws, &win.subsurface);
+                    switch (win.subsurface.buffer) {
+                        .cpu => |*buffer| {
+                            buffer.resize(wl, args.width, args.height);
+                            try wl.subsurface_buffer_copy_from_front_buffer(ws, &win.subsurface);
+                        },
+                        .gpu => @panic("TODO"),
+                    }
 
-                    wl.buffer_resize(&win.buffer, args.width, args.height);
-                    win.buffer.fill_black();
+                    switch (win.buffer) {
+                        .cpu => |*buffer| {
+                            buffer.resize(wl, args.width, args.height);
+                            buffer.fill_black();
+                        },
+                        .gpu => @panic("TODO"),
+                    }
+
                     wl.window_commit(win);
                     _ = wl.display.flush();
 

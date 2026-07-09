@@ -1,7 +1,7 @@
 pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystem);
 pub const WindowSystem = union(enum) {
-    viewport_create_with_fds: struct {
+    viewport_create_with_fds_cpu: struct {
         client_id: ClientID,
         viewport_id: ViewportID,
         size: ViewportSize,

@@ -18,7 +18,7 @@ pub const Message = struct {
 
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
-    viewport_create_with_fds: ViewportCreateWithSharedFd,
+    viewport_create_with_fds_cpu: ViewportCreateWithSharedFd,
     viewport_buffers_swap: types.ViewportBuffersSwap,
     viewport_resize: types.ViewportResize,
 
@@ -33,7 +33,7 @@ pub const MessagePayload = union(enum(u32)) {
 
 pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {
     const json = switch (payload) {
-        .viewport_create_with_fds => |original| blk: {
+        .viewport_create_with_fds_cpu => |original| blk: {
             var p = original;
             // The fds that are part of the json are wrong.
             // Set them to 0 to invalidate their use
@@ -52,7 +52,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     };
 
     switch (payload) {
-        .viewport_create_with_fds => |p| {
+        .viewport_create_with_fds_cpu => |p| {
             try message_send_json_with_fds(stream, .{ .header = header, .payload = json }, p.fds);
         },
         else => {
@@ -127,7 +127,7 @@ fn read_and_parse_data_json_linux(
     const stream = client.stream;
 
     switch (header.message_tag) {
-        .viewport_create_with_fds => {
+        .viewport_create_with_fds_cpu => {
             const fds = try recv_fds_peek(stream.socket.handle);
 
             const msg = try stream.socket.receive(io, receive_buf);
@@ -138,7 +138,7 @@ fn read_and_parse_data_json_linux(
             });
 
             return .{
-                .viewport_create_with_fds = .{
+                .viewport_create_with_fds_cpu = .{
                     .fds = fds,
                     .id = parsed.id,
                     .size = parsed.size,
@@ -159,7 +159,7 @@ fn read_and_parse_data_json(
     receive_buf: []u8,
 ) !MessagePayload {
     switch (header.message_tag) {
-        .viewport_create_with_fds => return error.UnsupportedMessageOnOs,
+        .viewport_create_with_fds_cpu => return error.UnsupportedMessageOnOs,
         inline else => |tag| {
             const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

@@ -69,13 +69,13 @@ pub fn set_listeners(wl: *Wayland, ws: *WindowSystem) !void {
     keyboard.setListener(*WindowSystem, keyboard_listener, ws);
 }
 
-pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey) !*Window {
+pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport: Viewport) !*Window {
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
     const window = try wl.gpa.create(Window);
     errdefer wl.gpa.destroy(window);
 
-    var buffer = try Buffer.init(wl.shm, 1280, 720);
+    var buffer = try CpuBuffer.init(wl.shm, 1280, 720);
     errdefer buffer.deinit();
 
     const surface = try wl.compositor.createSurface();
@@ -87,7 +87,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
-    const subsurface = try wl.window_subsurface_create(surface, viewport_key);
+    const subsurface = try wl.window_subsurface_create(surface, viewport);
 
     window.* = .{
         .id = window_id,
@@ -97,7 +97,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
         .xdg_toplevel = xdg_toplevel,
         .configured = false,
         .running = true,
-        .buffer = buffer,
+        .buffer = .{ .cpu = buffer },
     };
     wl.windows.putAssumeCapacityNoClobber(window_id, window);
 
@@ -107,8 +107,8 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
     return window;
 }
 
-pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, viewport_key: ViewportKey) !Subsurface {
-    var buffer = try Buffer.init(wl.shm, 1280, 720);
+pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, viewport: Viewport) !Subsurface {
+    var buffer = try CpuBuffer.init(wl.shm, 1280, 720);
     errdefer buffer.deinit();
 
     const surface = try wl.compositor.createSurface();
@@ -119,22 +119,27 @@ pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, view
     return .{
         .surface = surface,
         .subsurface = subsurface,
-        .buffer = buffer,
-        .viewport_key = viewport_key,
+        .buffer = .{ .cpu = buffer },
+        .viewport_key = viewport.key,
         .damaged = true,
     };
 }
 
 pub fn window_commit(_: *Wayland, win: *Window) void {
     if (win.subsurface.damaged) {
-        win.subsurface.surface.damage(0, 0, win.subsurface.buffer.width, win.subsurface.buffer.height);
-        win.subsurface.surface.attach(win.subsurface.buffer.buffer, 0, 0);
+        win.subsurface.surface.damage(0, 0, win.subsurface.buffer.width(), win.subsurface.buffer.height());
+        win.subsurface.surface.attach(win.subsurface.buffer.wl_buffer(), 0, 0);
         win.subsurface.surface.commit();
         win.subsurface.damaged = false;
     }
 
-    win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
-    win.surface.attach(win.buffer.buffer, 0, 0);
+    switch (win.buffer) {
+        .cpu => |buffer| {
+            win.surface.damage(0, 0, buffer.width, buffer.height);
+            win.surface.attach(buffer.buffer, 0, 0);
+        },
+        else => @panic("TODO"),
+    }
     win.surface.commit();
 }
 
@@ -155,32 +160,26 @@ pub fn window_ensure_configured(state: *Wayland, window: *Window) void {
             }
         }
 
-        window.surface.attach(window.buffer.buffer, 0, 0);
+        switch (window.buffer) {
+            .cpu => |buffer| {
+                window.surface.attach(buffer.buffer, 0, 0);
+            },
+            else => @panic("TODO"),
+        }
         window.surface.commit();
-    }
-}
-
-pub fn buffer_resize(wl: *Wayland, buffer: *Buffer, width: i32, height: i32) void {
-    const old_size = buffer.width * buffer.height * buffer.bpp;
-    const new_size = width * height * buffer.bpp;
-
-    if (new_size > old_size) {
-        const new_buffer = Buffer.init(
-            wl.shm,
-            width,
-            height,
-        ) catch return;
-        buffer.deinit();
-        buffer.* = new_buffer;
-    } else if (width != buffer.width or height != buffer.height) {
-        buffer.down_size(width, height) catch return;
     }
 }
 
 pub fn subsurface_buffer_copy_from_front_buffer(_: *Wayland, ws: *const WindowSystem, subsurface: *Subsurface) !void {
     const viewport = ws.viewports.getPtr(subsurface.viewport_key) orelse return error.ViewportDoesNotExist;
     subsurface.damaged = true;
-    subsurface.buffer.copy_from_front_buffer(viewport);
+
+    switch (subsurface.buffer) {
+        .cpu => |*buffer| {
+            buffer.copy_from_front_buffer(viewport);
+        },
+        .gpu => @panic("TODO"),
+    }
 }
 
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
@@ -224,7 +223,7 @@ fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *Wind
         .configure => |configure| {
             if (configure.width == 0 or configure.height == 0) return;
 
-            if (configure.width != window.buffer.width or configure.height != window.buffer.height) {
+            if (configure.width != window.buffer.width() or configure.height != window.buffer.height()) {
                 ws.event_handle(.{
                     .window_resize_by_display_server = .{
                         .id = window_id,
@@ -301,7 +300,36 @@ pub const Subsurface = struct {
     damaged: bool,
 };
 
-pub const Buffer = struct {
+pub const Buffer = union(enum) {
+    gpu: GpuBuffer,
+    cpu: CpuBuffer,
+
+    pub fn width(buffer: Buffer) i32 {
+        return switch (buffer) {
+            inline else => |v| v.width,
+        };
+    }
+
+    pub fn height(buffer: Buffer) i32 {
+        return switch (buffer) {
+            inline else => |v| v.height,
+        };
+    }
+
+    pub fn wl_buffer(buffer: Buffer) *cwl.Buffer {
+        return switch (buffer) {
+            inline else => |v| v.buffer,
+        };
+    }
+};
+
+pub const GpuBuffer = struct {
+    buffer: *cwl.Buffer,
+    width: i32,
+    height: i32,
+};
+
+pub const CpuBuffer = struct {
     data: []align(std.heap.page_size_min) u8,
     pool: *cwl.ShmPool,
     buffer: *cwl.Buffer,
@@ -311,7 +339,7 @@ pub const Buffer = struct {
     bpp: u8,
     format: cwl.Shm.Format,
 
-    pub fn init(shm: *cwl.Shm, width: i32, height: i32) !Buffer {
+    pub fn init(shm: *cwl.Shm, width: i32, height: i32) !CpuBuffer {
         const bpp = 4;
         const stride = width * bpp;
         const size = stride * height;
@@ -342,14 +370,30 @@ pub const Buffer = struct {
         };
     }
 
-    pub fn deinit(buffer: *Buffer) void {
+    pub fn deinit(buffer: *CpuBuffer) void {
         buffer.buffer.destroy();
         buffer.pool.destroy();
         std.posix.munmap(buffer.data);
         _ = std.os.linux.close(buffer.memfd);
     }
 
-    pub fn down_size(buffer: *Buffer, width: i32, height: i32) !void {
+    pub fn resize(buffer: *CpuBuffer, wl: *Wayland, width: i32, height: i32) void {
+        const old_size = buffer.width * buffer.height * buffer.bpp;
+        const new_size = width * height * buffer.bpp;
+
+        if (new_size > old_size) {
+            const new_buffer = CpuBuffer.init(
+                wl.shm,
+                width,
+                height,
+            ) catch return;
+            buffer.deinit();
+            buffer.* = new_buffer;
+        } else if (width != buffer.width or height != buffer.height) {
+            buffer.down_size(width, height) catch return;
+        }
+    }
+    pub fn down_size(buffer: *CpuBuffer, width: i32, height: i32) !void {
         std.debug.assert(
             width * height * buffer.bpp <
                 buffer.width * buffer.height * buffer.bpp,
@@ -369,7 +413,7 @@ pub const Buffer = struct {
         buffer.height = height;
     }
 
-    pub fn copy_from_front_buffer(buffer: *Buffer, viewport: *Viewport) void {
+    pub fn copy_from_front_buffer(buffer: *CpuBuffer, viewport: *Viewport) void {
         if (viewport.size.bpp != buffer.bpp) {
             @panic("TODO: Support any BPP");
         }
@@ -391,7 +435,7 @@ pub const Buffer = struct {
             },
         );
     }
-    pub fn fill_black(buffer: *Buffer) void {
+    pub fn fill_black(buffer: *CpuBuffer) void {
         for (0..@intCast(buffer.width * buffer.height)) |i| {
             const pi = i * buffer.bpp;
             buffer.data[pi + 0] = 0x00; // B

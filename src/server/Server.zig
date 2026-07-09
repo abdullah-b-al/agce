@@ -47,13 +47,13 @@ pub fn destroy(server: *Server) void {
 
 pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !events.WindowSystem {
     switch (payload) {
-        .viewport_create_with_fds => |msg| {
+        .viewport_create_with_fds_cpu => |msg| {
             if (os_tag != .linux) {
                 return error.UnsupportedMessageOnOs;
             }
 
             return .{
-                .viewport_create_with_fds = .{
+                .viewport_create_with_fds_cpu = .{
                     .client_id = client.id,
                     .viewport_id = msg.id,
                     .size = msg.size,

@@ -23,7 +23,7 @@ pub fn main(init: std.process.Init) !void {
         init.gpa,
         stream,
         .{
-            .viewport_create_with_fds = .{
+            .viewport_create_with_fds_cpu = .{
                 .id = @enumFromInt(1),
                 .size = size,
                 .fds = .{
@@ -155,7 +155,7 @@ fn handle_server_message(
                     gpa,
                     stream,
                     .{
-                        .viewport_create_with_fds = .{
+                        .viewport_create_with_fds_cpu = .{
                             .id = @enumFromInt(1),
                             .size = .{
                                 .width = viewport.width,
