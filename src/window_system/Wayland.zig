@@ -12,6 +12,7 @@ display: *cwl.Display,
 registry: *cwl.Registry,
 
 windows: std.array_hash_map.Auto(WindowID, *Window),
+buffers: BufferCollection,
 
 pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
     const state = try gpa.create(Wayland);
@@ -48,6 +49,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
         .display = display,
 
         .windows = .empty,
+        .buffers = .init,
     };
 
     return state;
@@ -101,7 +103,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
 
     const width: i32 = @intCast(viewport.size.width);
     const height: i32 = @intCast(viewport.size.height);
-    const buffer = try CpuBuffer.init(wl, fd, width, height, bytes_per_pixel);
+    const buffer = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, fd, width, height, bytes_per_pixel, .argb8888);
 
     window.* = .{
         .id = window_id,
@@ -129,28 +131,35 @@ pub fn viewport_overridden(wl: *Wayland, viewport: Viewport) !void {
             continue;
         }
 
-        var buffer_back = try CpuBuffer.init(
-            wl,
+        const format: cwl.Shm.Format = .argb8888;
+        const buffer_back = try wl.buffers.buffer_create_cpu(
+            wl.gpa,
+            wl.shm,
             viewport.back_fd,
             @intCast(viewport.size.width),
             @intCast(viewport.size.height),
             viewport.size.bpp,
+            format,
         );
-        errdefer buffer_back.deinit();
+        errdefer wl.buffers.buffer_destroy(buffer_back.buffer_id);
 
-        var buffer_front = try CpuBuffer.init(
-            wl,
+        const buffer_front = try wl.buffers.buffer_create_cpu(
+            wl.gpa,
+            wl.shm,
             viewport.front_fd,
             @intCast(viewport.size.width),
             @intCast(viewport.size.height),
             viewport.size.bpp,
+            format,
         );
-        errdefer buffer_front.deinit();
+        errdefer wl.buffers.buffer_destroy(buffer_front.buffer_id);
 
         switch (win.subsurface.buffer.front) {
             .cpu => {
-                win.subsurface.buffer.front.cpu.deinit();
-                win.subsurface.buffer.back.cpu.deinit();
+                const old_front = win.subsurface.buffer.front.cpu;
+                const old_back = win.subsurface.buffer.back.cpu;
+                wl.buffers.buffer_destroy(old_front.buffer_id);
+                wl.buffers.buffer_destroy(old_back.buffer_id);
             },
             .gpu => @panic("TODO"),
         }
@@ -163,23 +172,28 @@ pub fn viewport_overridden(wl: *Wayland, viewport: Viewport) !void {
 }
 
 pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, viewport: Viewport) !Subsurface {
-    var buffer_back = try CpuBuffer.init(
-        wl,
+    const format: cwl.Shm.Format = .argb8888;
+    const buffer_back = try wl.buffers.buffer_create_cpu(
+        wl.gpa,
+        wl.shm,
         viewport.back_fd,
         @intCast(viewport.size.width),
         @intCast(viewport.size.height),
         viewport.size.bpp,
+        format,
     );
-    errdefer buffer_back.deinit();
+    errdefer wl.buffers.buffer_destroy(buffer_back.buffer_id);
 
-    var buffer_front = try CpuBuffer.init(
-        wl,
+    const buffer_front = try wl.buffers.buffer_create_cpu(
+        wl.gpa,
+        wl.shm,
         viewport.front_fd,
         @intCast(viewport.size.width),
         @intCast(viewport.size.height),
         viewport.size.bpp,
+        format,
     );
-    errdefer buffer_front.deinit();
+    errdefer wl.buffers.buffer_destroy(buffer_front.buffer_id);
 
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
@@ -199,17 +213,18 @@ pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, view
     };
 }
 
-pub fn window_commit(_: *Wayland, win: *Window) void {
+pub fn window_commit(wl: *Wayland, win: *Window) void {
     if (win.subsurface.damaged) {
+        const wl_buffer = wl.buffers.buffers.get(win.subsurface.buffer.id());
         win.subsurface.surface.damage(0, 0, win.subsurface.buffer.width(), win.subsurface.buffer.height());
-        win.subsurface.surface.attach(win.subsurface.buffer.wl_buffer(), 0, 0);
+        win.subsurface.surface.attach(wl_buffer, 0, 0);
         win.subsurface.surface.commit();
         win.subsurface.damaged = false;
     }
 
+    const wl_buffer = wl.buffers.buffers.get(win.buffer.buffer_id).?;
     win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
-    win.surface.attach(win.buffer.buffer, 0, 0);
-
+    win.surface.attach(wl_buffer, 0, 0);
     win.surface.commit();
 }
 
@@ -220,18 +235,19 @@ pub fn dispatch(wl: *Wayland) void {
     }
 }
 
-pub fn window_ensure_configured(state: *Wayland, window: *Window) void {
-    if (!window.configured) {
-        window.surface.commit();
-        while (!window.configured) {
-            if (state.display.dispatch() != .SUCCESS) {
+pub fn window_ensure_configured(wl: *Wayland, win: *Window) void {
+    if (!win.configured) {
+        win.surface.commit();
+        while (!win.configured) {
+            if (wl.display.dispatch() != .SUCCESS) {
                 // TODO: Should we break from here ?
                 log.err("Dispatch failed", .{});
             }
         }
 
-        window.surface.attach(window.buffer.buffer, 0, 0);
-        window.surface.commit();
+        const wl_buffer = wl.buffers.buffers.get(win.buffer.buffer_id).?;
+        win.surface.attach(wl_buffer, 0, 0);
+        win.surface.commit();
     }
 }
 
@@ -369,7 +385,7 @@ pub const Window = struct {
         const new_size = width * height * win.buffer.bytes_per_pixel;
         const old_size = win.buffer.width * win.buffer.height * win.buffer.bytes_per_pixel;
         if (new_size < old_size) {
-            try win.buffer.down_size(width, height);
+            try wl.buffers.buffer_down_size_cpu(win.buffer.buffer_id, width, height, win.buffer.bytes_per_pixel, win.buffer.format);
         } else {
             const fd = try std.posix.memfd_create("agce-wayland", 0);
             if (std.posix.errno(std.posix.system.ftruncate(fd, new_size)) != .SUCCESS) return error.FtruncateFailed;
@@ -382,24 +398,32 @@ pub const Window = struct {
                 0,
             );
 
-            const buffer = try CpuBuffer.init(wl, fd, width, height, win.buffer.bytes_per_pixel);
+            const new_buffer = wl.buffers.buffer_create_cpu(
+                wl.gpa,
+                wl.shm,
+                fd,
+                width,
+                height,
+                win.buffer.bytes_per_pixel,
+                win.buffer.format,
+            ) catch return;
 
             errdefer comptime unreachable;
 
             std.posix.munmap(win.buffer_pixels);
-            win.buffer.deinit();
+            wl.buffers.buffer_destroy(win.buffer.buffer_id);
             _ = std.os.linux.close(win.buffer_fd);
 
             win.buffer_pixels = pixels;
             win.buffer_fd = fd;
-            win.buffer = buffer;
+            win.buffer = new_buffer;
         }
     }
 };
 
 pub const Subsurface = struct {
-    surface: *cwl.Surface,
     subsurface: *cwl.Subsurface,
+    surface: *cwl.Surface,
     buffer: Buffer,
     viewport_key: ViewportKey,
     damaged: bool,
@@ -409,6 +433,12 @@ pub const Buffer = struct {
     viewport_key: ViewportKey,
     back: Source,
     front: Source,
+
+    pub fn id(buffer: Buffer) BufferID {
+        return switch (buffer.front) {
+            inline else => |v| v.buffer_id,
+        };
+    }
 
     pub fn swap(b: *Buffer) void {
         std.mem.swap(Source, &b.back, &b.front);
@@ -428,12 +458,6 @@ pub const Buffer = struct {
         };
     }
 
-    pub fn wl_buffer(buffer: *Buffer) *cwl.Buffer {
-        return switch (buffer.front) {
-            .gpu => |b| b.buffer,
-            .cpu => |b| b.buffer,
-        };
-    }
     pub fn resize(b: *Buffer, wl: *Wayland, vp: Viewport, w: i32, h: i32) void {
         switch (b.front) {
             .cpu => |*buffer| buffer.resize(wl, vp.front_fd, w, h),
@@ -452,67 +476,48 @@ pub const Buffer = struct {
 };
 
 pub const GpuBuffer = struct {
-    buffer: *cwl.Buffer,
+    buffer_id: BufferID,
     width: i32,
     height: i32,
 };
 
 pub const CpuBuffer = struct {
-    pool: *cwl.ShmPool,
-    buffer: *cwl.Buffer,
+    buffer_id: BufferID,
     width: i32,
     height: i32,
     bytes_per_pixel: u8,
     format: cwl.Shm.Format,
-
-    pub fn init(wl: *Wayland, fd: c_int, width: i32, height: i32, byte_per_pixel: u8) !CpuBuffer {
-        const stride = width * byte_per_pixel;
-        const size = stride * height;
-
-        const pool = try wl.shm.createPool(fd, @intCast(size));
-
-        const format: cwl.Shm.Format = .argb8888;
-        return .{
-            .pool = pool,
-            .buffer = try pool.createBuffer(0, width, height, @intCast(stride), format),
-            .width = width,
-            .height = height,
-            .bytes_per_pixel = byte_per_pixel,
-            .format = format,
-        };
-    }
-
-    pub fn deinit(buffer: *CpuBuffer) void {
-        buffer.buffer.destroy();
-        buffer.pool.destroy();
-    }
 
     pub fn resize(buffer: *CpuBuffer, wl: *Wayland, fd: c_int, width: i32, height: i32) void {
         const old_size = buffer.width * buffer.height * buffer.bytes_per_pixel;
         const new_size = width * height * buffer.bytes_per_pixel;
 
         if (new_size > old_size) {
-            const new_buffer = CpuBuffer.init(wl, fd, width, height, buffer.bytes_per_pixel) catch return;
-            buffer.deinit();
+            const new_buffer = wl.buffers.buffer_create_cpu(
+                wl.gpa,
+                wl.shm,
+                fd,
+                width,
+                height,
+                buffer.bytes_per_pixel,
+                buffer.format,
+            ) catch return;
+
+            wl.buffers.buffer_destroy(buffer.buffer_id);
             buffer.* = new_buffer;
         } else if (width != buffer.width or height != buffer.height) {
-            buffer.down_size(width, height) catch return;
+            std.debug.assert(
+                width * height * buffer.bytes_per_pixel <
+                    buffer.width * buffer.height * buffer.bytes_per_pixel,
+            );
+            wl.buffers.buffer_down_size_cpu(
+                buffer.buffer_id,
+                width,
+                height,
+                buffer.bytes_per_pixel,
+                buffer.format,
+            ) catch return;
         }
-    }
-
-    pub fn down_size(buffer: *CpuBuffer, width: i32, height: i32) !void {
-        std.debug.assert(
-            width * height * buffer.bytes_per_pixel <
-                buffer.width * buffer.height * buffer.bytes_per_pixel,
-        );
-
-        const stride = width * buffer.bytes_per_pixel;
-        const new_buffer = try buffer.pool.createBuffer(0, width, height, stride, buffer.format);
-        buffer.buffer.destroy();
-        buffer.buffer = new_buffer;
-
-        buffer.width = width;
-        buffer.height = height;
     }
 };
 
@@ -526,6 +531,13 @@ pub fn fill_black(buffer: []u8, width: i32, height: i32, bpp: u8) void {
     }
 }
 
+
+
+pub const BufferID = enum(u32) {
+    pub const first: BufferID = @enumFromInt(1);
+    _,
+};
+
 const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -537,3 +549,4 @@ const WindowBase = @import("WindowBase.zig");
 const WindowID = WindowBase.WindowID;
 const log = std.log.scoped(.Wayland);
 const utils = @import("../server/utils.zig");
+const BufferCollection = @import("wayland/BufferCollection.zig");
