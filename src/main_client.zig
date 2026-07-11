@@ -85,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
             &viewport,
         );
 
-        try init.io.sleep(.fromSeconds(1), .awake);
+        try init.io.sleep(.fromMilliseconds(500), .awake);
     }
 }
 

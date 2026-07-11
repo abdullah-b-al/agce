@@ -85,28 +85,28 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                 .viewport_id = e.viewport_id,
             };
             try ws.viewports.ensureUnusedCapacity(ws.gpa, 1);
-            const viewport: Viewport = try .init_cpu(key, e.size, e.fds.front, e.fds.back);
-
-            errdefer comptime unreachable;
+            const viewport: Viewport = try .init(key, e.size, e.fds.front, e.fds.back);
 
             const gop = ws.viewports.getOrPutAssumeCapacity(key);
             if (gop.found_existing) {
+                switch (ws.native) {
+                    .wayland => |wl| try wl.viewport_overridden(viewport),
+                    .win32 => @panic("TODO"),
+                }
+
                 gop.value_ptr.deinit();
             }
 
             gop.value_ptr.* = viewport;
         },
         .viewport_buffers_swap => |key| {
-            const viewport = ws.viewports.getPtr(key) orelse return error.ViewportDoesNotExist;
-            viewport.swap();
-
             switch (ws.native) {
                 .wayland => |wl| {
                     for (wl.windows.values()) |win| {
                         if (!std.meta.eql(win.subsurface.viewport_key, key))
                             continue;
 
-                        wl.subsurface_buffer_copy_from_front_buffer(ws, &win.subsurface) catch |err| switch (err) {
+                        wl.buffers_swap(&win.subsurface) catch |err| switch (err) {
                             error.ViewportDoesNotExist => unreachable,
                         };
 
@@ -126,12 +126,18 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
 
             const vp = ws.viewports.getPtr(key) orelse return;
 
-            if (e.resize.width * e.resize.height * vp.size.bpp > vp.back_buffer.len) {
+            if (e.resize.width > vp.size.width or e.resize.height > vp.size.height) {
                 return error.ViewportSizeLargerThanBuffer;
             }
 
             vp.size.width = e.resize.width;
             vp.size.height = e.resize.height;
+            switch (ws.native) {
+                .wayland => |wl| {
+                    wl.buffer_size_set_to_viewport(vp.*);
+                },
+                .win32 => @panic("TODO"),
+            }
         },
         .window_create => |key| {
             switch (ws.native) {
@@ -153,22 +159,16 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                         return;
                     };
 
-                    switch (win.subsurface.buffer) {
-                        .cpu => |*buffer| {
-                            buffer.resize(wl, args.width, args.height);
-                            try wl.subsurface_buffer_copy_from_front_buffer(ws, &win.subsurface);
-                        },
-                        .gpu => @panic("TODO"),
-                    }
+                    const viewport = ws.viewports.get(win.subsurface.buffer.viewport_key).?;
+                    win.subsurface.buffer.resize(wl, viewport, args.width, args.height);
 
-                    switch (win.buffer) {
-                        .cpu => |*buffer| {
-                            buffer.resize(wl, args.width, args.height);
-                            buffer.fill_black();
-                        },
-                        .gpu => @panic("TODO"),
-                    }
-
+                    try win.buffer_resize(wl, args.width, args.height);
+                    Wayland.fill_black(
+                        win.buffer_pixels,
+                        win.buffer.width,
+                        win.buffer.height,
+                        win.buffer.bytes_per_pixel,
+                    );
                     wl.window_commit(win);
                     _ = wl.display.flush();
 
