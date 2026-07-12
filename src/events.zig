@@ -7,6 +7,17 @@ pub const WindowSystem = union(enum) {
         size: ViewportSize,
         fds: ViewportFds,
     },
+    viewport_create_with_fds_gpu: struct {
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        fds: ViewportFds,
+
+        width: u32,
+        height: u32,
+        format: ViewportFormat,
+
+        gbm_bo_modifier: u64,
+    },
     viewport_buffers_swap: ViewportKey,
     viewport_resize: struct {
         client_id: ClientID,
@@ -43,6 +54,7 @@ const ViewportResize = @import("protocol/types.zig").ViewportResize;
 const ViewportSize = @import("protocol/types.zig").ViewportSize;
 const ViewportFds = @import("protocol/types.zig").ViewportFds;
 const ViewportID = @import("protocol/types.zig").ViewportID;
+const ViewportFormat = @import("protocol/types.zig").ViewportFormat;
 const Viewport = @import("window_system/Viewport.zig");
 const ClientID = @import("server/Clients.zig").ClientID;
 const ViewportKey = @import("window_system/WindowSystem.zig").ViewportKey;

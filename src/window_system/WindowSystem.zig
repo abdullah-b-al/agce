@@ -79,13 +79,36 @@ fn init_undefined_native(
 
 pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
     switch (event) {
-        .viewport_create_with_fds_cpu => |e| {
+        inline .viewport_create_with_fds_gpu,
+        .viewport_create_with_fds_cpu,
+        => |e| {
             const key: ViewportKey = .{
                 .client_id = e.client_id,
                 .viewport_id = e.viewport_id,
             };
             try ws.viewports.ensureUnusedCapacity(ws.gpa, 1);
-            const viewport: Viewport = try .init(key, e.size, e.fds.front, e.fds.back);
+            const viewport: Viewport = switch (event) {
+                .viewport_create_with_fds_cpu,
+                => |cpu| .init_cpu(
+                    key,
+                    e.fds.front,
+                    e.fds.back,
+                    @intCast(cpu.size.width),
+                    @intCast(cpu.size.height),
+                    cpu.size.format,
+                ),
+                .viewport_create_with_fds_gpu,
+                => |gpu| .init_gpu(
+                    key,
+                    e.fds.front,
+                    e.fds.back,
+                    @intCast(gpu.width),
+                    @intCast(gpu.height),
+                    gpu.format,
+                    gpu.gbm_bo_modifier,
+                ),
+                else => unreachable,
+            };
 
             const gop = ws.viewports.getOrPutAssumeCapacity(key);
             if (gop.found_existing) {
@@ -126,15 +149,11 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
 
             const vp = ws.viewports.getPtr(key) orelse return;
 
-            if (e.resize.width > vp.size.width or e.resize.height > vp.size.height) {
-                return error.ViewportSizeLargerThanBuffer;
-            }
-
-            vp.size.width = e.resize.width;
-            vp.size.height = e.resize.height;
+            vp.width = @intCast(e.resize.width);
+            vp.height = @intCast(e.resize.height);
             switch (ws.native) {
                 .wayland => |wl| {
-                    wl.buffer_size_set_to_viewport(vp.*);
+                    wl.buffer_resize_set_to_viewport(vp.*);
                 },
                 .win32 => @panic("TODO"),
             }
@@ -158,9 +177,6 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                     const win = wl.windows.get(args.id) orelse {
                         return;
                     };
-
-                    const viewport = ws.viewports.get(win.subsurface.buffer.viewport_key).?;
-                    win.subsurface.buffer.resize(wl, viewport, args.width, args.height);
 
                     try win.buffer_resize(wl, args.width, args.height);
                     Wayland.fill_black(

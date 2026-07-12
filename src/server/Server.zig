@@ -61,6 +61,21 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 },
             };
         },
+        .viewport_create_with_fds_gpu => |msg| {
+            return .{
+                .viewport_create_with_fds_gpu = .{
+                    .client_id = client.id,
+                    .viewport_id = msg.id,
+                    .fds = msg.fds,
+
+                    .width = msg.width,
+                    .height = msg.height,
+
+                    .format = msg.format,
+                    .gbm_bo_modifier = msg.gbm_bo_modifier,
+                },
+            };
+        },
 
         .viewport_buffers_swap => |msg| {
             return .{

@@ -20,6 +20,10 @@
           wayland-scanner
           wayland-protocols
           pkg-config
+          libGL
+          libglvnd
+          mesa
+          libgbm
         ];
       };
       packages.${system}.default = pkgs.stdenv.mkDerivation {

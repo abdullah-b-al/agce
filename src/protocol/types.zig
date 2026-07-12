@@ -14,7 +14,17 @@ pub const ViewportFds = extern struct {
 pub const ViewportSize = struct {
     width: u32,
     height: u32,
-    bpp: u8,
+    format: ViewportFormat,
+};
+
+pub const ViewportFormat = enum {
+    argb8888,
+
+    pub fn bytes_per_pixel(fmt: ViewportFormat) u8 {
+        return switch (fmt) {
+            .argb8888 => 4,
+        };
+    }
 };
 
 pub const WindowCreate = struct {

@@ -18,22 +18,35 @@ pub const Message = struct {
 
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
-    viewport_create_with_fds_cpu: ViewportCreateWithSharedFd,
+    viewport_create_with_fds_cpu: ViewportCreateWithFdsCpu,
+    viewport_create_with_fds_gpu: ViewportCreateWithFdsGpu,
     viewport_buffers_swap: types.ViewportBuffersSwap,
     viewport_resize: types.ViewportResize,
 
     window_create: types.WindowCreate,
 
-    pub const ViewportCreateWithSharedFd = struct {
+    pub const ViewportCreateWithFdsCpu = struct {
         id: types.ViewportID,
         size: types.ViewportSize,
         fds: types.ViewportFds,
+    };
+
+    pub const ViewportCreateWithFdsGpu = struct {
+        id: types.ViewportID,
+        fds: types.ViewportFds,
+
+        width: u32,
+        height: u32,
+        format: types.ViewportFormat,
+        gbm_bo_modifier: u64,
     };
 };
 
 pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {
     const json = switch (payload) {
-        .viewport_create_with_fds_cpu => |original| blk: {
+        inline .viewport_create_with_fds_gpu,
+        .viewport_create_with_fds_cpu,
+        => |original| blk: {
             var p = original;
             // The fds that are part of the json are wrong.
             // Set them to 0 to invalidate their use
@@ -52,7 +65,9 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     };
 
     switch (payload) {
-        .viewport_create_with_fds_cpu => |p| {
+        inline .viewport_create_with_fds_gpu,
+        .viewport_create_with_fds_cpu,
+        => |p| {
             try message_send_json_with_fds(stream, .{ .header = header, .payload = json }, p.fds);
         },
         else => {
@@ -133,7 +148,7 @@ fn read_and_parse_data_json_linux(
             const msg = try stream.socket.receive(io, receive_buf);
             const data = msg.data[@sizeOf(MessageHeader)..];
 
-            const parsed = try std.json.parseFromSliceLeaky(MessagePayload.ViewportCreateWithSharedFd, arena, data, .{
+            const parsed = try std.json.parseFromSliceLeaky(MessagePayload.ViewportCreateWithFdsCpu, arena, data, .{
                 .allocate = .alloc_if_needed,
             });
 
@@ -142,6 +157,28 @@ fn read_and_parse_data_json_linux(
                     .fds = fds,
                     .id = parsed.id,
                     .size = parsed.size,
+                },
+            };
+        },
+        .viewport_create_with_fds_gpu => {
+            const fds = try recv_fds_peek(stream.socket.handle);
+
+            const msg = try stream.socket.receive(io, receive_buf);
+            const data = msg.data[@sizeOf(MessageHeader)..];
+
+            const parsed = try std.json.parseFromSliceLeaky(MessagePayload.ViewportCreateWithFdsGpu, arena, data, .{
+                .allocate = .alloc_if_needed,
+            });
+
+            return .{
+                .viewport_create_with_fds_gpu = .{
+                    .fds = fds,
+                    .id = parsed.id,
+                    .width = parsed.width,
+                    .height = parsed.height,
+
+                    .format = parsed.format,
+                    .gbm_bo_modifier = parsed.gbm_bo_modifier,
                 },
             };
         },
