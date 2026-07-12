@@ -126,7 +126,8 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
             switch (ws.native) {
                 .wayland => |wl| {
                     for (wl.windows.values()) |win| {
-                        if (!std.meta.eql(win.subsurface.viewport_key, key))
+                        const buffer = wl.buffers.double_buffers.get(win.subsurface.buffer_id).?;
+                        if (!std.meta.eql(buffer.viewport_key, key))
                             continue;
 
                         wl.buffers_swap(&win.subsurface) catch |err| switch (err) {
@@ -153,7 +154,7 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
             vp.height = @intCast(e.resize.height);
             switch (ws.native) {
                 .wayland => |wl| {
-                    wl.buffer_resize_set_to_viewport(vp.*);
+                    wl.buffer_resize_to_viewport(vp.*);
                 },
                 .win32 => @panic("TODO"),
             }
@@ -188,12 +189,16 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                     wl.window_commit(win);
                     _ = wl.display.flush();
 
+                    const vp_key = wl.buffers.double_buffer_viewport_key(
+                        win.subsurface.buffer_id,
+                    ).?;
+
                     ws.server_event_queue.put(
                         .{
                             .viewport_resize = .{
-                                .client_id = win.subsurface.viewport_key.client_id,
+                                .client_id = vp_key.client_id,
                                 .resize = .{
-                                    .viewport_id = win.subsurface.viewport_key.viewport_id,
+                                    .viewport_id = vp_key.viewport_id,
                                     .width = @intCast(args.width),
                                     .height = @intCast(args.height),
                                 },
