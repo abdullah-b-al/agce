@@ -141,7 +141,7 @@ pub fn viewport_overridden(wl: *Wayland, viewport: Viewport) !void {
 
         const new_id = switch (viewport.kind) {
             .cpu => try wl.buffers.double_buffer_create_cpu(wl, viewport),
-            .gpu => @panic("TODO"),
+            .gpu => try wl.buffers.double_buffer_create_gpu(wl, viewport),
         };
 
         wl.buffers.double_buffer_destroy(win.subsurface.buffer_id);
@@ -169,8 +169,11 @@ pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, vp: 
 }
 
 pub fn window_commit(wl: *Wayland, win: *Window) void {
-    if (win.subsurface.damaged) {
-        const wl_buffer = wl.buffers.double_buffer_wl_buffer(win.subsurface.buffer_id).?;
+    if (win.subsurface.damaged) blk: {
+        const wl_buffer = wl.buffers.double_buffer_wl_buffer(win.subsurface.buffer_id) orelse {
+            std.log.err("Could not find wl_buffer for {}", .{win.subsurface.buffer_id});
+            break :blk;
+        };
         const buffer = wl.buffers.double_buffers.get(win.subsurface.buffer_id).?;
         win.subsurface.surface.damage(0, 0, buffer.width(), buffer.height());
         win.subsurface.surface.attach(wl_buffer, 0, 0);
@@ -305,53 +308,6 @@ pub fn window_id_from_xdg_surface(wl: *const Wayland, xdg_surface: *xdg.Surface)
     }
 
     unreachable;
-}
-
-pub fn create_gpu_buffer_async(wl: *Wayland, viewport: Viewport) !void {
-    const mod_lo: u32 = @intCast(viewport.modifier & 0xFF_FF_FF_FF);
-    const mod_hi: u32 = @intCast(viewport.modifier >> 32);
-    const stride = viewport.stride;
-    const width: i32 = @intCast(viewport.width);
-    const height: i32 = @intCast(viewport.height);
-    const format = switch (viewport.format) {
-        .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
-    };
-
-    const callback = struct {
-        const Data = struct {
-            wl: *Wayland,
-            viewport: Viewport,
-            kind: enum { back, front },
-        };
-        fn func(
-            params: *zwp.LinuxBufferParamsV1,
-            event: zwp.LinuxBufferParamsV1.Event,
-            data: Data,
-        ) void {
-            switch (event) {
-                .created => {
-                    for (data.wl.windows.values()) |win| {
-                        if (win.subsurface.viewport_key == data.viewport.key) {}
-                    }
-                },
-                .failed => @panic("TODO"),
-            }
-            params.destory();
-        }
-    };
-
-    _ = callback;
-    {
-        const back = try wl.dmabuf.createParams();
-        back.add(viewport.back_fd, 0, 0, stride, mod_hi, mod_lo);
-        back.create(width, height, format, .{});
-        // back.setListener(*Wayland, callback);
-    }
-    {
-        const front = try wl.dmabuf.createParams();
-        front.add(viewport.front_fd, 0, 0, stride, mod_hi, mod_lo);
-        front.create(width, height, format, .{});
-    }
 }
 
 pub const MaybeGlobals = struct {

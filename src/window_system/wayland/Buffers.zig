@@ -3,6 +3,7 @@ pub const Buffers = @This();
 pub const init: @This() = .{
     .double_buffers = .empty,
     .wl_buffers = .empty,
+    .wl_buffers_pending = .empty,
     .buffer_next_id = .first,
     .double_buffer_next_id = .first,
 };
@@ -10,6 +11,7 @@ pub const init: @This() = .{
 double_buffers: std.array_hash_map.Auto(DoubleBufferID, DoubleBuffer),
 
 wl_buffers: std.array_hash_map.Auto(BufferID, *cwl.Buffer),
+wl_buffers_pending: std.array_hash_map.Auto(BufferID, OnReceive),
 
 buffer_next_id: BufferID,
 double_buffer_next_id: DoubleBufferID,
@@ -63,17 +65,15 @@ pub fn double_buffer_create_gpu(b: *Buffers, wl: *Wayland, vp: Viewport) !Double
 }
 
 pub fn double_buffer_destroy(b: *Buffers, id: DoubleBufferID) void {
-    const buffer = b.double_buffers.get(id) orelse return;
-    switch (buffer.front) {
-        .cpu => {
-            const front = buffer.front.cpu;
-            const back = buffer.back.cpu;
+    const entry = b.double_buffers.fetchOrderedRemove(id) orelse return;
+    const buffer = entry.value;
+    const front, const back = switch (buffer.front) {
+        .cpu => .{ buffer.front.cpu.id, buffer.back.cpu.id },
+        .gpu => .{ buffer.front.gpu.id, buffer.back.gpu.id },
+    };
 
-            b.buffer_destroy(front.id);
-            b.buffer_destroy(back.id);
-        },
-        .gpu => @panic("TODO"),
-    }
+    b.buffer_destroy(front);
+    b.buffer_destroy(back);
 }
 
 pub fn double_buffer_swap(b: *Buffers, id: DoubleBufferID) void {
@@ -184,13 +184,6 @@ pub fn buffer_create_gpu_async(
     vp_format: ViewportFormat,
     modifier: u64,
 ) !GpuBuffer {
-    const mod_lo: u32 = @intCast(modifier & 0xFF_FF_FF_FF);
-    const mod_hi: u32 = @intCast(modifier >> 32);
-    const stride: u32 = @intCast(width * vp_format.bytes_per_pixel());
-    const format = switch (vp_format) {
-        .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
-    };
-
     const callback = struct {
         const Data = struct { wl: *Wayland, id: BufferID };
 
@@ -201,13 +194,21 @@ pub fn buffer_create_gpu_async(
         ) void {
             switch (event) {
                 .created => |result| {
-                    data.wl.buffers.wl_buffers.putNoClobber(
-                        data.wl.gpa,
-                        data.id,
-                        result.buffer,
-                    ) catch @panic("TODO");
+                    const on_receive = data.wl.buffers.wl_buffers_pending.get(data.id).?;
 
-                    log.debug("GPU Buffer Created {}", .{data.id});
+                    switch (on_receive) {
+                        .register => {
+                            data.wl.buffers.wl_buffers.putAssumeCapacityNoClobber(
+                                data.id,
+                                result.buffer,
+                            );
+                            log.debug("GPU buffer created {}", .{data.id});
+                        },
+                        .destroy => {
+                            result.buffer.destroy();
+                            log.debug("GPU buffer created and destroyed {}", .{data.id});
+                        },
+                    }
                 },
                 .failed => @panic("TODO"),
             }
@@ -217,15 +218,29 @@ pub fn buffer_create_gpu_async(
         }
     };
 
+    const mod_lo: u32 = @intCast(modifier & 0xFF_FF_FF_FF);
+    const mod_hi: u32 = @intCast(modifier >> 32);
+    const stride: u32 = @intCast(width * vp_format.bytes_per_pixel());
+    const format = switch (vp_format) {
+        .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
+    };
+
     const data = try wl.gpa.create(callback.Data);
     errdefer wl.gpa.destroy(data);
+
+    try b.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
+    try b.wl_buffers.ensureUnusedCapacity(wl.gpa, b.wl_buffers_pending.capacity());
+
+    const params = try wl.dmabuf.createParams();
+
+    errdefer comptime unreachable;
 
     const id = b.buffer_next_id;
     b.buffer_next_id.increment();
 
-    data.* = .{ .id = id, .wl = wl };
+    b.wl_buffers_pending.putAssumeCapacityNoClobber(id, .register);
 
-    const params = try wl.dmabuf.createParams();
+    data.* = .{ .id = id, .wl = wl };
     params.add(fd, 0, 0, stride, mod_hi, mod_lo);
     params.create(width, height, format, .{});
     params.setListener(*callback.Data, callback.func, data);
@@ -239,7 +254,13 @@ pub fn buffer_create_gpu_async(
 }
 
 pub fn buffer_destroy(b: *Buffers, id: BufferID) void {
-    const entry = b.wl_buffers.fetchSwapRemove(id).?;
+    const entry = b.wl_buffers.fetchSwapRemove(id) orelse {
+        if (b.wl_buffers_pending.contains(id)) {
+            b.wl_buffers_pending.putAssumeCapacity(id, .destroy);
+        }
+
+        return;
+    };
     const buffer: *cwl.Buffer = entry.value;
     buffer.destroy();
 }
@@ -305,6 +326,11 @@ pub const CpuBuffer = struct {
     height: i32,
     bytes_per_pixel: u8,
     format: cwl.Shm.Format,
+};
+
+const OnReceive = enum {
+    register,
+    destroy,
 };
 
 const std = @import("std");
