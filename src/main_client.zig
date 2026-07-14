@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     var viewport: Viewport = try .init(1280, 720);
 
     // cpu
-    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .viewport_create_with_fds_cpu = .{ .id = viewport_id_cpu, .size = .{ .width = viewport.width, .height = viewport.height, .format = viewport.format }, .fds = .{ .front = viewport.front_fd, .back = viewport.back_fd } } });
+    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .viewport_create_with_fds_cpu = .{ .id = viewport_id_cpu, .width = viewport.width, .height = viewport.height, .format = viewport.format, .fds = .{ .front = viewport.front_fd, .back = viewport.back_fd } } });
     try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .window_create = .{ .viewport_id = viewport_id_cpu } });
 
     // gpu
@@ -138,11 +138,9 @@ fn resize_cpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport: *Vie
         .{
             .viewport_create_with_fds_cpu = .{
                 .id = viewport_id_cpu,
-                .size = .{
-                    .width = viewport.width,
-                    .height = viewport.height,
-                    .format = viewport.format,
-                },
+                .width = viewport.width,
+                .height = viewport.height,
+                .format = viewport.format,
                 .fds = .{
                     .front = viewport.front_fd,
                     .back = viewport.back_fd,
@@ -271,19 +269,15 @@ const Viewport = struct {
     back_buffer: []align(std.heap.page_size_min) u8,
 
     pub fn init(width: u32, height: u32) !Viewport {
-        const size: protocol_types.ViewportSize = .{
-            .width = width,
-            .height = height,
-            .format = .argb8888,
-        };
-        const s = size.width * size.height * size.format.bytes_per_pixel();
+        const format: protocol_types.ViewportFormat = .argb8888;
+        const s = width * height * format.bytes_per_pixel();
         const front_fd, const front_buffer = try create_fd(s);
         const back_fd, const back_buffer = try create_fd(s);
 
         return .{
-            .width = size.width,
-            .height = size.height,
-            .format = size.format,
+            .width = width,
+            .height = height,
+            .format = format,
 
             .front_fd = front_fd,
             .back_fd = back_fd,

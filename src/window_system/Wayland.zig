@@ -207,11 +207,6 @@ pub fn window_ensure_configured(wl: *Wayland, win: *Window) void {
     }
 }
 
-pub fn buffers_swap(wl: *Wayland, subsurface: *Subsurface) !void {
-    subsurface.damaged = true;
-    wl.buffers.double_buffer_swap(subsurface.buffer_id);
-}
-
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
     switch (event) {
         .global => |global| {

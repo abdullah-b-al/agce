@@ -57,7 +57,9 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 .viewport_create_with_fds_cpu => events.WindowSystem.ViewportCreateWithFdsCpu{
                     .client_id = client.id,
                     .viewport_id = msg.id,
-                    .size = msg.size,
+                    .width = msg.width,
+                    .height = msg.height,
+                    .format = msg.format,
                     .fds = msg.fds,
                 },
                 else => comptime unreachable,

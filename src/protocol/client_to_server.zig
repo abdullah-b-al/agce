@@ -27,17 +27,23 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const ViewportCreateWithFdsCpu = struct {
         id: types.ViewportID,
-        size: types.ViewportSize,
-        fds: types.ViewportFds,
-    };
 
-    pub const ViewportCreateWithFdsGpu = struct {
-        id: types.ViewportID,
         fds: types.ViewportFds,
 
         width: u32,
         height: u32,
         format: types.ViewportFormat,
+    };
+
+    pub const ViewportCreateWithFdsGpu = struct {
+        id: types.ViewportID,
+
+        fds: types.ViewportFds,
+
+        width: u32,
+        height: u32,
+        format: types.ViewportFormat,
+
         gbm_bo_modifier: u64,
     };
 };

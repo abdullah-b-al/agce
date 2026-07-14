@@ -95,9 +95,9 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                                     key,
                                     e.fds.front,
                                     e.fds.back,
-                                    @intCast(cpu.size.width),
-                                    @intCast(cpu.size.height),
-                                    cpu.size.format,
+                                    @intCast(cpu.width),
+                                    @intCast(cpu.height),
+                                    cpu.format,
                                 );
                                 try wl.buffers.double_buffer_update_cpu(wl, vp);
                             },
@@ -124,9 +124,9 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                                     key,
                                     e.fds.front,
                                     e.fds.back,
-                                    @intCast(cpu.size.width),
-                                    @intCast(cpu.size.height),
-                                    cpu.size.format,
+                                    @intCast(cpu.width),
+                                    @intCast(cpu.height),
+                                    cpu.format,
                                 );
                                 _ = try wl.buffers.double_buffer_create_cpu(wl, vp);
                             },
@@ -160,9 +160,8 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                         if (!std.meta.eql(buffer.viewport.key, key))
                             continue;
 
-                        wl.buffers_swap(&win.subsurface) catch |err| switch (err) {
-                            error.ViewportDoesNotExist => unreachable,
-                        };
+                        win.subsurface.damaged = true;
+                        wl.buffers.double_buffer_swap(win.subsurface.buffer_id);
 
                         wl.window_commit(win);
                     }

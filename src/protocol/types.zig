@@ -11,12 +11,6 @@ pub const ViewportFds = extern struct {
     back: c_int,
 };
 
-pub const ViewportSize = struct {
-    width: u32,
-    height: u32,
-    format: ViewportFormat,
-};
-
 pub const ViewportFormat = enum {
     argb8888,
 

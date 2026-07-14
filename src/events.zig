@@ -18,8 +18,11 @@ pub const WindowSystem = union(enum) {
     pub const ViewportCreateWithFdsCpu = struct {
         client_id: ClientID,
         viewport_id: ViewportID,
-        size: ViewportSize,
         fds: ViewportFds,
+
+        width: u32,
+        height: u32,
+        format: ViewportFormat,
     };
 
     pub const ViewportCreateWithFdsGpu = struct {
@@ -51,7 +54,6 @@ const IoQueue = @import("io_queue.zig").IoQueue;
 const std = @import("std");
 const Io = std.Io;
 const ViewportResize = @import("protocol/types.zig").ViewportResize;
-const ViewportSize = @import("protocol/types.zig").ViewportSize;
 const ViewportFds = @import("protocol/types.zig").ViewportFds;
 const ViewportID = @import("protocol/types.zig").ViewportID;
 const ViewportFormat = @import("protocol/types.zig").ViewportFormat;

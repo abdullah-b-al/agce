@@ -63,6 +63,5 @@ pub fn deinit(viewport: *Viewport) void {
 pub const Kind = enum { cpu, gpu };
 
 const std = @import("std");
-const ViewportSize = @import("../protocol/types.zig").ViewportSize;
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
 const ViewportFormat = @import("../protocol/types.zig").ViewportFormat;
