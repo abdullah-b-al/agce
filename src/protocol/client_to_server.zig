@@ -20,8 +20,8 @@ pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     viewport_create_with_fds_cpu: ViewportCreateWithFdsCpu,
     viewport_create_with_fds_gpu: ViewportCreateWithFdsGpu,
+
     viewport_buffers_swap: types.ViewportBuffersSwap,
-    viewport_resize: types.ViewportResize,
 
     window_create: types.WindowCreate,
 
@@ -54,7 +54,10 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
             p.fds.front = 0;
             break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
         },
-        inline else => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
+
+        inline .viewport_buffers_swap,
+        .window_create,
+        => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
     };
     defer gpa.free(json);
 
@@ -70,7 +73,9 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         => |p| {
             try message_send_json_with_fds(stream, .{ .header = header, .payload = json }, p.fds);
         },
-        else => {
+        .viewport_buffers_swap,
+        .window_create,
+        => {
             var buf: [4096]u8 = undefined;
             var writer = stream.writer(io, &buf);
 
@@ -142,47 +147,21 @@ fn read_and_parse_data_json_linux(
     const stream = client.stream;
 
     switch (header.message_tag) {
-        .viewport_create_with_fds_cpu => {
-            const fds = try recv_fds_peek(stream.socket.handle);
-
-            const msg = try stream.socket.receive(io, receive_buf);
-            const data = msg.data[@sizeOf(MessageHeader)..];
-
-            const parsed = try std.json.parseFromSliceLeaky(MessagePayload.ViewportCreateWithFdsCpu, arena, data, .{
-                .allocate = .alloc_if_needed,
-            });
-
-            return .{
-                .viewport_create_with_fds_cpu = .{
-                    .fds = fds,
-                    .id = parsed.id,
-                    .size = parsed.size,
-                },
+        inline .viewport_create_with_fds_cpu,
+        .viewport_create_with_fds_gpu,
+        => |tag| {
+            const T = switch (tag) {
+                .viewport_create_with_fds_cpu => MessagePayload.ViewportCreateWithFdsCpu,
+                .viewport_create_with_fds_gpu => MessagePayload.ViewportCreateWithFdsGpu,
+                else => comptime unreachable,
             };
+            const parsed = try parse_message_with_fds(T, io, arena, stream, receive_buf);
+            return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
-        .viewport_create_with_fds_gpu => {
-            const fds = try recv_fds_peek(stream.socket.handle);
 
-            const msg = try stream.socket.receive(io, receive_buf);
-            const data = msg.data[@sizeOf(MessageHeader)..];
-
-            const parsed = try std.json.parseFromSliceLeaky(MessagePayload.ViewportCreateWithFdsGpu, arena, data, .{
-                .allocate = .alloc_if_needed,
-            });
-
-            return .{
-                .viewport_create_with_fds_gpu = .{
-                    .fds = fds,
-                    .id = parsed.id,
-                    .width = parsed.width,
-                    .height = parsed.height,
-
-                    .format = parsed.format,
-                    .gbm_bo_modifier = parsed.gbm_bo_modifier,
-                },
-            };
-        },
-        else => {
+        .viewport_buffers_swap,
+        .window_create,
+        => {
             return try read_and_parse_data_json(io, arena, client, header, receive_buf);
         },
     }
@@ -196,8 +175,13 @@ fn read_and_parse_data_json(
     receive_buf: []u8,
 ) !MessagePayload {
     switch (header.message_tag) {
-        .viewport_create_with_fds_cpu => return error.UnsupportedMessageOnOs,
-        inline else => |tag| {
+        .viewport_create_with_fds_gpu,
+        .viewport_create_with_fds_cpu,
+        => return error.UnsupportedMessageOnOs,
+
+        inline .viewport_buffers_swap,
+        .window_create,
+        => |tag| {
             const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(
                 MessageHeader,
@@ -270,6 +254,20 @@ fn recv_fds_peek(socket: c_int) !types.ViewportFds {
     const ptr: [*]u8 = hdr.__cmsg_data();
     const data: *types.ViewportFds = @ptrCast(@alignCast(ptr));
     return data.*;
+}
+
+fn parse_message_with_fds(comptime T: type, io: Io, arena: std.mem.Allocator, stream: net.Stream, receive_buf: []u8) !T {
+    const fds = try recv_fds_peek(stream.socket.handle);
+
+    const msg = try stream.socket.receive(io, receive_buf);
+    const data = msg.data[@sizeOf(MessageHeader)..];
+
+    var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+        .allocate = .alloc_if_needed,
+    });
+
+    parsed.fds = fds;
+    return parsed;
 }
 
 const std = @import("std");

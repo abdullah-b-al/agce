@@ -16,6 +16,18 @@ wl_buffers_pending: std.array_hash_map.Auto(BufferID, OnReceive),
 buffer_next_id: BufferID,
 double_buffer_next_id: DoubleBufferID,
 
+pub fn viewport_exists(b: *Buffers, key: ViewportKey) bool {
+    return b.double_buffer_id_from_viewport_key(key) != null;
+}
+
+pub fn double_buffer_id_from_viewport_key(b: *Buffers, key: ViewportKey) ?DoubleBufferID {
+    for (b.double_buffers.keys(), b.double_buffers.values()) |id, buffer| {
+        if (std.meta.eql(buffer.viewport.key, key)) return id;
+    }
+
+    return null;
+}
+
 pub fn double_buffer_create_cpu(b: *Buffers, wl: *Wayland, vp: Viewport) !DoubleBufferID {
     try b.double_buffers.ensureUnusedCapacity(wl.gpa, 1);
 
@@ -27,7 +39,7 @@ pub fn double_buffer_create_cpu(b: *Buffers, wl: *Wayland, vp: Viewport) !Double
     const front = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.front_fd, w, h, bpp, f);
 
     const buffer: DoubleBuffer = .{
-        .viewport_key = vp.key,
+        .viewport = vp,
         .back = .{ .cpu = back },
         .front = .{ .cpu = front },
     };
@@ -51,7 +63,7 @@ pub fn double_buffer_create_gpu(b: *Buffers, wl: *Wayland, vp: Viewport) !Double
     const front = try wl.buffers.buffer_create_gpu_async(wl, vp.front_fd, w, h, f, m);
 
     const buffer: DoubleBuffer = .{
-        .viewport_key = vp.key,
+        .viewport = vp,
         .back = .{ .gpu = back },
         .front = .{ .gpu = front },
     };
@@ -62,6 +74,47 @@ pub fn double_buffer_create_gpu(b: *Buffers, wl: *Wayland, vp: Viewport) !Double
     b.double_buffers.putAssumeCapacityNoClobber(id, buffer);
 
     return id;
+}
+
+pub fn double_buffer_update_cpu(b: *Buffers, wl: *Wayland, vp: Viewport) !void {
+    const id = b.double_buffer_id_from_viewport_key(vp.key) orelse @panic("assert: Must exist");
+    const buffer = b.double_buffers.getPtr(id) orelse @panic("assert: Must exist");
+
+    const w = vp.width;
+    const h = vp.height;
+    const f: cwl.Shm.Format = .argb8888;
+    const bpp = vp.format.bytes_per_pixel();
+    const back = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.back_fd, w, h, bpp, f);
+    const front = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.front_fd, w, h, bpp, f);
+
+    b.buffer_destroy(buffer.back.cpu.id);
+    b.buffer_destroy(buffer.front.cpu.id);
+
+    buffer.* = .{
+        .viewport = vp,
+        .back = .{ .cpu = back },
+        .front = .{ .cpu = front },
+    };
+}
+pub fn double_buffer_update_gpu(b: *Buffers, wl: *Wayland, vp: Viewport) !void {
+    const id = b.double_buffer_id_from_viewport_key(vp.key) orelse @panic("assert: Must exist");
+    const buffer = b.double_buffers.getPtr(id) orelse @panic("assert: Must exist");
+
+    const w = vp.width;
+    const h = vp.height;
+    const f = vp.format;
+    const m = vp.modifier;
+    const back = try wl.buffers.buffer_create_gpu_async(wl, vp.back_fd, w, h, f, m);
+    const front = try wl.buffers.buffer_create_gpu_async(wl, vp.front_fd, w, h, f, m);
+
+    b.buffer_destroy(buffer.back.gpu.id);
+    b.buffer_destroy(buffer.front.gpu.id);
+
+    buffer.* = .{
+        .viewport = vp,
+        .back = .{ .gpu = back },
+        .front = .{ .gpu = front },
+    };
 }
 
 pub fn double_buffer_destroy(b: *Buffers, id: DoubleBufferID) void {
@@ -118,6 +171,7 @@ pub fn double_buffer_resize(
 
             buffer.* = .{
                 .viewport_key = viewport.key,
+                .version = buffer.version + 1,
                 .front = .{ .cpu = new_front },
                 .back = .{ .cpu = new_back },
             };
@@ -139,7 +193,7 @@ pub fn double_buffer_viewport_key(
     id: DoubleBufferID,
 ) ?ViewportKey {
     const buffer = b.double_buffers.getPtr(id) orelse return null;
-    return buffer.viewport_key;
+    return buffer.viewport.key;
 }
 
 pub fn buffer_create_cpu(
@@ -286,7 +340,7 @@ pub const DoubleBufferID = enum(u32) {
 };
 
 pub const DoubleBuffer = struct {
-    viewport_key: ViewportKey,
+    viewport: Viewport,
     front: BufferSource,
     back: BufferSource,
 
@@ -339,6 +393,7 @@ const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const Wayland = @import("../Wayland.zig");
 const ViewportFormat = @import("../../protocol/types.zig").ViewportFormat;
+const ViewportFds = @import("../../protocol/types.zig").ViewportFds;
 const Viewport = @import("../Viewport.zig");
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.BufferCollection);

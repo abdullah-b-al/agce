@@ -6,7 +6,6 @@ gpa: std.mem.Allocator,
 event_queue: *events.WindowSystemQueue,
 server_event_queue: *events.ServerQueue,
 
-viewports: std.array_hash_map.Auto(ViewportKey, Viewport),
 window_next_id: WindowBase.WindowID,
 
 native: NativeWindowSystem,
@@ -68,7 +67,6 @@ fn init_undefined_native(
         .event_queue = ws_event_queue,
         .server_event_queue = server_event_queue,
 
-        .viewports = .empty,
         .window_next_id = .first,
 
         .native = undefined,
@@ -81,53 +79,85 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
     switch (event) {
         inline .viewport_create_with_fds_gpu,
         .viewport_create_with_fds_cpu,
-        => |e| {
+        => |e, tag| {
             const key: ViewportKey = .{
                 .client_id = e.client_id,
                 .viewport_id = e.viewport_id,
             };
-            try ws.viewports.ensureUnusedCapacity(ws.gpa, 1);
-            const viewport: Viewport = switch (event) {
-                .viewport_create_with_fds_cpu,
-                => |cpu| .init_cpu(
-                    key,
-                    e.fds.front,
-                    e.fds.back,
-                    @intCast(cpu.size.width),
-                    @intCast(cpu.size.height),
-                    cpu.size.format,
-                ),
-                .viewport_create_with_fds_gpu,
-                => |gpu| .init_gpu(
-                    key,
-                    e.fds.front,
-                    e.fds.back,
-                    @intCast(gpu.width),
-                    @intCast(gpu.height),
-                    gpu.format,
-                    gpu.gbm_bo_modifier,
-                ),
-                else => unreachable,
-            };
 
-            const gop = ws.viewports.getOrPutAssumeCapacity(key);
-            if (gop.found_existing) {
-                switch (ws.native) {
-                    .wayland => |wl| try wl.viewport_overridden(viewport),
-                    .win32 => @panic("TODO"),
-                }
-
-                gop.value_ptr.deinit();
+            switch (ws.native) {
+                .wayland => |wl| {
+                    if (wl.buffers.viewport_exists(key)) {
+                        switch (tag) {
+                            .viewport_create_with_fds_cpu => {
+                                const cpu = @field(event, @tagName(tag));
+                                const vp: Viewport = .init_cpu(
+                                    key,
+                                    e.fds.front,
+                                    e.fds.back,
+                                    @intCast(cpu.size.width),
+                                    @intCast(cpu.size.height),
+                                    cpu.size.format,
+                                );
+                                try wl.buffers.double_buffer_update_cpu(wl, vp);
+                            },
+                            .viewport_create_with_fds_gpu => {
+                                const gpu = @field(event, @tagName(tag));
+                                const vp: Viewport = .init_gpu(
+                                    key,
+                                    e.fds.front,
+                                    e.fds.back,
+                                    @intCast(gpu.width),
+                                    @intCast(gpu.height),
+                                    gpu.format,
+                                    gpu.gbm_bo_modifier,
+                                );
+                                try wl.buffers.double_buffer_update_gpu(wl, vp);
+                            },
+                            else => comptime unreachable,
+                        }
+                    } else {
+                        switch (tag) {
+                            .viewport_create_with_fds_cpu => {
+                                const cpu = @field(event, @tagName(tag));
+                                const vp: Viewport = .init_cpu(
+                                    key,
+                                    e.fds.front,
+                                    e.fds.back,
+                                    @intCast(cpu.size.width),
+                                    @intCast(cpu.size.height),
+                                    cpu.size.format,
+                                );
+                                _ = try wl.buffers.double_buffer_create_cpu(wl, vp);
+                            },
+                            .viewport_create_with_fds_gpu => {
+                                const gpu = @field(event, @tagName(tag));
+                                const vp: Viewport = .init_gpu(
+                                    key,
+                                    e.fds.front,
+                                    e.fds.back,
+                                    @intCast(gpu.width),
+                                    @intCast(gpu.height),
+                                    gpu.format,
+                                    gpu.gbm_bo_modifier,
+                                );
+                                _ = try wl.buffers.double_buffer_create_gpu(wl, vp);
+                            },
+                            else => comptime unreachable,
+                        }
+                    }
+                },
+                .win32 => @panic("TODO"),
             }
-
-            gop.value_ptr.* = viewport;
         },
         .viewport_buffers_swap => |key| {
             switch (ws.native) {
                 .wayland => |wl| {
                     for (wl.windows.values()) |win| {
-                        const buffer = wl.buffers.double_buffers.get(win.subsurface.buffer_id).?;
-                        if (!std.meta.eql(buffer.viewport_key, key))
+                        const buffer = wl.buffers.double_buffers.get(win.subsurface.buffer_id) orelse {
+                            continue;
+                        };
+                        if (!std.meta.eql(buffer.viewport.key, key))
                             continue;
 
                         wl.buffers_swap(&win.subsurface) catch |err| switch (err) {
@@ -142,31 +172,13 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                 .win32 => @panic("TODO"),
             }
         },
-        .viewport_resize => |e| {
-            const key: ViewportKey = .{
-                .client_id = e.client_id,
-                .viewport_id = e.resize.viewport_id,
-            };
-
-            const vp = ws.viewports.getPtr(key) orelse return;
-
-            vp.width = @intCast(e.resize.width);
-            vp.height = @intCast(e.resize.height);
-            switch (ws.native) {
-                .wayland => |wl| {
-                    wl.buffer_resize_to_viewport(vp.*);
-                },
-                .win32 => @panic("TODO"),
-            }
-        },
         .window_create => |key| {
             switch (ws.native) {
                 .wayland => |wl| {
-                    const viewport = ws.viewports.get(key) orelse return error.ViewportDoesNotExist;
                     const id = ws.window_next_id;
                     ws.window_next_id = @enumFromInt(@intFromEnum(id) + 1);
 
-                    const window = try wl.window_create(ws, id, viewport);
+                    const window = try wl.window_create(ws, id, key);
                     wl.window_ensure_configured(window);
                 },
                 .win32 => @panic("TODO"),
@@ -191,7 +203,9 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
 
                     const vp_key = wl.buffers.double_buffer_viewport_key(
                         win.subsurface.buffer_id,
-                    ).?;
+                    ) orelse {
+                        return;
+                    };
 
                     ws.server_event_queue.put(
                         .{

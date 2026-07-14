@@ -47,23 +47,28 @@ pub fn destroy(server: *Server) void {
 
 pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !events.WindowSystem {
     switch (payload) {
-        .viewport_create_with_fds_cpu => |msg| {
+        inline .viewport_create_with_fds_cpu,
+        => |msg, tag| {
             if (os_tag != .linux) {
                 return error.UnsupportedMessageOnOs;
             }
 
-            return .{
-                .viewport_create_with_fds_cpu = .{
+            const expr = switch (tag) {
+                .viewport_create_with_fds_cpu => events.WindowSystem.ViewportCreateWithFdsCpu{
                     .client_id = client.id,
                     .viewport_id = msg.id,
                     .size = msg.size,
                     .fds = msg.fds,
                 },
+                else => comptime unreachable,
             };
+
+            return @unionInit(events.WindowSystem, @tagName(tag), expr);
         },
-        .viewport_create_with_fds_gpu => |msg| {
-            return .{
-                .viewport_create_with_fds_gpu = .{
+        inline .viewport_create_with_fds_gpu,
+        => |msg, tag| {
+            const expr = switch (tag) {
+                .viewport_create_with_fds_gpu => events.WindowSystem.ViewportCreateWithFdsGpu{
                     .client_id = client.id,
                     .viewport_id = msg.id,
                     .fds = msg.fds,
@@ -74,7 +79,9 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                     .format = msg.format,
                     .gbm_bo_modifier = msg.gbm_bo_modifier,
                 },
+                else => comptime unreachable,
             };
+            return @unionInit(events.WindowSystem, @tagName(tag), expr);
         },
 
         .viewport_buffers_swap => |msg| {
@@ -82,14 +89,6 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 .viewport_buffers_swap = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
-                },
-            };
-        },
-        .viewport_resize => |msg| {
-            return .{
-                .viewport_resize = .{
-                    .client_id = client.id,
-                    .resize = msg,
                 },
             };
         },

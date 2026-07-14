@@ -1,28 +1,9 @@
 pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystem);
 pub const WindowSystem = union(enum) {
-    viewport_create_with_fds_cpu: struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        size: ViewportSize,
-        fds: ViewportFds,
-    },
-    viewport_create_with_fds_gpu: struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        fds: ViewportFds,
-
-        width: u32,
-        height: u32,
-        format: ViewportFormat,
-
-        gbm_bo_modifier: u64,
-    },
+    viewport_create_with_fds_cpu: ViewportCreateWithFdsCpu,
+    viewport_create_with_fds_gpu: ViewportCreateWithFdsGpu,
     viewport_buffers_swap: ViewportKey,
-    viewport_resize: struct {
-        client_id: ClientID,
-        resize: ViewportResize,
-    },
 
     window_create: ViewportKey,
     window_resize_by_display_server: struct {
@@ -33,6 +14,25 @@ pub const WindowSystem = union(enum) {
     wayland_dispatch: struct {
         result_queue: *WindowSystemResultQueue,
     },
+
+    pub const ViewportCreateWithFdsCpu = struct {
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        size: ViewportSize,
+        fds: ViewportFds,
+    };
+
+    pub const ViewportCreateWithFdsGpu = struct {
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        fds: ViewportFds,
+
+        width: u32,
+        height: u32,
+        format: ViewportFormat,
+
+        gbm_bo_modifier: u64,
+    };
 };
 
 pub const WindowSystemResult = union(enum) {

@@ -75,7 +75,7 @@ pub fn set_listeners(wl: *Wayland, ws: *WindowSystem) !void {
     keyboard.setListener(*WindowSystem, keyboard_listener, ws);
 }
 
-pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport: Viewport) !*Window {
+pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey) !*Window {
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
     const window = try wl.gpa.create(Window);
@@ -90,10 +90,14 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
-    const subsurface = try wl.window_subsurface_create(surface, viewport);
+    const buffer_id = wl.buffers.double_buffer_id_from_viewport_key(viewport_key) orelse return error.ViewportDoesNowExist;
+    const subsurface = try wl.window_subsurface_create(surface, buffer_id);
+    const surface_buffer = wl.buffers.double_buffers.get(buffer_id).?;
 
     const bytes_per_pixel = 4;
-    const size = viewport.width * viewport.height * bytes_per_pixel;
+    const width = surface_buffer.width();
+    const height = surface_buffer.height();
+    const size = width * height * bytes_per_pixel;
     const fd = try std.posix.memfd_create("agce-wayland", 0);
     if (std.posix.errno(std.posix.system.ftruncate(fd, size)) != .SUCCESS) return error.FtruncateFailed;
     const pixels = try std.posix.mmap(
@@ -105,8 +109,6 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
         0,
     );
 
-    const width = viewport.width;
-    const height = viewport.height;
     const buffer = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, fd, width, height, bytes_per_pixel, .argb8888);
 
     window.* = .{
@@ -129,7 +131,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
     return window;
 }
 
-pub fn viewport_overridden(wl: *Wayland, viewport: Viewport) !void {
+pub fn viewport_updated(wl: *Wayland, viewport: Viewport) !void {
     for (wl.windows.values()) |win| {
         const vp_key = wl.buffers.double_buffer_viewport_key(
             win.subsurface.buffer_id,
@@ -149,12 +151,7 @@ pub fn viewport_overridden(wl: *Wayland, viewport: Viewport) !void {
     }
 }
 
-pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, vp: Viewport) !Subsurface {
-    const buffer: DoubleBufferID = switch (vp.kind) {
-        .cpu => try wl.buffers.double_buffer_create_cpu(wl, vp),
-        .gpu => try wl.buffers.double_buffer_create_gpu(wl, vp),
-    };
-
+pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, buffer_id: DoubleBufferID) !Subsurface {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
@@ -163,7 +160,7 @@ pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, vp: 
     return .{
         .surface = surface,
         .subsurface = subsurface,
-        .buffer_id = buffer,
+        .buffer_id = buffer_id,
         .damaged = true,
     };
 }
@@ -213,17 +210,6 @@ pub fn window_ensure_configured(wl: *Wayland, win: *Window) void {
 pub fn buffers_swap(wl: *Wayland, subsurface: *Subsurface) !void {
     subsurface.damaged = true;
     wl.buffers.double_buffer_swap(subsurface.buffer_id);
-}
-
-pub fn buffer_resize_to_viewport(wl: *Wayland, viewport: Viewport) void {
-    for (wl.windows.values()) |win| {
-        const buffer = wl.buffers.double_buffers.get(win.subsurface.buffer_id).?;
-        if (std.meta.eql(buffer.viewport_key, viewport.key)) {
-            wl.buffers.double_buffer_resize(win.subsurface.buffer_id, wl, viewport) catch |err| {
-                log.err("Failed to resize {} {}", .{ err, win.subsurface.buffer_id });
-            };
-        }
-    }
 }
 
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
