@@ -1,310 +1,119 @@
 pub const Buffers = @This();
 
 pub const init: @This() = .{
-    .double_buffers = .empty,
-    .wl_buffers = .empty,
     .wl_buffers_pending = .empty,
-    .buffer_next_id = .first,
-    .double_buffer_next_id = .first,
+    .buffers_commited = .empty,
+    .buffer_listeners = .empty,
+    .buffer_listeners_pool = .empty,
+    .buffers_cpu = .empty,
+    .buffers_gpu = .empty,
 };
 
-double_buffers: std.array_hash_map.Auto(DoubleBufferID, DoubleBuffer),
+wl_buffers_pending: std.array_hash_map.Auto(BufferKey, OnReceive),
+buffer_listeners: std.array_hash_map.Auto(BufferKey, *callbacks.BufferListener),
+buffer_listeners_pool: std.heap.MemoryPool(callbacks.BufferListener),
 
-wl_buffers: std.array_hash_map.Auto(BufferID, *cwl.Buffer),
-wl_buffers_pending: std.array_hash_map.Auto(BufferID, OnReceive),
+buffers_commited: std.array_hash_map.Auto(BufferKey, ViewportID),
 
-buffer_next_id: BufferID,
-double_buffer_next_id: DoubleBufferID,
+buffers_cpu: std.array_hash_map.Auto(BufferKey, CpuBuffer),
+buffers_gpu: std.array_hash_map.Auto(BufferKey, GpuBuffer),
 
-pub fn viewport_exists(b: *Buffers, key: ViewportKey) bool {
-    return b.double_buffer_id_from_viewport_key(key) != null;
-}
-
-pub fn double_buffer_id_from_viewport_key(b: *Buffers, key: ViewportKey) ?DoubleBufferID {
-    for (b.double_buffers.keys(), b.double_buffers.values()) |id, buffer| {
-        if (std.meta.eql(buffer.viewport.key, key)) return id;
-    }
-
+pub fn buffer_get(b: *Buffers, key: BufferKey) ?Buffer {
+    if (b.buffers_gpu.get(key)) |gpu| return .{ .gpu = gpu };
+    if (b.buffers_cpu.get(key)) |cpu| return .{ .cpu = cpu };
     return null;
 }
 
-pub fn double_buffer_create_cpu(b: *Buffers, wl: *Wayland, vp: Viewport) !DoubleBufferID {
-    try b.double_buffers.ensureUnusedCapacity(wl.gpa, 1);
-
-    const w = vp.width;
-    const h = vp.height;
-    const f: cwl.Shm.Format = .argb8888;
-    const bpp = vp.format.bytes_per_pixel();
-    const back = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.back_fd, w, h, bpp, f);
-    const front = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.front_fd, w, h, bpp, f);
-
-    const buffer: DoubleBuffer = .{
-        .viewport = vp,
-        .back = .{ .cpu = back },
-        .front = .{ .cpu = front },
-    };
-
-    const id = b.double_buffer_next_id;
-    b.double_buffer_next_id.increment();
-
-    b.double_buffers.putAssumeCapacityNoClobber(id, buffer);
-
-    return id;
-}
-
-pub fn double_buffer_create_gpu(b: *Buffers, wl: *Wayland, vp: Viewport) !DoubleBufferID {
-    try b.double_buffers.ensureUnusedCapacity(wl.gpa, 1);
-
-    const w = vp.width;
-    const h = vp.height;
-    const f = vp.format;
-    const m = vp.modifier;
-    const back = try wl.buffers.buffer_create_gpu_async(wl, vp.back_fd, w, h, f, m);
-    const front = try wl.buffers.buffer_create_gpu_async(wl, vp.front_fd, w, h, f, m);
-
-    const buffer: DoubleBuffer = .{
-        .viewport = vp,
-        .back = .{ .gpu = back },
-        .front = .{ .gpu = front },
-    };
-
-    const id = b.double_buffer_next_id;
-    b.double_buffer_next_id.increment();
-
-    b.double_buffers.putAssumeCapacityNoClobber(id, buffer);
-
-    return id;
-}
-
-pub fn double_buffer_update_cpu(b: *Buffers, wl: *Wayland, vp: Viewport) !void {
-    const id = b.double_buffer_id_from_viewport_key(vp.key) orelse @panic("assert: Must exist");
-    const buffer = b.double_buffers.getPtr(id) orelse @panic("assert: Must exist");
-
-    const w = vp.width;
-    const h = vp.height;
-    const f: cwl.Shm.Format = .argb8888;
-    const bpp = vp.format.bytes_per_pixel();
-    const back = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.back_fd, w, h, bpp, f);
-    const front = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, vp.front_fd, w, h, bpp, f);
-
-    b.buffer_destroy(buffer.back.cpu.id);
-    b.buffer_destroy(buffer.front.cpu.id);
-
-    buffer.* = .{
-        .viewport = vp,
-        .back = .{ .cpu = back },
-        .front = .{ .cpu = front },
-    };
-}
-pub fn double_buffer_update_gpu(b: *Buffers, wl: *Wayland, vp: Viewport) !void {
-    const id = b.double_buffer_id_from_viewport_key(vp.key) orelse @panic("assert: Must exist");
-    const buffer = b.double_buffers.getPtr(id) orelse @panic("assert: Must exist");
-
-    const w = vp.width;
-    const h = vp.height;
-    const f = vp.format;
-    const m = vp.modifier;
-    const back = try wl.buffers.buffer_create_gpu_async(wl, vp.back_fd, w, h, f, m);
-    const front = try wl.buffers.buffer_create_gpu_async(wl, vp.front_fd, w, h, f, m);
-
-    b.buffer_destroy(buffer.back.gpu.id);
-    b.buffer_destroy(buffer.front.gpu.id);
-
-    buffer.* = .{
-        .viewport = vp,
-        .back = .{ .gpu = back },
-        .front = .{ .gpu = front },
-    };
-}
-
-pub fn double_buffer_destroy(b: *Buffers, id: DoubleBufferID) void {
-    const entry = b.double_buffers.fetchOrderedRemove(id) orelse return;
-    const buffer = entry.value;
-    const front, const back = switch (buffer.front) {
-        .cpu => .{ buffer.front.cpu.id, buffer.back.cpu.id },
-        .gpu => .{ buffer.front.gpu.id, buffer.back.gpu.id },
-    };
-
-    b.buffer_destroy(front);
-    b.buffer_destroy(back);
-}
-
-pub fn double_buffer_swap(b: *Buffers, id: DoubleBufferID) void {
-    const buffer = b.double_buffers.getPtr(id) orelse return;
-    std.mem.swap(BufferSource, &buffer.back, &buffer.front);
-}
-
-pub fn double_buffer_resize(
+pub fn buffer_create_and_register_cpu(
     b: *Buffers,
-    id: DoubleBufferID,
-    wl: *Wayland,
-    viewport: Viewport,
+    ws: *WindowSystem,
+    gpa: std.mem.Allocator,
+    shm: *cwl.Shm,
+    key: BufferKey,
+    fd: c_int,
+    width: i32,
+    height: i32,
+    format: BufferFormat,
 ) !void {
-    const buffer = b.double_buffers.getPtr(id) orelse return;
+    try b.buffers_cpu.ensureUnusedCapacity(gpa, 1);
+    try b.buffer_set_listener_prepare(ws.gpa);
 
-    switch (buffer.front) {
-        .cpu => {
-            const new_front = try b.buffer_create_cpu(
-                wl.gpa,
-                wl.shm,
-                viewport.front_fd,
-                viewport.width,
-                viewport.height,
-                viewport.format.bytes_per_pixel(),
-                buffer.front.cpu.format,
-            );
+    const cpu = try b.buffer_create_cpu(shm, fd, width, height, format);
+    b.buffer_set_listener(ws, cpu.wl_buffer, key);
 
-            const new_back = try b.buffer_create_cpu(
-                wl.gpa,
-                wl.shm,
-                viewport.back_fd,
-                viewport.width,
-                viewport.height,
-                viewport.format.bytes_per_pixel(),
-                buffer.back.cpu.format,
-            );
-
-            errdefer comptime unreachable;
-
-            b.buffer_destroy(buffer.front.cpu.id);
-            b.buffer_destroy(buffer.back.cpu.id);
-
-            buffer.* = .{
-                .viewport_key = viewport.key,
-                .version = buffer.version + 1,
-                .front = .{ .cpu = new_front },
-                .back = .{ .cpu = new_back },
-            };
-        },
-        .gpu => @panic("TODO"),
-    }
-}
-
-pub fn double_buffer_wl_buffer(
-    b: *Buffers,
-    id: DoubleBufferID,
-) ?*cwl.Buffer {
-    const buffer = b.double_buffers.getPtr(id) orelse return null;
-    return b.wl_buffers.get(buffer.front_id());
-}
-
-pub fn double_buffer_viewport_key(
-    b: *Buffers,
-    id: DoubleBufferID,
-) ?ViewportKey {
-    const buffer = b.double_buffers.getPtr(id) orelse return null;
-    return buffer.viewport.key;
+    b.buffers_cpu.putAssumeCapacityNoClobber(key, cpu);
 }
 
 pub fn buffer_create_cpu(
-    b: *Buffers,
-    gpa: std.mem.Allocator,
+    _: *Buffers,
     shm: *cwl.Shm,
     fd: c_int,
     width: i32,
     height: i32,
-    bytes_per_pixel: u8,
-    format: cwl.Shm.Format,
+    format: BufferFormat,
 ) !CpuBuffer {
-    try b.wl_buffers.ensureUnusedCapacity(gpa, 1);
-
-    const stride = width * bytes_per_pixel;
-    const size = width * height * bytes_per_pixel;
+    const stride = width * format.bytes_per_pixel();
+    const size = width * height * format.bytes_per_pixel();
     const pool = try shm.createPool(fd, size);
     defer pool.destroy();
 
-    const buffer = try pool.createBuffer(0, width, height, stride, format);
+    const wl_format: cwl.Shm.Format = switch (format) {
+        .argb8888 => .argb8888,
+    };
 
-    const id = b.buffer_next_id;
-    b.buffer_next_id.increment();
-
-    b.wl_buffers.putAssumeCapacityNoClobber(id, buffer);
+    const buffer = try pool.createBuffer(0, width, height, stride, wl_format);
 
     return .{
-        .id = id,
+        .wl_buffer = buffer,
         .width = width,
         .height = height,
-        .bytes_per_pixel = bytes_per_pixel,
         .format = format,
     };
 }
 
-pub fn buffer_create_gpu_async(
+pub fn buffer_create_and_register_gpu_async(
     b: *Buffers,
+    ws: *WindowSystem,
     wl: *Wayland,
+    key: BufferKey,
     fd: c_int,
     width: i32,
     height: i32,
-    vp_format: ViewportFormat,
+    b_format: BufferFormat,
     modifier: u64,
-) !GpuBuffer {
-    const callback = struct {
-        const Data = struct { wl: *Wayland, id: BufferID };
-
-        fn func(
-            p: *zwp.LinuxBufferParamsV1,
-            event: zwp.LinuxBufferParamsV1.Event,
-            data: *Data,
-        ) void {
-            switch (event) {
-                .created => |result| {
-                    const on_receive = data.wl.buffers.wl_buffers_pending.get(data.id).?;
-
-                    switch (on_receive) {
-                        .register => {
-                            data.wl.buffers.wl_buffers.putAssumeCapacityNoClobber(
-                                data.id,
-                                result.buffer,
-                            );
-                            log.debug("GPU buffer created {}", .{data.id});
-                        },
-                        .destroy => {
-                            result.buffer.destroy();
-                            log.debug("GPU buffer created and destroyed {}", .{data.id});
-                        },
-                    }
-                },
-                .failed => @panic("TODO"),
-            }
-
-            p.destroy();
-            data.wl.gpa.destroy(data);
-        }
-    };
-
+) !void {
     const mod_lo: u32 = @intCast(modifier & 0xFF_FF_FF_FF);
     const mod_hi: u32 = @intCast(modifier >> 32);
-    const stride: u32 = @intCast(width * vp_format.bytes_per_pixel());
-    const format = switch (vp_format) {
+    const stride: u32 = @intCast(width * b_format.bytes_per_pixel());
+    const format = switch (b_format) {
         .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
     };
 
-    const data = try wl.gpa.create(callback.Data);
+    const data = try wl.gpa.create(callbacks.GpuBufferAsync);
     errdefer wl.gpa.destroy(data);
 
     try b.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
-    try b.wl_buffers.ensureUnusedCapacity(wl.gpa, b.wl_buffers_pending.capacity());
+    try b.buffers_gpu.ensureUnusedCapacity(wl.gpa, b.wl_buffers_pending.capacity());
+    try b.buffer_set_listener_prepare(ws.gpa);
 
     const params = try wl.dmabuf.createParams();
 
     errdefer comptime unreachable;
 
-    const id = b.buffer_next_id;
-    b.buffer_next_id.increment();
+    b.wl_buffers_pending.putAssumeCapacityNoClobber(key, .register);
 
-    b.wl_buffers_pending.putAssumeCapacityNoClobber(id, .register);
-
-    data.* = .{ .id = id, .wl = wl };
-    params.add(fd, 0, 0, stride, mod_hi, mod_lo);
-    params.create(width, height, format, .{});
-    params.setListener(*callback.Data, callback.func, data);
-    log.debug("GPU Buffer Requsted {}", .{data.id});
-
-    return .{
-        .id = id,
+    const gpu: GpuBuffer = .{
+        .wl_buffer = undefined,
         .width = width,
         .height = height,
     };
+
+    data.* = .{ .key = key, .wl = wl, .ws = ws, .gpu = gpu };
+    params.add(fd, 0, 0, stride, mod_hi, mod_lo);
+    params.create(width, height, format, .{});
+    params.setListener(*callbacks.GpuBufferAsync, callbacks.buffer_create_and_register_gpu_async, data);
+
+    log.debug("GPU Buffer Requsted {}", .{data.key});
 }
 
 pub fn buffer_destroy(b: *Buffers, id: BufferID) void {
@@ -319,67 +128,154 @@ pub fn buffer_destroy(b: *Buffers, id: BufferID) void {
     buffer.destroy();
 }
 
-pub const BufferID = enum(u32) {
-    const first: @This() = @enumFromInt(1);
-    _,
+pub fn buffer_set_listener_prepare(
+    b: *Buffers,
+    gpa: std.mem.Allocator,
+) !void {
+    const total = b.wl_buffers_pending.capacity() + b.wl_buffers_pending.count() + 1;
 
-    pub fn increment(this: *@This()) void {
-        const int = @intFromEnum(this.*);
-        this.* = @enumFromInt(int + 1);
+    try b.buffer_listeners.ensureTotalCapacity(gpa, total);
+    try b.buffer_listeners_pool.addCapacity(gpa, 1);
+}
+
+pub fn buffer_set_listener(b: *Buffers, ws: *WindowSystem, wl_buffer: *cwl.Buffer, buffer_key: BufferKey) void {
+    const data = b.buffer_listeners_pool.create(ws.gpa) catch unreachable;
+
+    data.* = .{
+        .ws = ws,
+        .buffers = b,
+        .client_id = buffer_key.client_id,
+        .buffer_id = buffer_key.buffer_id,
+    };
+
+    wl_buffer.setListener(*callbacks.BufferListener, callbacks.buffer_present_listener, data);
+    b.buffer_listeners.putAssumeCapacityNoClobber(buffer_key, data);
+
+    log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_key });
+}
+
+pub fn viewport_mark_commit(b: *Buffers, ws: *WindowSystem, buffer_key: BufferKey, viewport_id: ViewportID) !void {
+    try b.buffers_commited.ensureUnusedCapacity(ws.gpa, 1);
+
+    errdefer comptime unreachable;
+
+    const commited = b.buffers_commited.getOrPutAssumeCapacity(buffer_key);
+    if (commited.found_existing) {
+        // TODO: Figure out a better way to handle this case
+        @panic("The client tried to present the buffer before it was released");
     }
-};
 
-pub const DoubleBufferID = enum(u32) {
-    const first: @This() = @enumFromInt(1);
-    _,
+    commited.value_ptr.* = viewport_id;
+}
 
-    pub fn increment(this: *@This()) void {
-        const int = @intFromEnum(this.*);
-        this.* = @enumFromInt(int + 1);
-    }
-};
+const Buffer = union(enum) {
+    gpu: GpuBuffer,
+    cpu: CpuBuffer,
 
-pub const DoubleBuffer = struct {
-    viewport: Viewport,
-    front: BufferSource,
-    back: BufferSource,
-
-    fn front_id(buffer: DoubleBuffer) BufferID {
-        return switch (buffer.front) {
-            inline else => |v| v.id,
+    pub fn wl_buffer(b: Buffer) *cwl.Buffer {
+        return switch (b) {
+            inline else => |v| v.wl_buffer,
         };
     }
 
-    pub fn width(b: DoubleBuffer) i32 {
-        return switch (b.front) {
+    pub fn width(b: Buffer) i32 {
+        return switch (b) {
             inline else => |v| v.width,
         };
     }
 
-    pub fn height(b: DoubleBuffer) i32 {
-        return switch (b.front) {
+    pub fn height(b: Buffer) i32 {
+        return switch (b) {
             inline else => |v| v.height,
         };
     }
 };
 
-const BufferSource = union(enum) {
-    gpu: GpuBuffer,
-    cpu: CpuBuffer,
+pub const callbacks = struct {
+    const GpuBufferAsync = struct {
+        wl: *Wayland,
+        ws: *WindowSystem,
+        key: BufferKey,
+        gpu: GpuBuffer,
+    };
+
+    fn buffer_create_and_register_gpu_async(
+        p: *zwp.LinuxBufferParamsV1,
+        event: zwp.LinuxBufferParamsV1.Event,
+        data: *GpuBufferAsync,
+    ) void {
+        switch (event) {
+            .created => |result| {
+                const on_receive = data.wl.buffers.wl_buffers_pending.get(data.key).?;
+
+                switch (on_receive) {
+                    .register => {
+                        data.wl.buffers.buffer_set_listener(data.ws, result.buffer, data.key);
+                        data.wl.buffers.buffers_gpu.putAssumeCapacityNoClobber(
+                            data.key,
+                            .{
+                                .wl_buffer = result.buffer,
+                                .width = data.gpu.width,
+                                .height = data.gpu.height,
+                            },
+                        );
+
+                        log.debug("GPU buffer created {}", .{data.key});
+                    },
+                    .destroy => {
+                        result.buffer.destroy();
+                        log.debug("GPU buffer created and destroyed {}", .{data.key});
+                    },
+                }
+            },
+            .failed => @panic("TODO"),
+        }
+
+        p.destroy();
+        data.wl.gpa.destroy(data);
+    }
+
+    const BufferListener = struct {
+        ws: *WindowSystem,
+        buffers: *Buffers,
+        client_id: ClientID,
+        buffer_id: BufferID,
+    };
+
+    fn buffer_present_listener(_: *cwl.Buffer, event: cwl.Buffer.Event, data: *BufferListener) void {
+        switch (event) {
+            .release => {
+                const entry = data.buffers.buffers_commited.fetchSwapRemove(.{
+                    .client_id = data.client_id,
+                    .buffer_id = data.buffer_id,
+                }).?;
+
+                log.debug("Received release event for wl_buffer {} {} {}", .{ data.client_id, data.buffer_id, entry.value });
+                data.ws.server_event_queue.put(
+                    .{
+                        .buffer_released = .{
+                            .client_id = data.client_id,
+                            .buffer_id = data.buffer_id,
+                            .viewport_id = entry.value,
+                        },
+                    },
+                );
+            },
+        }
+    }
 };
 
 pub const GpuBuffer = struct {
-    id: BufferID,
+    wl_buffer: *cwl.Buffer,
     width: i32,
     height: i32,
 };
 
 pub const CpuBuffer = struct {
-    id: BufferID,
+    wl_buffer: *cwl.Buffer,
     width: i32,
     height: i32,
-    bytes_per_pixel: u8,
-    format: cwl.Shm.Format,
+    format: BufferFormat,
 };
 
 const OnReceive = enum {
@@ -392,9 +288,14 @@ const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const Wayland = @import("../Wayland.zig");
-const ViewportFormat = @import("../../protocol/types.zig").ViewportFormat;
+const BufferFormat = @import("../../protocol/types.zig").BufferFormat;
 const ViewportFds = @import("../../protocol/types.zig").ViewportFds;
 const Viewport = @import("../Viewport.zig");
 const c_linux = @import("c_linux");
-const log = std.log.scoped(.BufferCollection);
+const log = std.log.scoped(.Buffers);
 const ViewportKey = @import("../WindowSystem.zig").ViewportKey;
+const BufferKey = @import("../WindowSystem.zig").BufferKey;
+const WindowSystem = @import("../WindowSystem.zig");
+const BufferID = @import("../../protocol/types.zig").BufferID;
+const ViewportID = @import("../../protocol/types.zig").ViewportID;
+const ClientID = @import("../../server/Clients.zig").ClientID;

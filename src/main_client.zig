@@ -1,6 +1,8 @@
 const viewport_id_cpu: protocol_types.ViewportID = @enumFromInt(1);
 const viewport_id_gpu: protocol_types.ViewportID = @enumFromInt(2);
 
+var next_buffer_id: protocol_types.BufferID = .first;
+
 pub fn main(init: std.process.Init) !void {
     if (@import("builtin").os.tag == .windows) {
         // silence compile errors for now
@@ -32,20 +34,82 @@ pub fn main(init: std.process.Init) !void {
 
     var viewport: Viewport = try .init(1280, 720);
 
-    // cpu
-    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .viewport_create_with_fds_cpu = .{ .id = viewport_id_cpu, .width = viewport.width, .height = viewport.height, .format = viewport.format, .fds = .{ .front = viewport.front_fd, .back = viewport.back_fd } } });
-    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .window_create = .{ .viewport_id = viewport_id_cpu } });
+    const cpu_table = .{
+        .{ .id = viewport.front.id, .fd = viewport.front.fd },
+        .{ .id = viewport.back.id, .fd = viewport.back.fd },
+    };
+    inline for (cpu_table) |entry| {
+        try client_to_server.message_send_json(
+            init.io,
+            init.gpa,
+            stream,
+            .{
+                .buffer_create_cpu_with_fd = .{
+                    .id = entry.id,
+                    .width = viewport.width,
+                    .height = viewport.height,
+                    .format = viewport.format,
+                    .fd = entry.fd,
+                },
+            },
+        );
+    }
 
-    // gpu
-    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .viewport_create_with_fds_gpu = .{ .id = viewport_id_gpu, .width = viewport_gl.width, .height = viewport_gl.height, .format = viewport_gl.format, .gbm_bo_modifier = viewport_gl.modifier, .fds = .{ .front = viewport_gl.front_buffer.get_fd(), .back = viewport_gl.back_buffer.get_fd() } } });
-    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .window_create = .{ .viewport_id = viewport_id_gpu } });
+    const gpu_table = .{
+        .{ .id = viewport_gl.front_buffer.id, .fd = viewport_gl.front_buffer.get_fd() },
+        .{ .id = viewport_gl.back_buffer.id, .fd = viewport_gl.back_buffer.get_fd() },
+    };
+    inline for (gpu_table) |entry| {
+        try client_to_server.message_send_json(
+            init.io,
+            init.gpa,
+            stream,
+            .{
+                .buffer_create_gpu_with_fd = .{
+                    .id = entry.id,
+                    .width = viewport.width,
+                    .height = viewport.height,
+                    .format = viewport.format,
+                    .gbm_bo_modifier = viewport_gl.modifier,
+                    .fd = entry.fd,
+                },
+            },
+        );
+    }
+
+    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .window_create = .{
+        .viewport_id = viewport_id_cpu,
+        .width = viewport.width,
+        .height = viewport.height,
+    } });
+    try client_to_server.message_send_json(init.io, init.gpa, stream, .{ .window_create = .{
+        .viewport_id = viewport_id_gpu,
+        .width = viewport_gl.width,
+        .height = viewport_gl.height,
+    } });
+
+    // try crash(init.io, init.gpa, stream, &viewport_gl, gl, gbm_device);
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();
+    var time = Io.Timestamp.now(init.io, .awake);
+    var first_frame = true;
     while (true) {
-        try render_cpu(init.io, init.gpa, stream, &viewport, random);
+        const should_render =
+            time.untilNow(init.io, .awake).toMilliseconds() >= 1000 or
+            first_frame;
 
-        try render_gpu(init.io, init.gpa, stream, &viewport_gl, random);
+        if (should_render) {
+            if (viewport.back.released) {
+                try render_cpu(init.io, init.gpa, stream, &viewport, random);
+            }
+
+            if (viewport_gl.back_buffer.released) {
+                try render_gpu(init.io, init.gpa, stream, &viewport_gl, random);
+            }
+
+            time = .now(init.io, .awake);
+        }
 
         const timeout: Io.Timeout =
             .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
@@ -61,7 +125,7 @@ pub fn main(init: std.process.Init) !void {
             gbm_device,
         );
 
-        try init.io.sleep(.fromMilliseconds(1000), .awake);
+        first_frame = false;
     }
 }
 
@@ -121,6 +185,21 @@ fn handle_server_message(
                 unreachable;
             }
         },
+        .buffer_released => |e| {
+            if (e.viewport_id == viewport_id_gpu) {
+                if (e.buffer_id == viewport_gl.front_buffer.id) {
+                    viewport_gl.front_buffer.released = true;
+                } else if (e.buffer_id == viewport_gl.back_buffer.id) {
+                    viewport_gl.back_buffer.released = true;
+                }
+            } else if (e.viewport_id == viewport_id_cpu) {
+                if (e.buffer_id == viewport.front.id) {
+                    viewport.front.released = true;
+                } else if (e.buffer_id == viewport.back.id) {
+                    viewport.back.released = true;
+                }
+            }
+        },
     }
 }
 
@@ -131,23 +210,26 @@ fn resize_cpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport: *Vie
     viewport.deinit();
     viewport.* = new_viewport;
 
-    try client_to_server.message_send_json(
-        io,
-        gpa,
-        stream,
-        .{
-            .viewport_create_with_fds_cpu = .{
-                .id = viewport_id_cpu,
-                .width = viewport.width,
-                .height = viewport.height,
-                .format = viewport.format,
-                .fds = .{
-                    .front = viewport.front_fd,
-                    .back = viewport.back_fd,
+    const cpu_table = .{
+        .{ .id = viewport.front.id, .fd = viewport.front.fd },
+        .{ .id = viewport.back.id, .fd = viewport.back.fd },
+    };
+    inline for (cpu_table) |entry| {
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            stream,
+            .{
+                .buffer_create_cpu_with_fd = .{
+                    .id = entry.id,
+                    .width = viewport.width,
+                    .height = viewport.height,
+                    .format = viewport.format,
+                    .fd = entry.fd,
                 },
             },
-        },
-    );
+        );
+    }
 }
 
 fn resize_gpu(
@@ -164,24 +246,27 @@ fn resize_gpu(
     viewport.deinit(gl_ctx);
     viewport.* = new_viewport;
 
-    try client_to_server.message_send_json(
-        io,
-        gpa,
-        stream,
-        .{
-            .viewport_create_with_fds_gpu = .{
-                .id = viewport_id_gpu,
-                .width = viewport.width,
-                .height = viewport.height,
-                .format = viewport.format,
-                .gbm_bo_modifier = viewport.modifier,
-                .fds = .{
-                    .front = viewport.front_buffer.get_fd(),
-                    .back = viewport.back_buffer.get_fd(),
+    const table = .{
+        .{ .id = viewport.front_buffer.id, .fd = viewport.front_buffer.get_fd() },
+        .{ .id = viewport.back_buffer.id, .fd = viewport.back_buffer.get_fd() },
+    };
+    inline for (table) |entry| {
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            stream,
+            .{
+                .buffer_create_gpu_with_fd = .{
+                    .id = entry.id,
+                    .width = viewport.width,
+                    .height = viewport.height,
+                    .format = viewport.format,
+                    .gbm_bo_modifier = viewport.modifier,
+                    .fd = entry.fd,
                 },
             },
-        },
-    );
+        );
+    }
 }
 
 const ViewportGL = struct {
@@ -189,7 +274,7 @@ const ViewportGL = struct {
     height: u32,
     stride: u32,
     bpp: u8,
-    format: protocol_types.ViewportFormat,
+    format: protocol_types.BufferFormat,
     modifier: u64,
 
     front_buffer: Buffer,
@@ -226,13 +311,22 @@ const ViewportGL = struct {
         bo: *c_linux.struct_gbm_bo,
         gbm_texture: opengl.GbmBackedTexture,
         fbo: glad.GLuint,
+        id: protocol_types.BufferID,
+        released: bool,
 
         pub fn init(gl: opengl.ContextLinux, gbm_device: *c_linux.struct_gbm_device, width: u32, height: u32) !Buffer {
             const bo = try gbm_bo_create(gbm_device, width, height);
             const gbm_texture = try opengl.egl_image_from_gbm_bo(gl, bo);
             const fbo = try opengl.fbo_gen(gbm_texture.texture);
 
-            return .{ .bo = bo, .gbm_texture = gbm_texture, .fbo = fbo };
+            const id = next_buffer_id.increment();
+            return .{
+                .bo = bo,
+                .gbm_texture = gbm_texture,
+                .fbo = fbo,
+                .id = id,
+                .released = true,
+            };
         }
 
         pub fn deinit(buffer: *Buffer, gl: opengl.ContextLinux) void {
@@ -261,43 +355,56 @@ fn gbm_bo_create(gbm_device: *c_linux.struct_gbm_device, width: u32, height: u32
 const Viewport = struct {
     width: u32,
     height: u32,
-    format: protocol_types.ViewportFormat,
+    format: protocol_types.BufferFormat,
 
-    front_fd: c_int,
-    back_fd: c_int,
-    front_buffer: []align(std.heap.page_size_min) u8,
-    back_buffer: []align(std.heap.page_size_min) u8,
+    front: Buffer,
+    back: Buffer,
 
     pub fn init(width: u32, height: u32) !Viewport {
-        const format: protocol_types.ViewportFormat = .argb8888;
+        const format: protocol_types.BufferFormat = .argb8888;
         const s = width * height * format.bytes_per_pixel();
         const front_fd, const front_buffer = try create_fd(s);
         const back_fd, const back_buffer = try create_fd(s);
 
+        const front_id = next_buffer_id.increment();
+        const back_id = next_buffer_id.increment();
         return .{
             .width = width,
             .height = height,
             .format = format,
 
-            .front_fd = front_fd,
-            .back_fd = back_fd,
-
-            .front_buffer = front_buffer,
-            .back_buffer = back_buffer,
+            .front = .{
+                .id = front_id,
+                .fd = front_fd,
+                .data = front_buffer,
+                .released = true,
+            },
+            .back = .{
+                .id = back_id,
+                .fd = back_fd,
+                .data = back_buffer,
+                .released = true,
+            },
         };
     }
 
     pub fn deinit(vp: *Viewport) void {
-        std.posix.munmap(vp.front_buffer);
-        std.posix.munmap(vp.back_buffer);
-        _ = std.os.linux.close(vp.front_fd);
-        _ = std.os.linux.close(vp.back_fd);
+        std.posix.munmap(vp.front.data);
+        std.posix.munmap(vp.back.data);
+        _ = std.os.linux.close(vp.front.fd);
+        _ = std.os.linux.close(vp.back.fd);
     }
 
     fn swap(vp: *Viewport) void {
-        std.mem.swap([]align(std.heap.page_size_min) u8, &vp.front_buffer, &vp.back_buffer);
-        std.mem.swap(c_int, &vp.front_fd, &vp.back_fd);
+        std.mem.swap(Buffer, &vp.front, &vp.back);
     }
+
+    const Buffer = struct {
+        id: protocol_types.BufferID,
+        fd: c_int,
+        data: []align(std.heap.page_size_min) u8,
+        released: bool,
+    };
 };
 
 fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } {
@@ -316,39 +423,89 @@ fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } 
 }
 
 fn render_cpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport: *Viewport, random: std.Random) !void {
+    std.debug.assert(viewport.back.released);
+
     const r: u8 = random.int(u8);
     const g: u8 = random.int(u8);
     const b: u8 = random.int(u8);
     const a: u8 = 0xFF;
-    std.log.info("Sent {x} {x} {x} {x}", .{ r, g, b, a });
+    std.log.info("Sent {x} {x} {x} {x} BufferID({})", .{ r, g, b, a, @intFromEnum(viewport.back.id) });
     var i: usize = 0;
-    while (i < viewport.back_buffer.len) : (i += 4) {
-        viewport.back_buffer[i + 0] = @intCast(b); // B
-        viewport.back_buffer[i + 1] = @intCast(g); // G
-        viewport.back_buffer[i + 2] = @intCast(r); // R
-        viewport.back_buffer[i + 3] = @intCast(a); // A
+    while (i < viewport.back.data.len) : (i += 4) {
+        viewport.back.data[i + 0] = @intCast(b); // B
+        viewport.back.data[i + 1] = @intCast(g); // G
+        viewport.back.data[i + 2] = @intCast(r); // R
+        viewport.back.data[i + 3] = @intCast(a); // A
     }
-    try client_to_server.message_send_json(io, gpa, stream, .{ .viewport_buffers_swap = .{
-        .viewport_id = viewport_id_cpu,
-    } });
+
     viewport.swap();
+
+    viewport.front.released = false;
+    try client_to_server.message_send_json(
+        io,
+        gpa,
+        stream,
+        .{
+            .buffer_present = .{
+                .viewport_id = viewport_id_cpu,
+                .buffer_id = viewport.front.id,
+            },
+        },
+    );
 }
 
 fn render_gpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport_gl: *ViewportGL, random: std.Random) !void {
+    std.debug.assert(viewport_gl.back_buffer.released);
+
     const fr = random.float(f32);
     const fg = random.float(f32);
     const fb = random.float(f32);
     const fa = 1;
-    std.log.info("Sent {d} {d} {d} {d}", .{ fr, fg, fb, fa });
+    std.log.info("Sent {d} {d} {d} {d} BufferID({})", .{ fr, fg, fb, fa, @intFromEnum(viewport_gl.back_buffer.id) });
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, viewport_gl.back_buffer.fbo);
     glad.glViewport(0, 0, @intCast(viewport_gl.width), @intCast(viewport_gl.height));
     glad.glClearColor(fr, fg, fb, fa);
     glad.glClear(glad.GL_COLOR_BUFFER_BIT);
     glad.glFinish();
-    try client_to_server.message_send_json(io, gpa, stream, .{ .viewport_buffers_swap = .{
-        .viewport_id = viewport_id_gpu,
-    } });
+
     viewport_gl.swap();
+
+    viewport_gl.front_buffer.released = false;
+    try client_to_server.message_send_json(
+        io,
+        gpa,
+        stream,
+        .{
+            .buffer_present = .{
+                .viewport_id = viewport_id_gpu,
+                .buffer_id = viewport_gl.front_buffer.id,
+            },
+        },
+    );
+}
+
+fn crash(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport_gl: *ViewportGL, gl: opengl.ContextLinux, gbm_device: *c_linux.struct_gbm_device) !void {
+    for (0..100) |i| {
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            stream,
+            .{
+                .buffer_present = .{
+                    .viewport_id = viewport_id_gpu,
+                    .buffer_id = viewport_gl.front_buffer.id,
+                },
+            },
+        );
+        try resize_gpu(io, gpa, stream, viewport_gl, gl, gbm_device, .{
+            .viewport_id = viewport_id_gpu,
+            .width = viewport_gl.width + @as(u32, @truncate(i)),
+            .height = viewport_gl.height + @as(u32, @truncate(i)),
+        });
+        try io.sleep(.fromMilliseconds(1), .awake);
+    }
+
+    std.process.exit(1);
 }
 
 const std = @import("std");

@@ -11,10 +11,22 @@ pub const ViewportFds = extern struct {
     back: c_int,
 };
 
-pub const ViewportFormat = enum {
+pub const BufferID = enum(u32) {
+    pub const first: @This() = @enumFromInt(1);
+
+    _,
+
+    pub fn increment(this: *@This()) @This() {
+        const int = @intFromEnum(this.*);
+        this.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+};
+
+pub const BufferFormat = enum {
     argb8888,
 
-    pub fn bytes_per_pixel(fmt: ViewportFormat) u8 {
+    pub fn bytes_per_pixel(fmt: BufferFormat) u8 {
         return switch (fmt) {
             .argb8888 => 4,
         };
@@ -23,6 +35,8 @@ pub const ViewportFormat = enum {
 
 pub const WindowCreate = struct {
     viewport_id: ViewportID,
+    width: u32,
+    height: u32,
 };
 
 pub const ViewportBuffersSwap = struct {

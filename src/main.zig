@@ -173,7 +173,8 @@ fn server_send(server: *Server) void {
         const event = server.event_queue.get();
 
         switch (event) {
-            .viewport_resize => |e| {
+            inline .buffer_released, .viewport_resize => |e, tag| {
+                log.info("Server sent: {} {}", .{ tag, e });
                 const client = server.clients.map.getPtr(e.client_id) orelse continue;
                 client.event_handle(server, event) catch |err| {
                     log.err("{}", .{err});

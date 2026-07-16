@@ -9,7 +9,7 @@ back_fd: c_int,
 width: i32,
 height: i32,
 stride: i32,
-format: ViewportFormat,
+format: BufferFormat,
 modifier: u64,
 
 pub fn init_cpu(
@@ -18,7 +18,7 @@ pub fn init_cpu(
     back_fd: c_int,
     width: i32,
     height: i32,
-    format: ViewportFormat,
+    format: BufferFormat,
 ) Viewport {
     return .{
         .key = key,
@@ -39,7 +39,7 @@ pub fn init_gpu(
     back_fd: c_int,
     width: i32,
     height: i32,
-    format: ViewportFormat,
+    format: BufferFormat,
     modifier: u64,
 ) Viewport {
     return .{
@@ -64,4 +64,4 @@ pub const Kind = enum { cpu, gpu };
 
 const std = @import("std");
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
-const ViewportFormat = @import("../protocol/types.zig").ViewportFormat;
+const BufferFormat = @import("../protocol/types.zig").BufferFormat;

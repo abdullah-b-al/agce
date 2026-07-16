@@ -22,8 +22,21 @@ pub fn event_handle(client: *Client, server: *Server, event: events.Server) !voi
                 server.io,
                 server.gpa,
                 client.stream,
+                .{ .viewport_resize = e.resize },
+            );
+        },
+        .buffer_released => |e| {
+            std.debug.assert(e.client_id == client.id);
+
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
                 .{
-                    .viewport_resize = e.resize,
+                    .buffer_released = .{
+                        .viewport_id = e.viewport_id,
+                        .buffer_id = e.buffer_id,
+                    },
                 },
             );
         },

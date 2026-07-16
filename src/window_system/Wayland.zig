@@ -75,7 +75,7 @@ pub fn set_listeners(wl: *Wayland, ws: *WindowSystem) !void {
     keyboard.setListener(*WindowSystem, keyboard_listener, ws);
 }
 
-pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey) !*Window {
+pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey, width: i32, height: i32) !*Window {
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
     const window = try wl.gpa.create(Window);
@@ -90,13 +90,9 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
-    const buffer_id = wl.buffers.double_buffer_id_from_viewport_key(viewport_key) orelse return error.ViewportDoesNowExist;
-    const subsurface = try wl.window_subsurface_create(surface, buffer_id);
-    const surface_buffer = wl.buffers.double_buffers.get(buffer_id).?;
+    const subsurface = try wl.window_subsurface_create(surface, viewport_key);
 
     const bytes_per_pixel = 4;
-    const width = surface_buffer.width();
-    const height = surface_buffer.height();
     const size = width * height * bytes_per_pixel;
     const fd = try std.posix.memfd_create("agce-wayland", 0);
     if (std.posix.errno(std.posix.system.ftruncate(fd, size)) != .SUCCESS) return error.FtruncateFailed;
@@ -109,7 +105,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewp
         0,
     );
 
-    const buffer = try wl.buffers.buffer_create_cpu(wl.gpa, wl.shm, fd, width, height, bytes_per_pixel, .argb8888);
+    const buffer = try wl.buffers.buffer_create_cpu(wl.shm, fd, width, height, .argb8888);
 
     window.* = .{
         .id = window_id,
@@ -151,7 +147,7 @@ pub fn viewport_updated(wl: *Wayland, viewport: Viewport) !void {
     }
 }
 
-pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, buffer_id: DoubleBufferID) !Subsurface {
+fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsurface {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
@@ -160,27 +156,14 @@ pub fn window_subsurface_create(wl: *Wayland, parent_surface: *cwl.Surface, buff
     return .{
         .surface = surface,
         .subsurface = subsurface,
-        .buffer_id = buffer_id,
+        .viewport_key = key,
         .damaged = true,
     };
 }
 
-pub fn window_commit(wl: *Wayland, win: *Window) void {
-    if (win.subsurface.damaged) blk: {
-        const wl_buffer = wl.buffers.double_buffer_wl_buffer(win.subsurface.buffer_id) orelse {
-            std.log.err("Could not find wl_buffer for {}", .{win.subsurface.buffer_id});
-            break :blk;
-        };
-        const buffer = wl.buffers.double_buffers.get(win.subsurface.buffer_id).?;
-        win.subsurface.surface.damage(0, 0, buffer.width(), buffer.height());
-        win.subsurface.surface.attach(wl_buffer, 0, 0);
-        win.subsurface.surface.commit();
-        win.subsurface.damaged = false;
-    }
-
-    const wl_buffer = wl.buffers.wl_buffers.get(win.buffer.id).?;
+pub fn window_commit(_: *Wayland, win: *Window) void {
     win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
-    win.surface.attach(wl_buffer, 0, 0);
+    win.surface.attach(win.buffer.wl_buffer, 0, 0);
     win.surface.commit();
 }
 
@@ -201,8 +184,7 @@ pub fn window_ensure_configured(wl: *Wayland, win: *Window) void {
             }
         }
 
-        const wl_buffer = wl.buffers.wl_buffers.get(win.buffer.id).?;
-        win.surface.attach(wl_buffer, 0, 0);
+        win.surface.attach(win.buffer.wl_buffer, 0, 0);
         win.surface.commit();
     }
 }
@@ -291,6 +273,16 @@ pub fn window_id_from_xdg_surface(wl: *const Wayland, xdg_surface: *xdg.Surface)
     unreachable;
 }
 
+pub fn subsurface_and_window_from_viewport_key(wl: *const Wayland, key: ViewportKey) ?struct { window: *Window, subsurface: *Subsurface } {
+    for (wl.windows.values()) |win| {
+        if (std.meta.eql(win.subsurface.viewport_key, key)) {
+            return .{ .window = win, .subsurface = &win.subsurface };
+        }
+    }
+
+    return null;
+}
+
 pub const MaybeGlobals = struct {
     shm: ?*cwl.Shm,
     compositor: ?*cwl.Compositor,
@@ -322,20 +314,18 @@ pub const Window = struct {
     }
 
     pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void {
-        const new_size = width * height * win.buffer.bytes_per_pixel;
-        const old_size = win.buffer.width * win.buffer.height * win.buffer.bytes_per_pixel;
+        const new_size = width * height * win.buffer.format.bytes_per_pixel();
+        const old_size = win.buffer.width * win.buffer.height * win.buffer.format.bytes_per_pixel();
         if (new_size < old_size) {
             const new_buffer = try wl.buffers.buffer_create_cpu(
-                wl.gpa,
                 wl.shm,
                 win.buffer_fd,
                 width,
                 height,
-                win.buffer.bytes_per_pixel,
                 win.buffer.format,
             );
 
-            wl.buffers.buffer_destroy(win.buffer.id);
+            win.buffer.wl_buffer.destroy();
             win.buffer = new_buffer;
         } else {
             const fd = try std.posix.memfd_create("agce-wayland", 0);
@@ -349,12 +339,10 @@ pub const Window = struct {
                 0,
             );
             const new_buffer = try wl.buffers.buffer_create_cpu(
-                wl.gpa,
                 wl.shm,
                 fd,
                 width,
                 height,
-                win.buffer.bytes_per_pixel,
                 win.buffer.format,
             );
 
@@ -373,7 +361,7 @@ pub const Window = struct {
 pub const Subsurface = struct {
     subsurface: *cwl.Subsurface,
     surface: *cwl.Surface,
-    buffer_id: DoubleBufferID,
+    viewport_key: ViewportKey,
     damaged: bool,
 };
 
@@ -402,5 +390,4 @@ const utils = @import("../server/utils.zig");
 const Buffers = @import("wayland/Buffers.zig");
 const c_linux = @import("c_linux");
 const DoubleBuffer = Buffers.DoubleBuffer;
-const DoubleBufferID = Buffers.DoubleBufferID;
 const BufferID = Buffers.BufferID;

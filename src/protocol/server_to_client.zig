@@ -3,22 +3,17 @@ pub const MessageHeader = types.MessageHeaderGeneric(MessageTag);
 pub const Message = struct {
     header: MessageHeader,
     data: []const u8,
-
-    pub fn init(data: []const u8, format: types.MessageFormat, tag: MessageTag) Message {
-        return .{
-            .header = .{
-                .len = @intCast(data.len + @sizeOf(MessageHeader)),
-                .format = format,
-                .message_tag = tag,
-            },
-            .data = data,
-        };
-    }
 };
 
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     viewport_resize: types.ViewportResize,
+    buffer_released: BufferReleased,
+
+    pub const BufferReleased = struct {
+        viewport_id: types.ViewportID,
+        buffer_id: types.BufferID,
+    };
 };
 
 pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {

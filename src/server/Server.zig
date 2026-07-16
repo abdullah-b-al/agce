@@ -47,59 +47,53 @@ pub fn destroy(server: *Server) void {
 
 pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !events.WindowSystem {
     switch (payload) {
-        inline .viewport_create_with_fds_cpu,
+        inline .buffer_create_cpu_with_fd,
+        .buffer_create_gpu_with_fd,
         => |msg, tag| {
             if (os_tag != .linux) {
                 return error.UnsupportedMessageOnOs;
             }
 
             const expr = switch (tag) {
-                .viewport_create_with_fds_cpu => events.WindowSystem.ViewportCreateWithFdsCpu{
+                .buffer_create_cpu_with_fd => events.WindowSystem.BufferCreateCpuWithFd{
                     .client_id = client.id,
-                    .viewport_id = msg.id,
+                    .buffer_id = msg.id,
+                    .fd = msg.fd,
                     .width = msg.width,
                     .height = msg.height,
                     .format = msg.format,
-                    .fds = msg.fds,
                 },
-                else => comptime unreachable,
-            };
-
-            return @unionInit(events.WindowSystem, @tagName(tag), expr);
-        },
-        inline .viewport_create_with_fds_gpu,
-        => |msg, tag| {
-            const expr = switch (tag) {
-                .viewport_create_with_fds_gpu => events.WindowSystem.ViewportCreateWithFdsGpu{
+                .buffer_create_gpu_with_fd => events.WindowSystem.BufferCreateGpuWithFd{
                     .client_id = client.id,
-                    .viewport_id = msg.id,
-                    .fds = msg.fds,
-
+                    .buffer_id = msg.id,
+                    .fd = msg.fd,
                     .width = msg.width,
                     .height = msg.height,
-
                     .format = msg.format,
                     .gbm_bo_modifier = msg.gbm_bo_modifier,
                 },
                 else => comptime unreachable,
             };
+
             return @unionInit(events.WindowSystem, @tagName(tag), expr);
         },
 
-        .viewport_buffers_swap => |msg| {
+        .buffer_present => |msg| {
             return .{
-                .viewport_buffers_swap = .{
+                .buffer_present = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
+                    .buffer_id = msg.buffer_id,
                 },
             };
         },
-
         .window_create => |msg| {
             return .{
                 .window_create = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
+                    .width = msg.width,
+                    .height = msg.height,
                 },
             };
         },
