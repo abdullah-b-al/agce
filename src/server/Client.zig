@@ -13,7 +13,7 @@ pub fn init(
     };
 }
 
-pub fn event_handle(client: *Client, server: *Server, event: events.Server) !void {
+pub fn event_handle(client: *Client, server: *Server, event: Dispatch.Server) !void {
     switch (event) {
         .viewport_resize => |e| {
             std.debug.assert(e.client_id == client.id);
@@ -48,5 +48,5 @@ const Io = std.Io;
 const net = Io.net;
 const Clients = @import("Clients.zig");
 const Server = @import("Server.zig");
-const events = @import("../events.zig");
+const Dispatch = @import("../Dispatch.zig");
 const server_to_client = @import("../protocol/server_to_client.zig");

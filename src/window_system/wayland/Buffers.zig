@@ -26,7 +26,7 @@ pub fn buffer_get(b: *Buffers, key: BufferKey) ?Buffer {
 
 pub fn buffer_create_and_register_cpu(
     b: *Buffers,
-    ws: *WindowSystem,
+    dispatch: *Dispatch,
     gpa: std.mem.Allocator,
     shm: *cwl.Shm,
     key: BufferKey,
@@ -36,10 +36,10 @@ pub fn buffer_create_and_register_cpu(
     format: BufferFormat,
 ) !void {
     try b.buffers_cpu.ensureUnusedCapacity(gpa, 1);
-    try b.buffer_set_listener_prepare(ws.gpa);
+    try b.buffer_set_listener_prepare(gpa);
 
     const cpu = try b.buffer_create_cpu(shm, fd, width, height, format);
-    b.buffer_set_listener(ws, cpu.wl_buffer, key);
+    b.buffer_set_listener(gpa, dispatch, cpu.wl_buffer, key);
 
     b.buffers_cpu.putAssumeCapacityNoClobber(key, cpu);
 }
@@ -73,7 +73,7 @@ pub fn buffer_create_cpu(
 
 pub fn buffer_create_and_register_gpu_async(
     b: *Buffers,
-    ws: *WindowSystem,
+    dispatch: *Dispatch,
     wl: *Wayland,
     key: BufferKey,
     fd: c_int,
@@ -94,7 +94,7 @@ pub fn buffer_create_and_register_gpu_async(
 
     try b.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
     try b.buffers_gpu.ensureUnusedCapacity(wl.gpa, b.wl_buffers_pending.capacity());
-    try b.buffer_set_listener_prepare(ws.gpa);
+    try b.buffer_set_listener_prepare(wl.gpa);
 
     const params = try wl.dmabuf.createParams();
 
@@ -108,7 +108,7 @@ pub fn buffer_create_and_register_gpu_async(
         .height = height,
     };
 
-    data.* = .{ .key = key, .wl = wl, .ws = ws, .gpu = gpu };
+    data.* = .{ .key = key, .wl = wl, .dispatch = dispatch, .gpu = gpu };
     params.add(fd, 0, 0, stride, mod_hi, mod_lo);
     params.create(width, height, format, .{});
     params.setListener(*callbacks.GpuBufferAsync, callbacks.buffer_create_and_register_gpu_async, data);
@@ -138,11 +138,11 @@ pub fn buffer_set_listener_prepare(
     try b.buffer_listeners_pool.addCapacity(gpa, 1);
 }
 
-pub fn buffer_set_listener(b: *Buffers, ws: *WindowSystem, wl_buffer: *cwl.Buffer, buffer_key: BufferKey) void {
-    const data = b.buffer_listeners_pool.create(ws.gpa) catch unreachable;
+pub fn buffer_set_listener(b: *Buffers, gpa: std.mem.Allocator, dispatch: *Dispatch, wl_buffer: *cwl.Buffer, buffer_key: BufferKey) void {
+    const data = b.buffer_listeners_pool.create(gpa) catch unreachable;
 
     data.* = .{
-        .ws = ws,
+        .dispatch = dispatch,
         .buffers = b,
         .client_id = buffer_key.client_id,
         .buffer_id = buffer_key.buffer_id,
@@ -194,7 +194,7 @@ const Buffer = union(enum) {
 pub const callbacks = struct {
     const GpuBufferAsync = struct {
         wl: *Wayland,
-        ws: *WindowSystem,
+        dispatch: *Dispatch,
         key: BufferKey,
         gpu: GpuBuffer,
     };
@@ -210,7 +210,12 @@ pub const callbacks = struct {
 
                 switch (on_receive) {
                     .register => {
-                        data.wl.buffers.buffer_set_listener(data.ws, result.buffer, data.key);
+                        data.wl.buffers.buffer_set_listener(
+                            data.wl.gpa,
+                            data.dispatch,
+                            result.buffer,
+                            data.key,
+                        );
                         data.wl.buffers.buffers_gpu.putAssumeCapacityNoClobber(
                             data.key,
                             .{
@@ -236,7 +241,7 @@ pub const callbacks = struct {
     }
 
     const BufferListener = struct {
-        ws: *WindowSystem,
+        dispatch: *Dispatch,
         buffers: *Buffers,
         client_id: ClientID,
         buffer_id: BufferID,
@@ -251,7 +256,7 @@ pub const callbacks = struct {
                 }).?;
 
                 log.debug("Received release event for wl_buffer {} {} {}", .{ data.client_id, data.buffer_id, entry.value });
-                data.ws.server_event_queue.put(
+                data.dispatch.server_put(
                     .{
                         .buffer_released = .{
                             .client_id = data.client_id,
@@ -259,7 +264,7 @@ pub const callbacks = struct {
                             .viewport_id = entry.value,
                         },
                     },
-                );
+                ) catch {};
             },
         }
     }
@@ -299,3 +304,4 @@ const WindowSystem = @import("../WindowSystem.zig");
 const BufferID = @import("../../protocol/types.zig").BufferID;
 const ViewportID = @import("../../protocol/types.zig").ViewportID;
 const ClientID = @import("../../server/Clients.zig").ClientID;
+const Dispatch = @import("../../Dispatch.zig");

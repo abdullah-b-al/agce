@@ -3,17 +3,16 @@ const Server = @This();
 server: net.Server,
 gpa: std.mem.Allocator,
 io: Io,
+dispatch: *Dispatch,
 
 clients: Clients,
-ws_event_queue: *events.WindowSystemQueue,
-event_queue: *events.ServerQueue,
+
 
 pub fn create(
     io: Io,
     environ: *const std.process.Environ.Map,
     gpa: std.mem.Allocator,
-    ws_event_queue: *events.WindowSystemQueue,
-    event_queue: *events.ServerQueue,
+    dispatch: *Dispatch,
 ) !*Server {
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
@@ -34,8 +33,7 @@ pub fn create(
         .gpa = gpa,
         .io = io,
         .clients = .init,
-        .ws_event_queue = ws_event_queue,
-        .event_queue = event_queue,
+        .dispatch = dispatch,
     };
     return server;
 }
@@ -45,7 +43,7 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !events.WindowSystem {
+pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !Dispatch.WindowSystemEvent {
     switch (payload) {
         inline .buffer_create_cpu_with_fd,
         .buffer_create_gpu_with_fd,
@@ -55,7 +53,7 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
             }
 
             const expr = switch (tag) {
-                .buffer_create_cpu_with_fd => events.WindowSystem.BufferCreateCpuWithFd{
+                .buffer_create_cpu_with_fd => Dispatch.WindowSystemEvent.BufferCreateCpuWithFd{
                     .client_id = client.id,
                     .buffer_id = msg.id,
                     .fd = msg.fd,
@@ -63,7 +61,7 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                     .height = msg.height,
                     .format = msg.format,
                 },
-                .buffer_create_gpu_with_fd => events.WindowSystem.BufferCreateGpuWithFd{
+                .buffer_create_gpu_with_fd => Dispatch.WindowSystemEvent.BufferCreateGpuWithFd{
                     .client_id = client.id,
                     .buffer_id = msg.id,
                     .fd = msg.fd,
@@ -75,7 +73,7 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 else => comptime unreachable,
             };
 
-            return @unionInit(events.WindowSystem, @tagName(tag), expr);
+            return @unionInit(Dispatch.WindowSystemEvent, @tagName(tag), expr);
         },
 
         .buffer_present => |msg| {
@@ -109,6 +107,6 @@ const Clients = @import("Clients.zig");
 const Client = @import("Client.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
-const events = @import("../events.zig");
 const MessagePayload = @import("../protocol/client_to_server.zig").MessagePayload;
 const Viewport = @import("../window_system/Viewport.zig");
+const Dispatch = @import("../Dispatch.zig");

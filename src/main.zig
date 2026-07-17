@@ -2,11 +2,11 @@ fn main_common(
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
+    dispatch: *Dispatch,
     ws: *WindowSystem,
-    server_event_queue: *events.ServerQueue,
 ) !void {
     var group: Io.Group = .init;
-    const server = try Server.create(io, environ_map, gpa, ws.event_queue, server_event_queue);
+    const server = try Server.create(io, environ_map, gpa, dispatch);
     defer server.destroy();
 
     try group.concurrent(io, server_send, .{server});
@@ -17,17 +17,19 @@ fn main_common(
         .wayland => {
             if (os_tag == .linux) {
                 try group.concurrent(io, notify_when_wayland_event_arrives, .{
-                    ws.event_queue,
+                    dispatch,
                     ws.native.wayland.display.getFd(),
                 });
 
-                main_wayland(ws);
+                main_wayland(ws) catch {};
             }
         },
         .win32 => {
             try group.await(io);
         },
     }
+
+    group.cancel(io);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -35,10 +37,9 @@ pub fn main(init: std.process.Init) !void {
         @compileError("Unsupported OS");
     }
 
-    const server_event_queue: *events.ServerQueue = try .create(init.io, init.gpa);
-    const ws_event_queue: *events.WindowSystemQueue = try .create(init.io, init.gpa);
-    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa, ws_event_queue, server_event_queue);
-    try main_common(init.io, init.gpa, init.environ_map, ws, server_event_queue);
+    const dispatch: *Dispatch = try .create(init.io, init.gpa);
+    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa, dispatch);
+    try main_common(init.io, init.gpa, init.environ_map, dispatch, ws);
 }
 
 pub fn wWinMain(
@@ -58,27 +59,25 @@ pub fn wWinMain(
     var environ_map = std.process.Environ.createMap(environ, gpa) catch return 1;
     defer environ_map.deinit();
 
-    const server_event_queue = events.ServerQueue.create(io, gpa) catch return 1;
-    const ws_event_queue = events.WindowSystemQueue.create(io, gpa) catch return 1;
+    const dispatch = Dispatch.create(io, gpa) catch return 1;
     const ws: *WindowSystem = WindowSystem.init_win32(
         io,
         gpa,
         instance,
         cmd_show,
-        ws_event_queue,
-        server_event_queue,
+        dispatch,
     ) catch |err| {
         log.err("{}", .{err});
         return 1;
     };
     defer ws.native.win32.deinit();
 
-    main_common(io, gpa, &environ_map, ws, server_event_queue) catch return 1;
+    main_common(io, gpa, &environ_map, dispatch, ws) catch return 1;
 
     return 0;
 }
 
-fn notify_when_wayland_event_arrives(event_queue: *events.WindowSystemQueue, fd: c_int) void {
+fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Canceled}!void {
     var polls = [_]std.os.linux.pollfd{
         .{
             .fd = fd,
@@ -87,22 +86,25 @@ fn notify_when_wayland_event_arrives(event_queue: *events.WindowSystemQueue, fd:
         },
     };
 
-    var result = events.WindowSystemResultQueue.init(event_queue.io, event_queue.gpa) catch unreachable;
+    var result = Dispatch.WindowSystemResultQueue.init(dispatch.gpa) catch unreachable;
 
     while (true) {
         const poll = std.os.linux.poll(&polls, @intCast(polls.len), -1);
         if (poll > 0) {
-            event_queue.put(.{ .wayland_dispatch = .{ .result_queue = &result } });
+            try dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = &result } });
             // Wait for the main thread to finish processing the compositers events
-            _ = result.get();
+            _ = result.queue.getOne(dispatch.io) catch |err| switch (err) {
+                error.Closed => unreachable,
+                error.Canceled => |e| return e,
+            };
         }
     }
 }
 
-fn main_wayland(ws: *WindowSystem) void {
+fn main_wayland(ws: *WindowSystem) !void {
     const wl = ws.native.wayland;
     while (true) {
-        const e = ws.event_queue.get();
+        const e = try ws.dispatch.window_system_get();
         ws.event_handle(e) catch |err| {
             log.err("event_handle {}", .{err});
         };
@@ -168,9 +170,9 @@ fn server_accept_clients(server: *Server) void {
     }
 }
 
-fn server_send(server: *Server) void {
+fn server_send(server: *Server) error{Canceled}!void {
     while (true) {
-        const event = server.event_queue.get();
+        const event = try server.dispatch.server_get();
 
         switch (event) {
             inline .buffer_released, .viewport_resize => |e, tag| {
@@ -184,7 +186,7 @@ fn server_send(server: *Server) void {
     }
 }
 
-fn server_receive(server: *Server) void {
+fn server_receive(server: *Server) error{Canceled}!void {
     const io = server.io;
 
     var arena_instance: std.heap.ArenaAllocator = .init(server.gpa);
@@ -227,7 +229,7 @@ fn server_receive(server: *Server) void {
 
             if (maybe_message) |message| {
                 if (server.window_system_event_from_message(client, message)) |e| {
-                    server.ws_event_queue.put(e);
+                    try server.dispatch.window_system_put(e);
                     log.debug("Server dispatched event {}", .{e});
                 } else |err| {
                     log.err("{}", .{err});
@@ -252,4 +254,4 @@ const client_to_server = @import("protocol/client_to_server.zig");
 const server_to_client = @import("protocol/server_to_client.zig");
 const log = std.log.scoped(.main);
 const os_tag = @import("builtin").os.tag;
-const events = @import("events.zig");
+const Dispatch = @import("Dispatch.zig");

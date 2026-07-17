@@ -2,9 +2,7 @@ const WindowSystem = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
-
-event_queue: *events.WindowSystemQueue,
-server_event_queue: *events.ServerQueue,
+dispatch: *Dispatch,
 
 window_next_id: WindowBase.WindowID,
 
@@ -13,14 +11,12 @@ native: NativeWindowSystem,
 pub fn init_wayland(
     io: Io,
     gpa: std.mem.Allocator,
-    ws_event_queue: *events.WindowSystemQueue,
-    server_event_queue: *events.ServerQueue,
+    dispatch: *Dispatch,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .init_undefined_native(
         io,
         gpa,
-        ws_event_queue,
-        server_event_queue,
+        dispatch,
     );
 
     const wl: *Wayland = try .init(gpa, io);
@@ -36,14 +32,12 @@ pub fn init_win32(
     gpa: std.mem.Allocator,
     instance: Win32.HINSTANCE,
     cmd_show: c_int,
-    ws_event_queue: *events.WindowSystemQueue,
-    server_event_queue: *events.ServerQueue,
+    dispatch: *Dispatch,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .init_undefined_native(
         io,
         gpa,
-        ws_event_queue,
-        server_event_queue,
+        dispatch,
     );
 
     const win32 = try gpa.create(Win32);
@@ -56,16 +50,14 @@ pub fn init_win32(
 fn init_undefined_native(
     io: Io,
     gpa: std.mem.Allocator,
-    ws_event_queue: *events.WindowSystemQueue,
-    server_event_queue: *events.ServerQueue,
+    dispatch: *Dispatch,
 ) !*WindowSystem {
     const ws = try gpa.create(WindowSystem);
     errdefer gpa.destroy(ws);
     ws.* = .{
         .io = io,
         .gpa = gpa,
-        .event_queue = ws_event_queue,
-        .server_event_queue = server_event_queue,
+        .dispatch = dispatch,
 
         .window_next_id = .first,
 
@@ -75,7 +67,7 @@ fn init_undefined_native(
     return ws;
 }
 
-pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
+pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
     switch (event) {
         inline .buffer_create_gpu_with_fd,
         .buffer_create_cpu_with_fd,
@@ -89,7 +81,7 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                     switch (tag) {
                         .buffer_create_cpu_with_fd => {
                             try wl.buffers.buffer_create_and_register_cpu(
-                                ws,
+                                ws.dispatch,
                                 wl.gpa,
                                 wl.shm,
                                 key,
@@ -101,7 +93,7 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                         },
                         .buffer_create_gpu_with_fd => {
                             try wl.buffers.buffer_create_and_register_gpu_async(
-                                ws,
+                                ws.dispatch,
                                 wl,
                                 key,
                                 e.fd,
@@ -175,7 +167,7 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                     wl.window_commit(win);
                     _ = wl.display.flush();
 
-                    ws.server_event_queue.put(
+                    try ws.dispatch.server_put(
                         .{
                             .viewport_resize = .{
                                 .client_id = win.subsurface.viewport_key.client_id,
@@ -196,7 +188,7 @@ pub fn event_handle(ws: *WindowSystem, event: events.WindowSystem) !void {
                 .wayland => |wl| {
                     _ = wl.display.dispatch();
 
-                    dis.result_queue.put(.{ .wayland_dispatch = true });
+                    try dis.result_queue.queue.putOne(wl.io, .{ .wayland_dispatch = true });
                 },
                 else => {},
             }
@@ -221,7 +213,6 @@ pub const NativeWindowSystem = union(enum) {
 
 const std = @import("std");
 const Io = std.Io;
-const events = @import("../events.zig");
 const Viewport = @import("Viewport.zig");
 const ClientID = @import("../server/Clients.zig").ClientID;
 const ViewportID = @import("../protocol/types.zig").ViewportID;
@@ -232,3 +223,4 @@ const os_tag = @import("builtin").os.tag;
 const log = std.log.scoped(.WindowSystem);
 const BufferID = @import("../protocol/types.zig").BufferID;
 const Buffers = @import("wayland/Buffers.zig");
+const Dispatch = @import("../Dispatch.zig");
