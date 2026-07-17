@@ -154,8 +154,8 @@ pub fn buffer_set_listener(b: *Buffers, gpa: std.mem.Allocator, dispatch: *Dispa
     log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_key });
 }
 
-pub fn viewport_mark_commit(b: *Buffers, ws: *WindowSystem, buffer_key: BufferKey, viewport_id: ViewportID) !void {
-    try b.buffers_commited.ensureUnusedCapacity(ws.gpa, 1);
+pub fn viewport_mark_commit(b: *Buffers, gpa: std.mem.Allocator, buffer_key: BufferKey, viewport_id: ViewportID) !void {
+    try b.buffers_commited.ensureUnusedCapacity(gpa, 1);
 
     errdefer comptime unreachable;
 
@@ -292,16 +292,14 @@ const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
-const Wayland = @import("../Wayland.zig");
-const BufferFormat = @import("../../protocol/types.zig").BufferFormat;
-const ViewportFds = @import("../../protocol/types.zig").ViewportFds;
-const Viewport = @import("../Viewport.zig");
+const Wayland = @import("Wayland.zig");
+const BufferFormat = @import("../protocol/types.zig").BufferFormat;
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.Buffers);
 const ViewportKey = @import("../WindowSystem.zig").ViewportKey;
 const BufferKey = @import("../WindowSystem.zig").BufferKey;
 const WindowSystem = @import("../WindowSystem.zig");
-const BufferID = @import("../../protocol/types.zig").BufferID;
-const ViewportID = @import("../../protocol/types.zig").ViewportID;
-const ClientID = @import("../../server/Clients.zig").ClientID;
-const Dispatch = @import("../../Dispatch.zig");
+const BufferID = @import("../protocol/types.zig").BufferID;
+const ViewportID = @import("../protocol/types.zig").ViewportID;
+const ClientID = @import("../server/Clients.zig").ClientID;
+const Dispatch = @import("../Dispatch.zig");

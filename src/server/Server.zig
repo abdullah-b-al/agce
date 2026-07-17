@@ -108,5 +108,4 @@ const Client = @import("Client.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
 const MessagePayload = @import("../protocol/client_to_server.zig").MessagePayload;
-const Viewport = @import("../window_system/Viewport.zig");
 const Dispatch = @import("../Dispatch.zig");

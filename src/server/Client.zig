@@ -13,7 +13,7 @@ pub fn init(
     };
 }
 
-pub fn event_handle(client: *Client, server: *Server, event: Dispatch.Server) !void {
+pub fn event_handle(client: *Client, server: *Server, event: Dispatch.ServerEvent) !void {
     switch (event) {
         .viewport_resize => |e| {
             std.debug.assert(e.client_id == client.id);

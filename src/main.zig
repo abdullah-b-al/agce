@@ -242,9 +242,9 @@ fn server_receive(server: *Server) error{Canceled}!void {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const Wayland = @import("window_system/Wayland.zig");
-const Win32 = @import("window_system/Win32.zig");
-const WindowSystem = @import("window_system/WindowSystem.zig");
+const Wayland = @import("wayland/Wayland.zig");
+const Win32 = @import("win32/Win32.zig");
+const WindowSystem = @import("WindowSystem.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
 const Server = @import("server/Server.zig");
 const constants = @import("constants.zig");

@@ -34,14 +34,14 @@ pub fn window_system_get(dispatch: *Dispatch) error{Canceled}!WindowSystemEvent 
     };
 }
 
-pub fn server_put(dispatch: *Dispatch, event: Server) error{Canceled}!void {
+pub fn server_put(dispatch: *Dispatch, event: ServerEvent) error{Canceled}!void {
     dispatch.server.queue.putOne(dispatch.io, event) catch |err| switch (err) {
         error.Closed => unreachable,
         error.Canceled => |e| return e,
     };
 }
 
-pub fn server_get(dispatch: *Dispatch) error{Canceled}!Server {
+pub fn server_get(dispatch: *Dispatch) error{Canceled}!ServerEvent {
     return dispatch.server.queue.getOne(dispatch.io) catch |err| switch (err) {
         error.Closed => unreachable,
         error.Canceled => |e| return e,
@@ -56,14 +56,16 @@ pub const WindowSystemEvent = union(enum) {
     buffer_present: BufferPresent,
 
     window_create: WindowCreate,
-    window_resize_by_display_server: struct {
-        id: WindowID,
-        width: i32,
-        height: i32,
-    },
+    window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
         result_queue: *WindowSystemResultQueue,
     },
+
+    pub const WindowResize = struct {
+        id: WindowID,
+        width: i32,
+        height: i32,
+    };
 
     pub const WindowCreate = struct {
         client_id: ClientID,
@@ -107,13 +109,15 @@ pub const WindowSystemResult = union(enum) {
     wayland_dispatch: bool,
 };
 
-pub const ServerQueue = IoQueue(Server);
-pub const Server = union(enum) {
-    viewport_resize: struct {
-        client_id: ClientID,
-        resize: ViewportResize,
-    },
+pub const ServerQueue = IoQueue(ServerEvent);
+pub const ServerEvent = union(enum) {
+    viewport_resize: ViewportResize,
     buffer_released: WindowSystemEvent.BufferPresent,
+
+    pub const ViewportResize = struct {
+        client_id: ClientID,
+        resize: protocol_types.ViewportResize,
+    };
 };
 
 pub fn IoQueue(comptime T: type) type {
@@ -142,13 +146,11 @@ pub fn IoQueue(comptime T: type) type {
 
 const std = @import("std");
 const Io = std.Io;
-const ViewportResize = @import("protocol/types.zig").ViewportResize;
+const protocol_types = @import("protocol/types.zig");
 const ViewportFds = @import("protocol/types.zig").ViewportFds;
 const ViewportID = @import("protocol/types.zig").ViewportID;
 const BufferFormat = @import("protocol/types.zig").BufferFormat;
 const BufferID = @import("protocol/types.zig").BufferID;
-const Viewport = @import("window_system/Viewport.zig");
 const ClientID = @import("server/Clients.zig").ClientID;
-const ViewportKey = @import("window_system/WindowSystem.zig").ViewportKey;
-const WindowBase = @import("window_system/WindowBase.zig");
-const WindowID = WindowBase.WindowID;
+const ViewportKey = @import("WindowSystem.zig").ViewportKey;
+const WindowID = @import("WindowSystem.zig").WindowID;

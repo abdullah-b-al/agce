@@ -6,10 +6,6 @@ pub const MessageFormat = enum(u32) {
 };
 
 pub const ViewportID = enum(u32) { _ };
-pub const ViewportFds = extern struct {
-    front: c_int,
-    back: c_int,
-};
 
 pub const BufferID = enum(u32) {
     pub const first: @This() = @enumFromInt(1);
