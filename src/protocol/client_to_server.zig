@@ -10,6 +10,7 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
     buffer_create_gpu_with_fd: BufferCreateGpuWithFd,
     buffer_present: BufferPresent,
+    buffer_destroy: BufferDestroy,
 
     window_create: types.WindowCreate,
 
@@ -39,6 +40,9 @@ pub const MessagePayload = union(enum(u32)) {
         buffer_id: types.BufferID,
         viewport_id: types.ViewportID,
     };
+    pub const BufferDestroy = struct {
+        buffer_id: types.BufferID,
+    };
 };
 
 pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {
@@ -54,6 +58,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         },
 
         inline .buffer_present,
+        .buffer_destroy,
         .window_create,
         => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
     };
@@ -72,6 +77,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
             try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, p.fd);
         },
         .buffer_present,
+        .buffer_destroy,
         .window_create,
         => {
             var buf: [4096]u8 = undefined;
@@ -175,6 +181,7 @@ fn read_and_parse_data_json_linux(
         },
 
         .buffer_present,
+        .buffer_destroy,
         .window_create,
         => {
             return try read_and_parse_data_json(io, arena, client, header, receive_buf);
@@ -195,6 +202,7 @@ fn read_and_parse_data_json(
         => return error.UnsupportedMessageOnOs,
 
         inline .buffer_present,
+        .buffer_destroy,
         .window_create,
         => |tag| {
             const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));

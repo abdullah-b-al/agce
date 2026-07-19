@@ -115,7 +115,11 @@ pub fn buffer_present(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPrese
         return;
     };
     const buffer = wl.buffers.buffer_get(buffer_key) orelse {
-        log.err("Buffer does not exist {}", .{buffer_key});
+        if (wl.buffers.wl_buffers_pending.contains(buffer_key)) {
+            log.warn("Buffer is pending {}", .{buffer_key});
+        } else {
+            log.err("Buffer does not exist {}", .{buffer_key});
+        }
         return;
     };
 
@@ -127,6 +131,19 @@ pub fn buffer_present(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPrese
 
     result.window.commit();
     _ = wl.display.flush();
+}
+
+pub fn buffer_destroy(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferDestroy) !void {
+    const buffer_key: BufferKey = .{ .client_id = args.client_id, .buffer_id = args.buffer_id };
+    wl.buffers.buffer_destroy(buffer_key);
+    try dispatch.server_put(
+        .{
+            .buffer_destroyed = .{
+                .client_id = buffer_key.client_id,
+                .buffer_id = buffer_key.buffer_id,
+            },
+        },
+    );
 }
 
 pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Dispatch.WindowSystemEvent.WindowCreate) !void {

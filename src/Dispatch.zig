@@ -54,6 +54,7 @@ pub const WindowSystemEvent = union(enum) {
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
     buffer_create_gpu_with_fd: BufferCreateGpuWithFd,
     buffer_present: BufferPresent,
+    buffer_destroy: BufferDestroy,
 
     window_create: WindowCreate,
     window_resize_by_display_server: WindowResize,
@@ -103,6 +104,11 @@ pub const WindowSystemEvent = union(enum) {
         viewport_id: ViewportID,
         buffer_id: BufferID,
     };
+
+    pub const BufferDestroy = struct {
+        client_id: ClientID,
+        buffer_id: BufferID,
+    };
 };
 
 pub const WindowSystemResult = union(enum) {
@@ -113,6 +119,7 @@ pub const ServerQueue = IoQueue(ServerEvent);
 pub const ServerEvent = union(enum) {
     viewport_resize: ViewportResize,
     buffer_released: WindowSystemEvent.BufferPresent,
+    buffer_destroyed: WindowSystemEvent.BufferDestroy,
 
     pub const ViewportResize = struct {
         client_id: ClientID,

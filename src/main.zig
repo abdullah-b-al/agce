@@ -175,7 +175,10 @@ fn server_send(server: *Server) error{Canceled}!void {
         const event = try server.dispatch.server_get();
 
         switch (event) {
-            inline .buffer_released, .viewport_resize => |e, tag| {
+            inline .buffer_released,
+            .buffer_destroyed,
+            .viewport_resize,
+            => |e, tag| {
                 log.info("Server sent: {} {}", .{ tag, e });
                 const client = server.clients.map.getPtr(e.client_id) orelse continue;
                 client.event_handle(server, event) catch |err| {

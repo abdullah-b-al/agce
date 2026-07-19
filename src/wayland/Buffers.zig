@@ -9,7 +9,7 @@ pub const init: @This() = .{
     .buffers_gpu = .empty,
 };
 
-wl_buffers_pending: std.array_hash_map.Auto(BufferKey, OnReceive),
+wl_buffers_pending: std.array_hash_map.Auto(BufferKey, void),
 buffer_listeners: std.array_hash_map.Auto(BufferKey, *callbacks.BufferListener),
 buffer_listeners_pool: std.heap.MemoryPool(callbacks.BufferListener),
 
@@ -89,7 +89,7 @@ pub fn buffer_create_and_register_gpu_async(
         .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
     };
 
-    const data = try wl.gpa.create(callbacks.GpuBufferAsync);
+    const data = try wl.gpa.create(callbacks.RegisterGpuBuffer);
     errdefer wl.gpa.destroy(data);
 
     try b.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
@@ -100,7 +100,7 @@ pub fn buffer_create_and_register_gpu_async(
 
     errdefer comptime unreachable;
 
-    b.wl_buffers_pending.putAssumeCapacityNoClobber(key, .register);
+    b.wl_buffers_pending.putAssumeCapacityNoClobber(key, {});
 
     const gpu: GpuBuffer = .{
         .wl_buffer = undefined,
@@ -111,21 +111,21 @@ pub fn buffer_create_and_register_gpu_async(
     data.* = .{ .key = key, .wl = wl, .dispatch = dispatch, .gpu = gpu };
     params.add(fd, 0, 0, stride, mod_hi, mod_lo);
     params.create(width, height, format, .{});
-    params.setListener(*callbacks.GpuBufferAsync, callbacks.buffer_create_and_register_gpu_async, data);
+    params.setListener(*callbacks.RegisterGpuBuffer, callbacks.register_gpu_buffer, data);
 
     log.debug("GPU Buffer Requsted {}", .{data.key});
 }
 
-pub fn buffer_destroy(b: *Buffers, id: BufferID) void {
-    const entry = b.wl_buffers.fetchSwapRemove(id) orelse {
-        if (b.wl_buffers_pending.contains(id)) {
-            b.wl_buffers_pending.putAssumeCapacity(id, .destroy);
-        }
+pub fn buffer_destroy(b: *Buffers, key: BufferKey) void {
+    // TODO: destroy other related data. such as the fd
 
-        return;
-    };
-    const buffer: *cwl.Buffer = entry.value;
-    buffer.destroy();
+    if (b.buffers_cpu.fetchOrderedRemove(key)) |cpu| {
+        cpu.value.wl_buffer.destroy();
+    }
+
+    if (b.buffers_gpu.fetchOrderedRemove(key)) |gpu| {
+        gpu.value.wl_buffer.destroy();
+    }
 }
 
 pub fn buffer_set_listener_prepare(
@@ -192,46 +192,36 @@ const Buffer = union(enum) {
 };
 
 pub const callbacks = struct {
-    const GpuBufferAsync = struct {
+    const RegisterGpuBuffer = struct {
         wl: *Wayland,
         dispatch: *Dispatch,
         key: BufferKey,
         gpu: GpuBuffer,
     };
 
-    fn buffer_create_and_register_gpu_async(
+    fn register_gpu_buffer(
         p: *zwp.LinuxBufferParamsV1,
         event: zwp.LinuxBufferParamsV1.Event,
-        data: *GpuBufferAsync,
+        data: *RegisterGpuBuffer,
     ) void {
         switch (event) {
             .created => |result| {
-                const on_receive = data.wl.buffers.wl_buffers_pending.get(data.key).?;
-
-                switch (on_receive) {
-                    .register => {
-                        data.wl.buffers.buffer_set_listener(
-                            data.wl.gpa,
-                            data.dispatch,
-                            result.buffer,
-                            data.key,
-                        );
-                        data.wl.buffers.buffers_gpu.putAssumeCapacityNoClobber(
-                            data.key,
-                            .{
-                                .wl_buffer = result.buffer,
-                                .width = data.gpu.width,
-                                .height = data.gpu.height,
-                            },
-                        );
-
-                        log.debug("GPU buffer created {}", .{data.key});
+                data.wl.buffers.buffer_set_listener(
+                    data.wl.gpa,
+                    data.dispatch,
+                    result.buffer,
+                    data.key,
+                );
+                data.wl.buffers.buffers_gpu.putAssumeCapacityNoClobber(
+                    data.key,
+                    .{
+                        .wl_buffer = result.buffer,
+                        .width = data.gpu.width,
+                        .height = data.gpu.height,
                     },
-                    .destroy => {
-                        result.buffer.destroy();
-                        log.debug("GPU buffer created and destroyed {}", .{data.key});
-                    },
-                }
+                );
+
+                log.debug("GPU buffer created {}", .{data.key});
             },
             .failed => @panic("TODO"),
         }
@@ -281,11 +271,6 @@ pub const CpuBuffer = struct {
     width: i32,
     height: i32,
     format: BufferFormat,
-};
-
-const OnReceive = enum {
-    register,
-    destroy,
 };
 
 const std = @import("std");

@@ -40,6 +40,20 @@ pub fn event_handle(client: *Client, server: *Server, event: Dispatch.ServerEven
                 },
             );
         },
+        .buffer_destroyed => |e| {
+            std.debug.assert(e.client_id == client.id);
+
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{
+                    .buffer_destroyed = .{
+                        .buffer_id = e.buffer_id,
+                    },
+                },
+            );
+        },
     }
 }
 

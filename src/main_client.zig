@@ -88,8 +88,6 @@ pub fn main(init: std.process.Init) !void {
         .height = viewport_gl.height,
     } });
 
-    // try crash(init.io, init.gpa, stream, &viewport_gl, gl, gbm_device);
-
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();
     var time = Io.Timestamp.now(init.io, .awake);
@@ -191,12 +189,29 @@ fn handle_server_message(
                     viewport_gl.front_buffer.released = true;
                 } else if (e.buffer_id == viewport_gl.back_buffer.id) {
                     viewport_gl.back_buffer.released = true;
+                } else {
+                    for (viewport_gl.old_buffers.items) |*b| {
+                        if (b.id == e.buffer_id) {
+                            b.released = true;
+                        }
+                    }
                 }
             } else if (e.viewport_id == viewport_id_cpu) {
                 if (e.buffer_id == viewport.front.id) {
                     viewport.front.released = true;
                 } else if (e.buffer_id == viewport.back.id) {
                     viewport.back.released = true;
+                }
+            }
+        },
+        .buffer_destroyed => |e| {
+            var i = viewport_gl.old_buffers.items.len;
+            while (i > 0) {
+                i -= 1;
+                const old = &viewport_gl.old_buffers.items[i];
+                if (e.buffer_id == old.id) {
+                    old.deinit(gl_ctx);
+                    _ = viewport_gl.old_buffers.orderedRemove(i);
                 }
             }
         },
@@ -241,32 +256,7 @@ fn resize_gpu(
     gbm_device: *c_linux.struct_gbm_device,
     resize: protocol_types.ViewportResize,
 ) !void {
-    const new_viewport = try ViewportGL.init(gl_ctx, gbm_device, resize.width, resize.height);
-
-    viewport.deinit(gl_ctx);
-    viewport.* = new_viewport;
-
-    const table = .{
-        .{ .id = viewport.front_buffer.id, .fd = viewport.front_buffer.get_fd() },
-        .{ .id = viewport.back_buffer.id, .fd = viewport.back_buffer.get_fd() },
-    };
-    inline for (table) |entry| {
-        try client_to_server.message_send_json(
-            io,
-            gpa,
-            stream,
-            .{
-                .buffer_create_gpu_with_fd = .{
-                    .id = entry.id,
-                    .width = viewport.width,
-                    .height = viewport.height,
-                    .format = viewport.format,
-                    .gbm_bo_modifier = viewport.modifier,
-                    .fd = entry.fd,
-                },
-            },
-        );
-    }
+    try viewport.resize(io, gpa, stream, gl_ctx, gbm_device, resize.width, resize.height);
 }
 
 const ViewportGL = struct {
@@ -277,6 +267,7 @@ const ViewportGL = struct {
     format: protocol_types.BufferFormat,
     modifier: u64,
 
+    old_buffers: std.ArrayList(Buffer),
     front_buffer: Buffer,
     back_buffer: Buffer,
 
@@ -293,6 +284,7 @@ const ViewportGL = struct {
             .modifier = c_linux.gbm_bo_get_modifier(front_buffer.bo),
             .format = .argb8888,
 
+            .old_buffers = .empty,
             .front_buffer = front_buffer,
             .back_buffer = back_buffer,
         };
@@ -305,6 +297,59 @@ const ViewportGL = struct {
 
     fn swap(vp: *ViewportGL) void {
         std.mem.swap(Buffer, &vp.back_buffer, &vp.front_buffer);
+    }
+
+    pub fn resize(vp: *ViewportGL, io: Io, gpa: std.mem.Allocator, stream: net.Stream, gl_ctx: opengl.ContextLinux, gbm_device: *c_linux.struct_gbm_device, requested_width: u32, requested_height: u32) !void {
+        const width, const height = new_dimensions(requested_width, requested_height);
+
+        // TODO: Use the buffer's width not the viewport's
+        if (width < vp.width and height < vp.height) {
+            return;
+        }
+
+        const front_buffer = try Buffer.init(gl_ctx, gbm_device, width, height);
+        const back_buffer = try Buffer.init(gl_ctx, gbm_device, width, height);
+
+        try vp.old_buffers.append(gpa, vp.front_buffer);
+        try vp.old_buffers.append(gpa, vp.back_buffer);
+
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            stream,
+            .{ .buffer_destroy = .{ .buffer_id = vp.front_buffer.id } },
+        );
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            stream,
+            .{ .buffer_destroy = .{ .buffer_id = vp.back_buffer.id } },
+        );
+
+        vp.front_buffer = front_buffer;
+        vp.back_buffer = back_buffer;
+
+        const table = .{
+            .{ .id = front_buffer.id, .fd = front_buffer.get_fd() },
+            .{ .id = back_buffer.id, .fd = back_buffer.get_fd() },
+        };
+        inline for (table) |entry| {
+            try client_to_server.message_send_json(
+                io,
+                gpa,
+                stream,
+                .{
+                    .buffer_create_gpu_with_fd = .{
+                        .id = entry.id,
+                        .width = width,
+                        .height = height,
+                        .format = vp.format,
+                        .gbm_bo_modifier = vp.modifier,
+                        .fd = entry.fd,
+                    },
+                },
+            );
+        }
     }
 
     pub const Buffer = struct {
@@ -461,13 +506,27 @@ fn render_gpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport_gl: *
     const fg = random.float(f32);
     const fb = random.float(f32);
     const fa = 1;
-    std.log.info("Sent {d} {d} {d} {d} BufferID({})", .{ fr, fg, fb, fa, @intFromEnum(viewport_gl.back_buffer.id) });
+    std.log.info("Sent {d} {d} {d} {d} BufferID({}) fbo({})", .{
+        fr,
+        fg,
+        fb,
+        fa,
+        @intFromEnum(viewport_gl.back_buffer.id),
+        viewport_gl.back_buffer.fbo,
+    });
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, viewport_gl.back_buffer.fbo);
+    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
     glad.glViewport(0, 0, @intCast(viewport_gl.width), @intCast(viewport_gl.height));
-    glad.glClearColor(fr, fg, fb, fa);
-    glad.glClear(glad.GL_COLOR_BUFFER_BIT);
-    glad.glFinish();
+    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
 
+    glad.glClearColor(fr, fg, fb, fa);
+    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
+    glad.glClear(glad.GL_COLOR_BUFFER_BIT);
+    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
+    glad.glFinish();
+    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
+
+    std.debug.print("\n\n\n", .{});
     viewport_gl.swap();
 
     viewport_gl.front_buffer.released = false;
@@ -506,6 +565,23 @@ fn crash(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport_gl: *Viewp
     }
 
     std.process.exit(1);
+}
+
+fn new_dimensions(width: u32, height: u32) struct { u32, u32 } {
+    return .{
+        dimension_multiple_of(width, 640),
+        dimension_multiple_of(height, 480),
+    };
+}
+
+fn dimension_multiple_of(requested: u32, multiple_of: u32) u32 {
+    var result: u32 = 0;
+
+    while (result < requested) {
+        result += multiple_of;
+    }
+
+    return result;
 }
 
 const std = @import("std");

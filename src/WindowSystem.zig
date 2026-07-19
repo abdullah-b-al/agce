@@ -88,6 +88,12 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .buffer_destroy => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.buffer_destroy(ws.dispatch, args),
+                .win32 => @panic("TODO"),
+            }
+        },
         .window_create => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.window_create(ws, args),

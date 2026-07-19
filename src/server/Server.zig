@@ -7,7 +7,6 @@ dispatch: *Dispatch,
 
 clients: Clients,
 
-
 pub fn create(
     io: Io,
     environ: *const std.process.Environ.Map,
@@ -81,6 +80,14 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 .buffer_present = .{
                     .client_id = client.id,
                     .viewport_id = msg.viewport_id,
+                    .buffer_id = msg.buffer_id,
+                },
+            };
+        },
+        .buffer_destroy => |msg| {
+            return .{
+                .buffer_destroy = .{
+                    .client_id = client.id,
                     .buffer_id = msg.buffer_id,
                 },
             };
