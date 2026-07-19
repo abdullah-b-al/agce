@@ -2,17 +2,20 @@ const Subsurface = @This();
 
 subsurface: *cwl.Subsurface,
 surface: *cwl.Surface,
+viewport: *wp.Viewport,
 viewport_key: ViewportKey,
 
-pub fn create(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsurface {
+pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsurface {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
+    const viewport = try wl.viewporter.getViewport(surface);
 
     return .{
         .surface = surface,
         .subsurface = subsurface,
+        .viewport = viewport,
         .viewport_key = key,
     };
 }
@@ -21,6 +24,7 @@ const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
+const wp = @import("wayland").client.wp;
 const ClientID = @import("../server/Clients.zig").ClientID;
 const WindowSystem = @import("../WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;

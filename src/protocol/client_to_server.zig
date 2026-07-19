@@ -12,6 +12,8 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_present: BufferPresent,
     buffer_destroy: BufferDestroy,
 
+    viewport_resize: types.ViewportResize,
+
     window_create: types.WindowCreate,
 
     pub const BufferCreateCpuWithFd = struct {
@@ -60,6 +62,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         inline .buffer_present,
         .buffer_destroy,
         .window_create,
+        .viewport_resize,
         => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
     };
     defer gpa.free(json);
@@ -79,6 +82,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         .buffer_present,
         .buffer_destroy,
         .window_create,
+        .viewport_resize,
         => {
             var buf: [4096]u8 = undefined;
             var writer = stream.writer(io, &buf);
@@ -183,6 +187,7 @@ fn read_and_parse_data_json_linux(
         .buffer_present,
         .buffer_destroy,
         .window_create,
+        .viewport_resize,
         => {
             return try read_and_parse_data_json(io, arena, client, header, receive_buf);
         },
@@ -204,6 +209,7 @@ fn read_and_parse_data_json(
         inline .buffer_present,
         .buffer_destroy,
         .window_create,
+        .viewport_resize,
         => |tag| {
             const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

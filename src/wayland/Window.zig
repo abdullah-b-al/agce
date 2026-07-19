@@ -27,7 +27,8 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
-    const subsurface = try Subsurface.create(wl, surface, viewport_key);
+    const subsurface = try Subsurface.init(wl, surface, viewport_key);
+    subsurface.viewport.setSource(.fromInt(0), .fromInt(0), .fromInt(@intCast(width)), .fromInt(@intCast(height)));
 
     const bytes_per_pixel = 4;
     const size = width * height * bytes_per_pixel;

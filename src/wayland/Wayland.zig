@@ -9,6 +9,8 @@ subcompositor: *cwl.Subcompositor,
 wm_base: *xdg.WmBase,
 seat: *cwl.Seat,
 dmabuf: *zwp.LinuxDmabufV1,
+viewporter: *wp.Viewporter,
+
 display: *cwl.Display,
 registry: *cwl.Registry,
 
@@ -27,6 +29,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
         .seat = null,
         .subcompositor = null,
         .dmabuf = null,
+        .viewporter = null,
     };
 
     registry.setListener(*MaybeGlobals, registry_listener, &globals);
@@ -38,6 +41,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
     const seat = globals.seat orelse return error.NoWlSeat;
     const subcompositor = globals.subcompositor orelse return error.NoWlSubcompositor;
     const dmabuf = globals.dmabuf orelse return error.NoZwpDmaBuf;
+    const viewporter = globals.viewporter orelse return error.NoWpViewporter;
 
     state.* = .{
         .io = io,
@@ -49,6 +53,8 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
         .wm_base = wm_base,
         .seat = seat,
         .dmabuf = dmabuf,
+        .viewporter = viewporter,
+
         .registry = registry,
         .display = display,
 
@@ -146,6 +152,20 @@ pub fn buffer_destroy(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSy
     );
 }
 
+pub fn viewport_resize(wl: *Wayland, args: Dispatch.WindowSystemEvent.ViewportResize) !void {
+    const key: ViewportKey = .{ .client_id = args.client_id, .viewport_id = args.viewport_id };
+
+    const result = wl.subsurface_and_window_from_viewport_key(key) orelse return error.ViewportDoesNotExist;
+
+    // FIXME: Setting any value provided by the client may cause the window to suddenly close
+    // if the dimensions are larger than the buffer's.
+    result.subsurface.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(args.width)),
+        .fromInt(@intCast(args.height)),
+    );
+}
 pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Dispatch.WindowSystemEvent.WindowCreate) !void {
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
@@ -211,6 +231,8 @@ fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals
                 globals.subcompositor = registry.bind(global.name, cwl.Subcompositor, 1) catch return;
             } else if (std.mem.orderZ(u8, global.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
                 globals.dmabuf = registry.bind(global.name, zwp.LinuxDmabufV1, 1) catch return;
+            } else if (std.mem.orderZ(u8, global.interface, wp.Viewporter.interface.name) == .eq) {
+                globals.viewporter = registry.bind(global.name, wp.Viewporter, 1) catch return;
             }
         },
         .global_remove => {},
@@ -296,6 +318,7 @@ pub const MaybeGlobals = struct {
     seat: ?*cwl.Seat,
     subcompositor: ?*cwl.Subcompositor,
     dmabuf: ?*zwp.LinuxDmabufV1,
+    viewporter: ?*wp.Viewporter,
 };
 
 pub fn fill_black(buffer: []u8, width: i32, height: i32, bpp: u8) void {
@@ -312,6 +335,7 @@ const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
+const wp = @import("wayland").client.wp;
 const ClientID = @import("../server/Clients.zig").ClientID;
 const WindowSystem = @import("../WindowSystem.zig");
 const WindowID = WindowSystem.WindowID;

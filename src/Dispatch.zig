@@ -56,6 +56,8 @@ pub const WindowSystemEvent = union(enum) {
     buffer_present: BufferPresent,
     buffer_destroy: BufferDestroy,
 
+    viewport_resize: ViewportResize,
+
     window_create: WindowCreate,
     window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
@@ -108,6 +110,13 @@ pub const WindowSystemEvent = union(enum) {
     pub const BufferDestroy = struct {
         client_id: ClientID,
         buffer_id: BufferID,
+    };
+
+    pub const ViewportResize = struct {
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        width: u32,
+        height: u32,
     };
 };
 

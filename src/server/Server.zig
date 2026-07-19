@@ -102,6 +102,16 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 },
             };
         },
+        .viewport_resize => |msg| {
+            return .{
+                .viewport_resize = .{
+                    .client_id = client.id,
+                    .viewport_id = msg.viewport_id,
+                    .width = msg.width,
+                    .height = msg.height,
+                },
+            };
+        },
     }
 }
 

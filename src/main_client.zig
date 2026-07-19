@@ -300,15 +300,36 @@ const ViewportGL = struct {
     }
 
     pub fn resize(vp: *ViewportGL, io: Io, gpa: std.mem.Allocator, stream: net.Stream, gl_ctx: opengl.ContextLinux, gbm_device: *c_linux.struct_gbm_device, requested_width: u32, requested_height: u32) !void {
-        const width, const height = new_dimensions(requested_width, requested_height);
+        try vp.resize_buffers(io, gpa, stream, gl_ctx, gbm_device, requested_width, requested_height);
 
-        // TODO: Use the buffer's width not the viewport's
-        if (width < vp.width and height < vp.height) {
+        vp.width = requested_width;
+        vp.height = requested_height;
+
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            stream,
+            .{
+                .viewport_resize = .{
+                    .viewport_id = viewport_id_gpu,
+                    .width = vp.width,
+                    .height = vp.height,
+                },
+            },
+        );
+    }
+
+    fn resize_buffers(vp: *ViewportGL, io: Io, gpa: std.mem.Allocator, stream: net.Stream, gl_ctx: opengl.ContextLinux, gbm_device: *c_linux.struct_gbm_device, requested_width: u32, requested_height: u32) !void {
+        const buffer_width, const buffer_height = new_dimensions(requested_width, requested_height);
+
+        const current_width = c_linux.gbm_bo_get_width(vp.front_buffer.bo);
+        const current_height = c_linux.gbm_bo_get_height(vp.front_buffer.bo);
+        if (buffer_width <= current_width and buffer_height <= current_height) {
             return;
         }
 
-        const front_buffer = try Buffer.init(gl_ctx, gbm_device, width, height);
-        const back_buffer = try Buffer.init(gl_ctx, gbm_device, width, height);
+        const front_buffer = try Buffer.init(gl_ctx, gbm_device, buffer_width, buffer_height);
+        const back_buffer = try Buffer.init(gl_ctx, gbm_device, buffer_width, buffer_height);
 
         try vp.old_buffers.append(gpa, vp.front_buffer);
         try vp.old_buffers.append(gpa, vp.back_buffer);
@@ -341,8 +362,8 @@ const ViewportGL = struct {
                 .{
                     .buffer_create_gpu_with_fd = .{
                         .id = entry.id,
-                        .width = width,
-                        .height = height,
+                        .width = buffer_width,
+                        .height = buffer_height,
                         .format = vp.format,
                         .gbm_bo_modifier = vp.modifier,
                         .fd = entry.fd,
@@ -506,13 +527,17 @@ fn render_gpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport_gl: *
     const fg = random.float(f32);
     const fb = random.float(f32);
     const fa = 1;
-    std.log.info("Sent {d} {d} {d} {d} BufferID({}) fbo({})", .{
+    std.log.info("Sent {d:.3} {d:.3} {d:.3} {d:.3} BufferID({}) fbo({}) buffer({}x{}), viewport({}x{})", .{
         fr,
         fg,
         fb,
         fa,
         @intFromEnum(viewport_gl.back_buffer.id),
         viewport_gl.back_buffer.fbo,
+        c_linux.gbm_bo_get_width(viewport_gl.back_buffer.bo),
+        c_linux.gbm_bo_get_height(viewport_gl.back_buffer.bo),
+        viewport_gl.width,
+        viewport_gl.height,
     });
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, viewport_gl.back_buffer.fbo);
     glad.glViewport(0, 0, @intCast(viewport_gl.width), @intCast(viewport_gl.height));
