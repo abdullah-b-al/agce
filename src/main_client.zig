@@ -515,18 +515,11 @@ fn render_gpu(io: Io, gpa: std.mem.Allocator, stream: net.Stream, viewport_gl: *
         viewport_gl.back_buffer.fbo,
     });
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, viewport_gl.back_buffer.fbo);
-    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
     glad.glViewport(0, 0, @intCast(viewport_gl.width), @intCast(viewport_gl.height));
-    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
-
     glad.glClearColor(fr, fg, fb, fa);
-    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
     glad.glClear(glad.GL_COLOR_BUFFER_BIT);
-    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
     glad.glFinish();
-    std.debug.print("{}\n", .{glad.glGetError() == glad.GL_NO_ERROR});
 
-    std.debug.print("\n\n\n", .{});
     viewport_gl.swap();
 
     viewport_gl.front_buffer.released = false;
