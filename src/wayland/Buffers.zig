@@ -132,7 +132,11 @@ pub fn buffer_set_listener_prepare(
     b: *Buffers,
     gpa: std.mem.Allocator,
 ) !void {
-    const total = b.wl_buffers_pending.capacity() + b.wl_buffers_pending.count() + 1;
+    const total =
+        b.wl_buffers_pending.count() +
+        b.buffers_cpu.count() +
+        b.buffers_gpu.count() +
+        1;
 
     try b.buffer_listeners.ensureTotalCapacity(gpa, total);
     try b.buffer_listeners_pool.addCapacity(gpa, 1);
