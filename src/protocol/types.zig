@@ -29,10 +29,17 @@ pub const BufferFormat = enum {
     }
 };
 
+pub const BufferAndTimelineFds = extern struct {
+    buffer: c_int,
+    acquire_timeline: c_int,
+    release_timeline: c_int,
+};
+
 pub const WindowCreate = struct {
     viewport_id: ViewportID,
     width: u32,
     height: u32,
+    create_sync_timeline: bool,
 };
 
 pub const ViewportBuffersSwap = struct {

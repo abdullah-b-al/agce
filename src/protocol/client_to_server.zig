@@ -8,9 +8,12 @@ pub const Message = struct {
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
-    buffer_create_gpu_with_fd: BufferCreateGpuWithFd,
-    buffer_present: BufferPresent,
+    buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
+
     buffer_destroy: BufferDestroy,
+
+    buffer_present: BufferPresent,
+    buffer_present_with_sync: BufferPresentWithSync,
 
     viewport_resize: types.ViewportResize,
 
@@ -26,10 +29,10 @@ pub const MessagePayload = union(enum(u32)) {
         format: types.BufferFormat,
     };
 
-    pub const BufferCreateGpuWithFd = struct {
+    pub const BufferCreateGpuWithFds = struct {
         id: types.BufferID,
 
-        fd: c_int,
+        fds: types.BufferAndTimelineFds,
 
         width: u32,
         height: u32,
@@ -42,14 +45,22 @@ pub const MessagePayload = union(enum(u32)) {
         buffer_id: types.BufferID,
         viewport_id: types.ViewportID,
     };
+
+    pub const BufferPresentWithSync = struct {
+        buffer_id: types.BufferID,
+        viewport_id: types.ViewportID,
+        acquire_point: u32,
+        release_point: u32,
+    };
+
     pub const BufferDestroy = struct {
         buffer_id: types.BufferID,
     };
 };
 
 pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {
+    // TODO: Use a distinct type for the fd and through reflection set it to 0
     const json = switch (payload) {
-        inline .buffer_create_gpu_with_fd,
         .buffer_create_cpu_with_fd,
         => |original| blk: {
             // The fd that's part of the json is wrong.
@@ -59,7 +70,19 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
             break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
         },
 
+        .buffer_create_gpu_with_fds,
+        => |original| blk: {
+            // The fd that's part of the json is wrong.
+            // Set them to 0 to invalidate their use
+            var p = original;
+            p.fds.buffer = 0;
+            p.fds.acquire_timeline = 0;
+            p.fds.release_timeline = 0;
+            break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
+        },
+
         inline .buffer_present,
+        .buffer_present_with_sync,
         .buffer_destroy,
         .window_create,
         .viewport_resize,
@@ -74,12 +97,21 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     };
 
     switch (payload) {
-        inline .buffer_create_gpu_with_fd,
         .buffer_create_cpu_with_fd,
         => |p| {
-            try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, p.fd);
+            try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, c_int, p.fd);
+        },
+        .buffer_create_gpu_with_fds,
+        => |p| {
+            try message_send_json_with_fd(
+                stream,
+                .{ .header = header, .payload = json },
+                @TypeOf(p.fds),
+                p.fds,
+            );
         },
         .buffer_present,
+        .buffer_present_with_sync,
         .buffer_destroy,
         .window_create,
         .viewport_resize,
@@ -126,7 +158,7 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, client: *Client, timeou
     }
 }
 
-fn message_send_json_with_fds(stream: net.Stream, message: Message, fds: types.ViewportFds) !void {
+fn message_send_json_with_fd(stream: net.Stream, message: Message, comptime Fd: type, fd: Fd) !void {
     const total_len = message.payload.len + @sizeOf(MessageHeader);
     std.debug.assert(message.header.len == total_len);
 
@@ -137,24 +169,7 @@ fn message_send_json_with_fds(stream: net.Stream, message: Message, fds: types.V
     std.mem.copyForwards(u8, buf[header.len..], message.payload);
 
     const len = @sizeOf(MessageHeader) + message.payload.len;
-    const result = send_fds(stream.socket.handle, fds, buf[0..len]);
-    if (result < 0) {
-        return error.FailedToSendFds;
-    }
-}
-
-fn message_send_json_with_fd(stream: net.Stream, message: Message, fd: c_int) !void {
-    const total_len = message.payload.len + @sizeOf(MessageHeader);
-    std.debug.assert(message.header.len == total_len);
-
-    const header = std.mem.toBytes(message.header);
-
-    var buf: [4096]u8 = undefined;
-    std.mem.copyForwards(u8, &buf, &header);
-    std.mem.copyForwards(u8, buf[header.len..], message.payload);
-
-    const len = @sizeOf(MessageHeader) + message.payload.len;
-    const result = send_fd(stream.socket.handle, fd, buf[0..len]);
+    const result = send_fd(stream.socket.handle, Fd, fd, buf[0..len]);
     if (result < 0) {
         return error.FailedToSendFds;
     }
@@ -173,11 +188,11 @@ fn read_and_parse_data_json_linux(
 
     switch (header.message_tag) {
         inline .buffer_create_cpu_with_fd,
-        .buffer_create_gpu_with_fd,
+        .buffer_create_gpu_with_fds,
         => |tag| {
             const T = switch (tag) {
                 .buffer_create_cpu_with_fd => MessagePayload.BufferCreateCpuWithFd,
-                .buffer_create_gpu_with_fd => MessagePayload.BufferCreateGpuWithFd,
+                .buffer_create_gpu_with_fds => MessagePayload.BufferCreateGpuWithFds,
                 else => comptime unreachable,
             };
             const parsed = try parse_message_with_fd(T, io, arena, stream, receive_buf);
@@ -185,6 +200,7 @@ fn read_and_parse_data_json_linux(
         },
 
         .buffer_present,
+        .buffer_present_with_sync,
         .buffer_destroy,
         .window_create,
         .viewport_resize,
@@ -202,11 +218,12 @@ fn read_and_parse_data_json(
     receive_buf: []u8,
 ) !MessagePayload {
     switch (header.message_tag) {
-        .buffer_create_gpu_with_fd,
+        .buffer_create_gpu_with_fds,
         .buffer_create_cpu_with_fd,
         => return error.UnsupportedMessageOnOs,
 
         inline .buffer_present,
+        .buffer_present_with_sync,
         .buffer_destroy,
         .window_create,
         .viewport_resize,
@@ -227,37 +244,13 @@ fn read_and_parse_data_json(
     }
 }
 
-fn send_fds(socket: c_int, fds: types.ViewportFds, data_to_send: []const u8) isize {
+fn send_fd(socket: c_int, comptime Fd: type, fd: Fd, data_to_send: []const u8) isize {
     var msg = std.mem.zeroes(c_linux.msghdr);
 
     var iov: c_linux.iovec = .{ .iov_base = @constCast(data_to_send.ptr), .iov_len = data_to_send.len };
     msg.msg_iov = @ptrCast(&iov);
     msg.msg_iovlen = 1;
 
-    var buf: [c_linux.CMSG_SPACE(@sizeOf(types.ViewportFds))]u8 = undefined;
-    msg.msg_control = &buf;
-    msg.msg_controllen = buf.len;
-
-    const hdr = &c_linux.CMSG_FIRSTHDR(&msg)[0];
-    hdr.cmsg_len = c_linux.CMSG_LEN(@sizeOf(types.ViewportFds));
-    hdr.cmsg_level = c_linux.SOL_SOCKET;
-    hdr.cmsg_type = c_linux.SCM_RIGHTS;
-
-    const ptr: [*]u8 = hdr.__cmsg_data();
-    const data: *types.ViewportFds = @ptrCast(@alignCast(ptr));
-    data.* = fds;
-
-    return c_linux.sendmsg(socket, &msg, 0);
-}
-
-fn send_fd(socket: c_int, fd: c_int, data_to_send: []const u8) isize {
-    var msg = std.mem.zeroes(c_linux.msghdr);
-
-    var iov: c_linux.iovec = .{ .iov_base = @constCast(data_to_send.ptr), .iov_len = data_to_send.len };
-    msg.msg_iov = @ptrCast(&iov);
-    msg.msg_iovlen = 1;
-
-    const Fd = c_int;
     var buf: [c_linux.CMSG_SPACE(@sizeOf(Fd))]u8 = undefined;
     msg.msg_control = &buf;
     msg.msg_controllen = buf.len;
@@ -274,7 +267,7 @@ fn send_fd(socket: c_int, fd: c_int, data_to_send: []const u8) isize {
     return c_linux.sendmsg(socket, &msg, 0);
 }
 
-fn recv_fds_peek(socket: c_int) !types.ViewportFds {
+fn recv_fd_peek(comptime Fd: type, socket: c_int) !Fd {
     var msg = std.mem.zeroes(c_linux.msghdr);
 
     var iov_base = "";
@@ -282,42 +275,6 @@ fn recv_fds_peek(socket: c_int) !types.ViewportFds {
     msg.msg_iov = @ptrCast(&iov);
     msg.msg_iovlen = 1;
 
-    var buf: [c_linux.CMSG_SPACE(@sizeOf(types.ViewportFds))]u8 = undefined;
-    msg.msg_control = &buf;
-    msg.msg_controllen = buf.len;
-
-    const bytes = c_linux.recvmsg(socket, &msg, c_linux.MSG_PEEK);
-    if (bytes < 0) {
-        return error.RecvMsgFailed;
-    }
-
-    const hdr = &c_linux.CMSG_FIRSTHDR(&msg)[0];
-    if (@intFromPtr(hdr) == 0) {
-        return error.CmsgNoHeader;
-    }
-
-    if (hdr.cmsg_level != c_linux.SOL_SOCKET) {
-        return error.CmsgInvalidLevel;
-    }
-
-    if (hdr.cmsg_type != c_linux.SCM_RIGHTS) {
-        return error.CmsgInvalidType;
-    }
-
-    const ptr: [*]u8 = hdr.__cmsg_data();
-    const data: *types.ViewportFds = @ptrCast(@alignCast(ptr));
-    return data.*;
-}
-
-fn recv_fd_peek(socket: c_int) !c_int {
-    var msg = std.mem.zeroes(c_linux.msghdr);
-
-    var iov_base = "";
-    var iov: c_linux.iovec = .{ .iov_base = @ptrCast(&iov_base), .iov_len = iov_base.len };
-    msg.msg_iov = @ptrCast(&iov);
-    msg.msg_iovlen = 1;
-
-    const Fd = c_int;
     var buf: [c_linux.CMSG_SPACE(@sizeOf(Fd))]u8 = undefined;
     msg.msg_control = &buf;
     msg.msg_controllen = buf.len;
@@ -345,32 +302,38 @@ fn recv_fd_peek(socket: c_int) !c_int {
     return data.*;
 }
 
-fn parse_message_with_fds(comptime T: type, io: Io, arena: std.mem.Allocator, stream: net.Stream, receive_buf: []u8) !T {
-    const fds = try recv_fds_peek(stream.socket.handle);
-
-    const msg = try stream.socket.receive(io, receive_buf);
-    const data = msg.data[@sizeOf(MessageHeader)..];
-
-    var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-        .allocate = .alloc_if_needed,
-    });
-
-    parsed.fds = fds;
-    return parsed;
-}
-
 fn parse_message_with_fd(comptime T: type, io: Io, arena: std.mem.Allocator, stream: net.Stream, receive_buf: []u8) !T {
-    const fd = try recv_fd_peek(stream.socket.handle);
+    switch (T) {
+        MessagePayload.BufferCreateGpuWithFds => {
+            const fds = try recv_fd_peek(
+                types.BufferAndTimelineFds,
+                stream.socket.handle,
+            );
 
-    const msg = try stream.socket.receive(io, receive_buf);
-    const data = msg.data[@sizeOf(MessageHeader)..];
+            const msg = try stream.socket.receive(io, receive_buf);
+            const data = msg.data[@sizeOf(MessageHeader)..];
 
-    var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-        .allocate = .alloc_if_needed,
-    });
+            var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                .allocate = .alloc_if_needed,
+            });
+            parsed.fds = fds;
 
-    parsed.fd = fd;
-    return parsed;
+            return parsed;
+        },
+        else => {
+            const fd = try recv_fd_peek(c_int, stream.socket.handle);
+
+            const msg = try stream.socket.receive(io, receive_buf);
+            const data = msg.data[@sizeOf(MessageHeader)..];
+
+            var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                .allocate = .alloc_if_needed,
+            });
+            parsed.fd = fd;
+
+            return parsed;
+        },
+    }
 }
 
 const std = @import("std");

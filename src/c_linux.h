@@ -4,3 +4,5 @@
 #include <EGL/eglext.h>
 #include <gbm.h>
 #include <drm/drm_fourcc.h>
+#include <xf86drm.h>
+#include <errno.h>

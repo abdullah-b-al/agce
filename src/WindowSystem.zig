@@ -69,9 +69,9 @@ fn init_undefined_native(
 
 pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
     switch (event) {
-        .buffer_create_gpu_with_fd => |args| {
+        .buffer_create_gpu_with_fds => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.buffer_create_gpu_with_fd(ws.dispatch, args),
+                .wayland => |wl| try wl.buffer_create_gpu_with_fds(ws.dispatch, args),
                 .win32 => @panic("TODO"),
             }
         },
@@ -88,6 +88,13 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .buffer_present_with_sync => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.buffer_present_with_sync(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+
         .buffer_destroy => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.buffer_destroy(ws.dispatch, args),

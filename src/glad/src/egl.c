@@ -29,6 +29,7 @@ int GLAD_EGL_VERSION_1_2 = 0;
 int GLAD_EGL_VERSION_1_3 = 0;
 int GLAD_EGL_VERSION_1_4 = 0;
 int GLAD_EGL_VERSION_1_5 = 0;
+int GLAD_EGL_ANDROID_native_fence_sync = 0;
 int GLAD_EGL_KHR_image = 0;
 int GLAD_EGL_KHR_platform_gbm = 0;
 
@@ -54,6 +55,7 @@ PFNEGLDESTROYIMAGEPROC glad_eglDestroyImage = NULL;
 PFNEGLDESTROYIMAGEKHRPROC glad_eglDestroyImageKHR = NULL;
 PFNEGLDESTROYSURFACEPROC glad_eglDestroySurface = NULL;
 PFNEGLDESTROYSYNCPROC glad_eglDestroySync = NULL;
+PFNEGLDUPNATIVEFENCEFDANDROIDPROC glad_eglDupNativeFenceFDANDROID = NULL;
 PFNEGLGETCONFIGATTRIBPROC glad_eglGetConfigAttrib = NULL;
 PFNEGLGETCONFIGSPROC glad_eglGetConfigs = NULL;
 PFNEGLGETCURRENTCONTEXTPROC glad_eglGetCurrentContext = NULL;
@@ -141,6 +143,10 @@ static void glad_egl_load_EGL_VERSION_1_5( GLADuserptrloadfunc load, void* userp
     glad_eglGetSyncAttrib = (PFNEGLGETSYNCATTRIBPROC) load(userptr, "eglGetSyncAttrib");
     glad_eglWaitSync = (PFNEGLWAITSYNCPROC) load(userptr, "eglWaitSync");
 }
+static void glad_egl_load_EGL_ANDROID_native_fence_sync( GLADuserptrloadfunc load, void* userptr) {
+    if(!GLAD_EGL_ANDROID_native_fence_sync) return;
+    glad_eglDupNativeFenceFDANDROID = (PFNEGLDUPNATIVEFENCEFDANDROIDPROC) load(userptr, "eglDupNativeFenceFDANDROID");
+}
 static void glad_egl_load_EGL_KHR_image( GLADuserptrloadfunc load, void* userptr) {
     if(!GLAD_EGL_KHR_image) return;
     glad_eglCreateImageKHR = (PFNEGLCREATEIMAGEKHRPROC) load(userptr, "eglCreateImageKHR");
@@ -183,6 +189,7 @@ static int glad_egl_find_extensions_egl(EGLDisplay display) {
     const char *extensions;
     if (!glad_egl_get_extensions(display, &extensions)) return 0;
 
+    GLAD_EGL_ANDROID_native_fence_sync = glad_egl_has_extension(extensions, "EGL_ANDROID_native_fence_sync");
     GLAD_EGL_KHR_image = glad_egl_has_extension(extensions, "EGL_KHR_image");
     GLAD_EGL_KHR_platform_gbm = glad_egl_has_extension(extensions, "EGL_KHR_platform_gbm");
 
@@ -247,6 +254,7 @@ int gladLoadEGLUserPtr(EGLDisplay display, GLADuserptrloadfunc load, void* userp
     glad_egl_load_EGL_VERSION_1_5(load, userptr);
 
     if (!glad_egl_find_extensions_egl(display)) return 0;
+    glad_egl_load_EGL_ANDROID_native_fence_sync(load, userptr);
     glad_egl_load_EGL_KHR_image(load, userptr);
 
 

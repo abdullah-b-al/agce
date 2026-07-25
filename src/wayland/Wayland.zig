@@ -10,6 +10,7 @@ wm_base: *xdg.WmBase,
 seat: *cwl.Seat,
 dmabuf: *zwp.LinuxDmabufV1,
 viewporter: *wp.Viewporter,
+sync_object_manager: *wp.LinuxDrmSyncobjManagerV1,
 
 display: *cwl.Display,
 registry: *cwl.Registry,
@@ -30,6 +31,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
         .subcompositor = null,
         .dmabuf = null,
         .viewporter = null,
+        .sync_object_manager = null,
     };
 
     registry.setListener(*MaybeGlobals, registry_listener, &globals);
@@ -42,6 +44,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
     const subcompositor = globals.subcompositor orelse return error.NoWlSubcompositor;
     const dmabuf = globals.dmabuf orelse return error.NoZwpDmaBuf;
     const viewporter = globals.viewporter orelse return error.NoWpViewporter;
+    const sync_object_manager = globals.sync_object_manager orelse return error.NoWpSyncobjManager;
 
     state.* = .{
         .io = io,
@@ -54,6 +57,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
         .seat = seat,
         .dmabuf = dmabuf,
         .viewporter = viewporter,
+        .sync_object_manager = sync_object_manager,
 
         .registry = registry,
         .display = display,
@@ -76,7 +80,7 @@ pub fn destroy(state: *Wayland) void {
     state.gpa.destroy(state);
 }
 
-pub fn buffer_create_gpu_with_fd(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferCreateGpuWithFd) !void {
+pub fn buffer_create_gpu_with_fds(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferCreateGpuWithFds) !void {
     const key: BufferKey = .{
         .client_id = args.client_id,
         .buffer_id = args.buffer_id,
@@ -86,7 +90,7 @@ pub fn buffer_create_gpu_with_fd(wl: *Wayland, dispatch: *Dispatch, args: Dispat
         dispatch,
         wl,
         key,
-        args.fd,
+        args.fds,
         @intCast(args.width),
         @intCast(args.height),
         args.format,
@@ -139,6 +143,55 @@ pub fn buffer_present(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPrese
     _ = wl.display.flush();
 }
 
+pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPresentWithSync) !void {
+    const buffer_key: BufferKey = .{ .client_id = args.client_id, .buffer_id = args.buffer_id };
+    const viewport_key: ViewportKey = .{ .client_id = args.client_id, .viewport_id = args.viewport_id };
+
+    const result = wl.subsurface_and_window_from_viewport_key(viewport_key) orelse {
+        log.err("Viewport does not exist {}", .{viewport_key});
+        return;
+    };
+    const buffer = wl.buffers.buffer_get(buffer_key) orelse {
+        if (wl.buffers.wl_buffers_pending.contains(buffer_key)) {
+            log.warn("Buffer is pending {}", .{buffer_key});
+        } else {
+            log.err("Buffer does not exist {}", .{buffer_key});
+        }
+        return;
+    };
+
+    try wl.buffers.viewport_mark_commit(wl.gpa, buffer_key, viewport_key.viewport_id);
+
+    errdefer comptime unreachable;
+
+    log.debug("Set acquire point {} and release point {} for ClientID({}) ViewportID({}) BufferID({})", .{
+        args.acquire_point,
+        args.release_point,
+        @intFromEnum(args.client_id),
+        @intFromEnum(args.viewport_id),
+        @intFromEnum(args.buffer_id),
+    });
+
+    result.subsurface.surface.damage(0, 0, buffer.width(), buffer.height());
+    result.subsurface.surface.attach(buffer.wl_buffer(), 0, 0);
+
+    if (result.subsurface.sync_surface) |sync_surface| {
+        switch (buffer) {
+            .gpu => |gpu| {
+                sync_surface.setAcquirePoint(gpu.timeline_acquire.?, 0, args.acquire_point);
+                sync_surface.setReleasePoint(gpu.timeline_release.?, 0, args.release_point);
+            },
+            .cpu => {},
+        }
+    }
+
+    result.subsurface.surface.commit();
+    // log.debug("buffer_present_with_sync: commited subsurface for {} {}", .{ buffer_key, viewport_key });
+
+    result.window.commit();
+    _ = wl.display.flush();
+}
+
 pub fn buffer_destroy(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferDestroy) !void {
     const buffer_key: BufferKey = .{ .client_id = args.client_id, .buffer_id = args.buffer_id };
     wl.buffers.buffer_destroy(buffer_key);
@@ -181,8 +234,14 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Dispatch.WindowSyste
         @intCast(args.width),
         @intCast(args.height),
     );
-    wl.windows.putAssumeCapacityNoClobber(id, window);
 
+    if (args.create_sync_timeline) {
+        const sync_surface = try wl.sync_object_manager.getSurface(window.subsurface.surface);
+        std.debug.assert(window.subsurface.sync_surface == null);
+        window.subsurface.sync_surface = sync_surface;
+    }
+
+    wl.windows.putAssumeCapacityNoClobber(id, window);
     window.ensure_configured(wl);
 }
 
@@ -233,6 +292,8 @@ fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals
                 globals.dmabuf = registry.bind(global.name, zwp.LinuxDmabufV1, 1) catch return;
             } else if (std.mem.orderZ(u8, global.interface, wp.Viewporter.interface.name) == .eq) {
                 globals.viewporter = registry.bind(global.name, wp.Viewporter, 1) catch return;
+            } else if (std.mem.orderZ(u8, global.interface, wp.LinuxDrmSyncobjManagerV1.interface.name) == .eq) {
+                globals.sync_object_manager = registry.bind(global.name, wp.LinuxDrmSyncobjManagerV1, 1) catch return;
             }
         },
         .global_remove => {},
@@ -319,6 +380,7 @@ pub const MaybeGlobals = struct {
     subcompositor: ?*cwl.Subcompositor,
     dmabuf: ?*zwp.LinuxDmabufV1,
     viewporter: ?*wp.Viewporter,
+    sync_object_manager: ?*wp.LinuxDrmSyncobjManagerV1,
 };
 
 pub fn fill_black(buffer: []u8, width: i32, height: i32, bpp: u8) void {

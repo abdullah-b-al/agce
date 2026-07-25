@@ -52,8 +52,9 @@ pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystemEvent);
 pub const WindowSystemEvent = union(enum) {
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
-    buffer_create_gpu_with_fd: BufferCreateGpuWithFd,
+    buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
     buffer_present: BufferPresent,
+    buffer_present_with_sync: BufferPresentWithSync,
     buffer_destroy: BufferDestroy,
 
     viewport_resize: ViewportResize,
@@ -75,6 +76,7 @@ pub const WindowSystemEvent = union(enum) {
         viewport_id: ViewportID,
         width: u32,
         height: u32,
+        create_sync_timeline: bool,
     };
 
     pub const BufferCreateCpuWithFd = struct {
@@ -88,11 +90,11 @@ pub const WindowSystemEvent = union(enum) {
         format: BufferFormat,
     };
 
-    pub const BufferCreateGpuWithFd = struct {
+    pub const BufferCreateGpuWithFds = struct {
         client_id: ClientID,
         buffer_id: BufferID,
 
-        fd: c_int,
+        fds: protocol_types.BufferAndTimelineFds,
 
         width: u32,
         height: u32,
@@ -105,6 +107,14 @@ pub const WindowSystemEvent = union(enum) {
         client_id: ClientID,
         viewport_id: ViewportID,
         buffer_id: BufferID,
+    };
+
+    pub const BufferPresentWithSync = struct {
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        buffer_id: BufferID,
+        acquire_point: u32,
+        release_point: u32,
     };
 
     pub const BufferDestroy = struct {

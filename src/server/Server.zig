@@ -45,7 +45,7 @@ pub fn destroy(server: *Server) void {
 pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !Dispatch.WindowSystemEvent {
     switch (payload) {
         inline .buffer_create_cpu_with_fd,
-        .buffer_create_gpu_with_fd,
+        .buffer_create_gpu_with_fds,
         => |msg, tag| {
             if (os_tag != .linux) {
                 return error.UnsupportedMessageOnOs;
@@ -60,10 +60,10 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                     .height = msg.height,
                     .format = msg.format,
                 },
-                .buffer_create_gpu_with_fd => Dispatch.WindowSystemEvent.BufferCreateGpuWithFd{
+                .buffer_create_gpu_with_fds => Dispatch.WindowSystemEvent.BufferCreateGpuWithFds{
                     .client_id = client.id,
                     .buffer_id = msg.id,
-                    .fd = msg.fd,
+                    .fds = msg.fds,
                     .width = msg.width,
                     .height = msg.height,
                     .format = msg.format,
@@ -84,6 +84,17 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 },
             };
         },
+        .buffer_present_with_sync => |msg| {
+            return .{
+                .buffer_present_with_sync = .{
+                    .client_id = client.id,
+                    .viewport_id = msg.viewport_id,
+                    .buffer_id = msg.buffer_id,
+                    .acquire_point = msg.acquire_point,
+                    .release_point = msg.release_point,
+                },
+            };
+        },
         .buffer_destroy => |msg| {
             return .{
                 .buffer_destroy = .{
@@ -99,6 +110,7 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                     .viewport_id = msg.viewport_id,
                     .width = msg.width,
                     .height = msg.height,
+                    .create_sync_timeline = msg.create_sync_timeline,
                 },
             };
         },

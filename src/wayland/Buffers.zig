@@ -76,7 +76,7 @@ pub fn buffer_create_and_register_gpu_async(
     dispatch: *Dispatch,
     wl: *Wayland,
     key: BufferKey,
-    fd: c_int,
+    fds: BufferAndTimelineFds,
     width: i32,
     height: i32,
     b_format: BufferFormat,
@@ -96,6 +96,10 @@ pub fn buffer_create_and_register_gpu_async(
     try b.buffers_gpu.ensureUnusedCapacity(wl.gpa, b.wl_buffers_pending.capacity());
     try b.buffer_set_listener_prepare(wl.gpa);
 
+    std.debug.assert(fds.acquire_timeline != fds.release_timeline);
+    const timeline_acquire = try wl.sync_object_manager.importTimeline(fds.acquire_timeline);
+    const timeline_release = try wl.sync_object_manager.importTimeline(fds.release_timeline);
+
     const params = try wl.dmabuf.createParams();
 
     errdefer comptime unreachable;
@@ -104,12 +108,14 @@ pub fn buffer_create_and_register_gpu_async(
 
     const gpu: GpuBuffer = .{
         .wl_buffer = undefined,
+        .timeline_acquire = timeline_acquire,
+        .timeline_release = timeline_release,
         .width = width,
         .height = height,
     };
 
     data.* = .{ .key = key, .wl = wl, .dispatch = dispatch, .gpu = gpu };
-    params.add(fd, 0, 0, stride, mod_hi, mod_lo);
+    params.add(fds.buffer, 0, 0, stride, mod_hi, mod_lo);
     params.create(width, height, format, .{});
     params.setListener(*callbacks.RegisterGpuBuffer, callbacks.register_gpu_buffer, data);
 
@@ -164,11 +170,6 @@ pub fn viewport_mark_commit(b: *Buffers, gpa: std.mem.Allocator, buffer_key: Buf
     errdefer comptime unreachable;
 
     const commited = b.buffers_commited.getOrPutAssumeCapacity(buffer_key);
-    if (commited.found_existing) {
-        // TODO: Figure out a better way to handle this case
-        @panic("The client tried to present the buffer before it was released");
-    }
-
     commited.value_ptr.* = viewport_id;
 }
 
@@ -222,6 +223,8 @@ pub const callbacks = struct {
                         .wl_buffer = result.buffer,
                         .width = data.gpu.width,
                         .height = data.gpu.height,
+                        .timeline_acquire = data.gpu.timeline_acquire,
+                        .timeline_release = data.gpu.timeline_release,
                     },
                 );
 
@@ -247,7 +250,7 @@ pub const callbacks = struct {
                 const entry = data.buffers.buffers_commited.fetchSwapRemove(.{
                     .client_id = data.client_id,
                     .buffer_id = data.buffer_id,
-                }).?;
+                }) orelse return;
 
                 log.debug("Received release event for wl_buffer {} {} {}", .{ data.client_id, data.buffer_id, entry.value });
                 data.dispatch.server_put(
@@ -266,6 +269,8 @@ pub const callbacks = struct {
 
 pub const GpuBuffer = struct {
     wl_buffer: *cwl.Buffer,
+    timeline_acquire: ?*wp.LinuxDrmSyncobjTimelineV1,
+    timeline_release: ?*wp.LinuxDrmSyncobjTimelineV1,
     width: i32,
     height: i32,
 };
@@ -281,8 +286,10 @@ const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
+const wp = @import("wayland").client.wp;
 const Wayland = @import("Wayland.zig");
 const BufferFormat = @import("../protocol/types.zig").BufferFormat;
+const BufferAndTimelineFds = @import("../protocol/types.zig").BufferAndTimelineFds;
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.Buffers);
 const ViewportKey = @import("../WindowSystem.zig").ViewportKey;

@@ -3,6 +3,7 @@ const Subsurface = @This();
 subsurface: *cwl.Subsurface,
 surface: *cwl.Surface,
 viewport: *wp.Viewport,
+sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 viewport_key: ViewportKey,
 
 pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsurface {
@@ -15,6 +16,7 @@ pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsu
     return .{
         .surface = surface,
         .subsurface = subsurface,
+        .sync_surface = null,
         .viewport = viewport,
         .viewport_key = key,
     };
