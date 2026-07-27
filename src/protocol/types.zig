@@ -5,7 +5,28 @@ pub const MessageFormat = enum(u32) {
     json,
 };
 
-pub const ViewportID = enum(u32) { _ };
+pub const ViewportID = enum(u32) {
+    first_for_client = 1,
+    first_for_server = std.math.maxInt(u16) + 1,
+
+    _,
+
+    pub fn increment_for_client(id: *ViewportID) ViewportID {
+        std.debug.assert(@intFromEnum(id.*) < @intFromEnum(ViewportID.first_for_server));
+
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+
+    pub fn increment_for_server(id: *ViewportID) ViewportID {
+        std.debug.assert(@intFromEnum(id.*) >= @intFromEnum(ViewportID.first_for_server));
+
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+};
 
 pub const BufferID = enum(u32) {
     pub const first: @This() = @enumFromInt(1);
