@@ -157,7 +157,7 @@ fn main_win32(ws: *WindowSystem) !void {
     }
 }
 
-fn server_accept_clients(server: *Server) void {
+fn server_accept_clients(server: *Server) !void {
     while (true) {
         // TODO: Better error handling
         server.clients.ensure_unused_capacity(server.io, server.gpa, 1) catch continue;
@@ -166,7 +166,8 @@ fn server_accept_clients(server: *Server) void {
             continue;
         };
 
-        server.clients.add_assume_capacity(server.io, stream);
+        const id = server.clients.add_assume_capacity(server.io, stream);
+        try server.dispatch.window_system_put(.{ .client_connected = id });
     }
 }
 
@@ -222,6 +223,7 @@ fn server_receive(server: *Server) error{Canceled}!void {
                         log.err("{} closing client\n", .{err});
                         client.stream.close(io);
                         _ = server.clients.map.orderedRemove(id);
+                        try server.dispatch.window_system_put(.{ .client_disconnected = id });
                         continue;
                     },
                     else => {

@@ -69,6 +69,18 @@ fn init_undefined_native(
 
 pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
     switch (event) {
+        .client_connected => |id| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.client_connected(id),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .client_disconnected => |id| {
+            switch (ws.native) {
+                .wayland => |wl| wl.client_disconnected(id),
+                .win32 => @panic("TODO"),
+            }
+        },
         .buffer_create_gpu_with_fds => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.buffer_create_gpu_with_fds(ws.dispatch, args),

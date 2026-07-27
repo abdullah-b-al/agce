@@ -51,6 +51,9 @@ pub fn server_get(dispatch: *Dispatch) error{Canceled}!ServerEvent {
 pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystemEvent);
 pub const WindowSystemEvent = union(enum) {
+    client_connected: ClientID,
+    client_disconnected: ClientID,
+
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
     buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
     buffer_present: BufferPresent,

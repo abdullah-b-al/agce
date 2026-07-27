@@ -25,12 +25,14 @@ pub fn ensure_unused_capacity(cs: *Clients, io: Io, gpa: std.mem.Allocator, coun
     try cs.map.ensureUnusedCapacity(gpa, count);
 }
 
-pub fn add_assume_capacity(cs: *Clients, io: Io, stream: net.Stream) void {
+pub fn add_assume_capacity(cs: *Clients, io: Io, stream: net.Stream) ClientID {
     cs.lock(io);
     defer cs.unlock(io);
 
     const id = cs.new_id();
     cs.map.putAssumeCapacityNoClobber(id, .init(id, stream));
+
+    return id;
 }
 
 fn new_id(cs: *Clients) ClientID {

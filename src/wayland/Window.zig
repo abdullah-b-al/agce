@@ -2,7 +2,8 @@ const Window = @This();
 
 id: WindowID,
 surface: *cwl.Surface,
-subsurface: Subsurface,
+
+viewport_key: ViewportKey,
 
 xdg_surface: *xdg.Surface,
 xdg_toplevel: *xdg.Toplevel,
@@ -12,7 +13,7 @@ running: bool,
 
 buffer_fd: ptypes.CpuBufferFd,
 buffer_pixels: []align(std.heap.page_size_min) u8,
-buffer: Buffers.CpuBuffer,
+buffer: ClientResources.CpuBuffer,
 
 pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey, width: i32, height: i32) !*Window {
     const window = try wl.gpa.create(Window);
@@ -27,9 +28,6 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
-    const subsurface = try Subsurface.init(wl, surface, viewport_key);
-    subsurface.viewport.setSource(.fromInt(0), .fromInt(0), .fromInt(@intCast(width)), .fromInt(@intCast(height)));
-
     const bytes_per_pixel = 4;
     const size = width * height * bytes_per_pixel;
     const fd: ptypes.CpuBufferFd = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
@@ -43,12 +41,12 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
         0,
     );
 
-    const buffer = try wl.buffers.buffer_create_cpu(wl.shm, fd, width, height, .argb8888);
+    const buffer = try ClientResources.buffer_create_cpu(wl.shm, fd, width, height, .argb8888);
 
     window.* = .{
         .id = window_id,
         .surface = surface,
-        .subsurface = subsurface,
+        .viewport_key = viewport_key,
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
         .configured = false,
@@ -95,7 +93,7 @@ pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void 
     const new_size = width * height * win.buffer.format.bytes_per_pixel();
     const old_size = win.buffer.width * win.buffer.height * win.buffer.format.bytes_per_pixel();
     if (new_size < old_size) {
-        const new_buffer = try wl.buffers.buffer_create_cpu(
+        const new_buffer = try ClientResources.buffer_create_cpu(
             wl.shm,
             win.buffer_fd,
             width,
@@ -116,7 +114,7 @@ pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void 
             @intFromEnum(fd),
             0,
         );
-        const new_buffer = try wl.buffers.buffer_create_cpu(
+        const new_buffer = try ClientResources.buffer_create_cpu(
             wl.shm,
             fd,
             width,
@@ -146,9 +144,7 @@ const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
 const log = std.log.scoped(.Wayland);
 const utils = @import("../server/utils.zig");
-const Buffers = @import("Buffers.zig");
 const c_linux = @import("c_linux");
-const DoubleBuffer = Buffers.DoubleBuffer;
-const BufferID = Buffers.BufferID;
 const Wayland = @import("Wayland.zig");
 const ptypes = @import("../protocol/types.zig");
+const ClientResources = @import("ClientResources.zig");

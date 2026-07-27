@@ -1,12 +1,12 @@
 const Subsurface = @This();
 
+id: ViewportID,
 subsurface: *cwl.Subsurface,
 surface: *cwl.Surface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
-viewport_key: ViewportKey,
 
-pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsurface {
+pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID) !Subsurface {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
@@ -14,12 +14,21 @@ pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, key: ViewportKey) !Subsu
     const viewport = try wl.viewporter.getViewport(surface);
 
     return .{
+        .id = id,
         .surface = surface,
         .subsurface = subsurface,
         .sync_surface = null,
         .viewport = viewport,
-        .viewport_key = key,
     };
+}
+
+pub fn deinit(subsurface: *Subsurface) void {
+    if (subsurface.sync_surface) |sync| {
+        sync.destroy();
+    }
+    subsurface.viewport.destroy();
+    subsurface.subsurface.destroy();
+    subsurface.surface.destroy();
 }
 
 pub const AcquireTimeline = struct {
@@ -61,15 +70,13 @@ const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
+const ptypes = @import("../protocol/types.zig");
 const ClientID = @import("../server/Clients.zig").ClientID;
 const WindowSystem = @import("../WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
+const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const utils = @import("../server/utils.zig");
-const ptypes = @import("../protocol/types.zig");
-const Buffers = @import("Buffers.zig");
 const c_linux = @import("c_linux");
-const DoubleBuffer = Buffers.DoubleBuffer;
-const BufferID = Buffers.BufferID;
 const Wayland = @import("Wayland.zig");
