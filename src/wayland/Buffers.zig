@@ -30,7 +30,7 @@ pub fn buffer_create_and_register_cpu(
     gpa: std.mem.Allocator,
     shm: *cwl.Shm,
     key: BufferKey,
-    fd: c_int,
+    fd: CpuBufferFd,
     width: i32,
     height: i32,
     format: BufferFormat,
@@ -47,14 +47,14 @@ pub fn buffer_create_and_register_cpu(
 pub fn buffer_create_cpu(
     _: *Buffers,
     shm: *cwl.Shm,
-    fd: c_int,
+    fd: CpuBufferFd,
     width: i32,
     height: i32,
     format: BufferFormat,
 ) !CpuBuffer {
     const stride = width * format.bytes_per_pixel();
     const size = width * height * format.bytes_per_pixel();
-    const pool = try shm.createPool(fd, size);
+    const pool = try shm.createPool(@intFromEnum(fd), size);
     defer pool.destroy();
 
     const wl_format: cwl.Shm.Format = switch (format) {
@@ -96,9 +96,11 @@ pub fn buffer_create_and_register_gpu_async(
     try b.buffers_gpu.ensureUnusedCapacity(wl.gpa, b.wl_buffers_pending.capacity());
     try b.buffer_set_listener_prepare(wl.gpa);
 
-    std.debug.assert(fds.acquire_timeline != fds.release_timeline);
-    const timeline_acquire = try wl.sync_object_manager.importTimeline(fds.acquire_timeline);
-    const timeline_release = try wl.sync_object_manager.importTimeline(fds.release_timeline);
+    std.debug.assert(@intFromEnum(fds.acquire_timeline) != @intFromEnum(fds.release_timeline));
+    const timeline_acquire: Subsurface.AcquireTimeline =
+        try .init(wl.sync_object_manager, fds.acquire_timeline);
+    const timeline_release: Subsurface.ReleaseTimeline =
+        try .init(wl.sync_object_manager, fds.release_timeline);
 
     const params = try wl.dmabuf.createParams();
 
@@ -115,7 +117,7 @@ pub fn buffer_create_and_register_gpu_async(
     };
 
     data.* = .{ .key = key, .wl = wl, .dispatch = dispatch, .gpu = gpu };
-    params.add(fds.buffer, 0, 0, stride, mod_hi, mod_lo);
+    params.add(@intFromEnum(fds.buffer), 0, 0, stride, mod_hi, mod_lo);
     params.create(width, height, format, .{});
     params.setListener(*callbacks.RegisterGpuBuffer, callbacks.register_gpu_buffer, data);
 
@@ -269,8 +271,8 @@ pub const callbacks = struct {
 
 pub const GpuBuffer = struct {
     wl_buffer: *cwl.Buffer,
-    timeline_acquire: ?*wp.LinuxDrmSyncobjTimelineV1,
-    timeline_release: ?*wp.LinuxDrmSyncobjTimelineV1,
+    timeline_acquire: ?Subsurface.AcquireTimeline,
+    timeline_release: ?Subsurface.ReleaseTimeline,
     width: i32,
     height: i32,
 };
@@ -297,5 +299,7 @@ const BufferKey = @import("../WindowSystem.zig").BufferKey;
 const WindowSystem = @import("../WindowSystem.zig");
 const BufferID = @import("../protocol/types.zig").BufferID;
 const ViewportID = @import("../protocol/types.zig").ViewportID;
+const CpuBufferFd = @import("../protocol/types.zig").CpuBufferFd;
 const ClientID = @import("../server/Clients.zig").ClientID;
 const Dispatch = @import("../Dispatch.zig");
+const Subsurface = @import("Subsurface.zig");

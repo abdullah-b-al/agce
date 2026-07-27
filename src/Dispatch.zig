@@ -83,7 +83,7 @@ pub const WindowSystemEvent = union(enum) {
         client_id: ClientID,
         buffer_id: BufferID,
 
-        fd: c_int,
+        fd: protocol_types.CpuBufferFd,
 
         width: u32,
         height: u32,
@@ -113,8 +113,8 @@ pub const WindowSystemEvent = union(enum) {
         client_id: ClientID,
         viewport_id: ViewportID,
         buffer_id: BufferID,
-        acquire_point: u32,
-        release_point: u32,
+        acquire_point: protocol_types.AcquireTimelinePoint,
+        release_point: protocol_types.ReleaseTimelinePoint,
     };
 
     pub const BufferDestroy = struct {

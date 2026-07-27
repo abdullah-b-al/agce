@@ -6,8 +6,8 @@ connection: net.Stream,
 
 messages_arena: std.heap.ArenaAllocator,
 
-next_viewport_id: protocol_types.ViewportID,
-next_buffer_id: protocol_types.BufferID,
+next_viewport_id: ptypes.ViewportID,
+next_buffer_id: ptypes.BufferID,
 
 viewports: std.array_hash_map.Auto(ViewportID, Viewport),
 
@@ -177,14 +177,14 @@ pub fn send_buffer_create_gpu_with_fds(
     client: *Client,
     buffer: ViewportGL.Buffer,
 ) !void {
-    const acquire = client.gbm.?.syncobj_fd_from_handle(buffer.sync_object_acquire);
-    defer _ = std.os.linux.close(acquire);
+    const acquire = buffer.acquire.fd(client.gbm.?);
+    defer _ = std.os.linux.close(@intFromEnum(acquire));
 
-    const release = client.gbm.?.syncobj_fd_from_handle(buffer.sync_object_release);
-    defer _ = std.os.linux.close(release);
+    const release = buffer.release.fd(client.gbm.?);
+    defer _ = std.os.linux.close(@intFromEnum(release));
 
-    const buffer_fd = c_linux.gbm_bo_get_fd(buffer.bo);
-    defer _ = std.os.linux.close(buffer_fd);
+    const buffer_fd: ptypes.GpuBufferFd = @enumFromInt(c_linux.gbm_bo_get_fd(buffer.bo));
+    defer _ = std.os.linux.close(@intFromEnum(buffer_fd));
 
     try client_to_server.message_send_json(
         client.io,
@@ -275,11 +275,11 @@ const utils = @import("../server/utils.zig");
 const client_to_server = @import("../protocol/client_to_server.zig");
 const server_to_client = @import("../protocol/server_to_client.zig");
 const common = @import("../protocol/common.zig");
-const protocol_types = @import("../protocol/types.zig");
+const ptypes = @import("../protocol/types.zig");
 const opengl = @import("../opengl.zig");
 const c_linux = @import("c_linux");
 const glad = @import("glad");
-const ViewportID = protocol_types.ViewportID;
-const BufferID = protocol_types.BufferID;
+const ViewportID = ptypes.ViewportID;
+const BufferID = ptypes.BufferID;
 const ViewportGL = @import("ViewportGL.zig");
 const ViewportCpu = @import("ViewportCpu.zig");

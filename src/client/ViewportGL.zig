@@ -7,7 +7,7 @@ frame_number: usize,
 
 width: u32,
 height: u32,
-format: protocol_types.BufferFormat,
+format: ptypes.BufferFormat,
 modifier: u64,
 
 old_buffers: std.ArrayList(Buffer),
@@ -15,7 +15,7 @@ front_buffer: Buffer,
 back_buffer: Buffer,
 
 pub fn init(client: *Client, width: u32, height: u32) !ViewportGL {
-    const format: protocol_types.BufferFormat = .argb8888;
+    const format: ptypes.BufferFormat = .argb8888;
     const front_buffer = try Buffer.init(client, width, height, format);
     const back_buffer = try Buffer.init(client, width, height, format);
     const bytes = c_linux.gbm_bo_get_bpp(front_buffer.bo) / 8;
@@ -76,8 +76,8 @@ pub fn end_frame(vp: *ViewportGL, buffer: *Buffer) !void {
 
     const transfer_result = c_linux.drmSyncobjTransfer(
         gbm.dri.handle,
-        buffer.sync_object_acquire,
-        buffer.point_acquire,
+        @intFromEnum(buffer.acquire.handle),
+        @intFromEnum(buffer.acquire.point),
         tmp_syncobj,
         0,
         0,
@@ -99,14 +99,14 @@ pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
             .buffer_present_with_sync = .{
                 .viewport_id = vp.id,
                 .buffer_id = buffer.id,
-                .acquire_point = buffer.point_acquire,
-                .release_point = buffer.point_release,
+                .acquire_point = buffer.acquire.point,
+                .release_point = buffer.release.point,
             },
         },
     );
 
     buffer.released = false;
-    buffer.point_acquire += 1;
+    buffer.acquire.point.advance();
 }
 
 pub fn get_buffer(vp: *ViewportGL) ?*Buffer {
@@ -119,12 +119,12 @@ pub fn get_buffer(vp: *ViewportGL) ?*Buffer {
     }
 
     var timelines: [2]u32 = .{
-        vp.back_buffer.sync_object_release,
-        vp.front_buffer.sync_object_release,
+        @intFromEnum(vp.back_buffer.release.handle),
+        @intFromEnum(vp.front_buffer.release.handle),
     };
     var points: [timelines.len]u64 = .{
-        vp.back_buffer.point_release,
-        vp.front_buffer.point_release,
+        @intFromEnum(vp.back_buffer.release.point),
+        @intFromEnum(vp.front_buffer.release.point),
     };
 
     const timeout: i64 = 0;
@@ -140,12 +140,12 @@ pub fn get_buffer(vp: *ViewportGL) ?*Buffer {
     );
 
     if (index == 0) {
-        vp.back_buffer.point_release += 1;
+        vp.back_buffer.release.point.advance();
         return &vp.back_buffer;
     }
 
     if (index == 1) {
-        vp.front_buffer.point_release += 1;
+        vp.front_buffer.release.point.advance();
         return &vp.front_buffer;
     }
 
@@ -236,15 +236,13 @@ pub const Buffer = struct {
     gbm_texture: opengl.GbmBackedTexture,
     fbo: glad.GLuint,
 
-    format: protocol_types.BufferFormat,
-    id: protocol_types.BufferID,
+    format: ptypes.BufferFormat,
+    id: ptypes.BufferID,
     released: bool,
-    point_acquire: u32,
-    point_release: u32,
-    sync_object_acquire: u32,
-    sync_object_release: u32,
+    acquire: AcquireTimeline,
+    release: ReleaseTimeline,
 
-    pub fn init(client: *Client, width: u32, height: u32, format: protocol_types.BufferFormat) !Buffer {
+    pub fn init(client: *Client, width: u32, height: u32, format: ptypes.BufferFormat) !Buffer {
         const gbm = client.gbm.?;
         const bo = try gbm.bo_create(width, height);
         const gbm_texture = try opengl.egl_image_from_gbm_bo(client.gl_context.?, bo);
@@ -258,10 +256,8 @@ pub const Buffer = struct {
             .id = id,
             .format = format,
             .released = true,
-            .point_acquire = 0,
-            .point_release = 0,
-            .sync_object_acquire = gbm.syncobj_create(),
-            .sync_object_release = gbm.syncobj_create(),
+            .acquire = .init(gbm),
+            .release = .init(gbm),
         };
     }
 
@@ -270,6 +266,42 @@ pub const Buffer = struct {
         glad.glDeleteFramebuffers(1, &buffer.fbo);
         _ = glad.eglDestroyImageKHR(gl.egl_display, buffer.gbm_texture.image);
         c_linux.gbm_bo_destroy(buffer.bo);
+    }
+};
+
+pub const AcquireTimeline = struct {
+    point: ptypes.AcquireTimelinePoint,
+    handle: ptypes.AcquireTimelineHandle,
+
+    pub fn init(gbm: Client.Gbm) AcquireTimeline {
+        return .{
+            .point = @enumFromInt(0),
+            .handle = @enumFromInt(gbm.syncobj_create()),
+        };
+    }
+
+    pub fn fd(t: AcquireTimeline, gbm: Client.Gbm) ptypes.AcquireTimelineFd {
+        return @enumFromInt(
+            gbm.syncobj_fd_from_handle(@intFromEnum(t.handle)),
+        );
+    }
+};
+
+pub const ReleaseTimeline = struct {
+    point: ptypes.ReleaseTimelinePoint,
+    handle: ptypes.ReleaseTimelineHandle,
+
+    pub fn init(gbm: Client.Gbm) ReleaseTimeline {
+        return .{
+            .point = @enumFromInt(0),
+            .handle = @enumFromInt(gbm.syncobj_create()),
+        };
+    }
+
+    pub fn fd(t: ReleaseTimeline, gbm: Client.Gbm) ptypes.ReleaseTimelineFd {
+        return @enumFromInt(
+            gbm.syncobj_fd_from_handle(@intFromEnum(t.handle)),
+        );
     }
 };
 
@@ -350,10 +382,10 @@ const utils = @import("../server/utils.zig");
 const client_to_server = @import("../protocol/client_to_server.zig");
 const server_to_client = @import("../protocol/server_to_client.zig");
 const common = @import("../protocol/common.zig");
-const protocol_types = @import("../protocol/types.zig");
-const ViewportID = protocol_types.ViewportID;
+const ptypes = @import("../protocol/types.zig");
+const ViewportID = ptypes.ViewportID;
 const opengl = @import("../opengl.zig");
 const c_linux = @import("c_linux");
 const glad = @import("glad");
 const Client = @import("Client.zig");
-const BufferID = protocol_types.BufferID;
+const BufferID = ptypes.BufferID;

@@ -1,6 +1,3 @@
-pub const client_to_server = @import("client_to_server.zig");
-pub const server_to_client = @import("server_to_client.zig");
-
 pub const MessageFormat = enum(u32) {
     json,
 };
@@ -40,6 +37,55 @@ pub const BufferID = enum(u32) {
     }
 };
 
+pub const CpuBufferFd = enum(c_int) {
+    pub const is_fd = true;
+
+    invalid_fd = -1,
+    _,
+};
+
+pub const GpuBufferFd = enum(c_int) {
+    pub const is_fd = true;
+
+    invalid_fd = -1,
+    _,
+};
+
+pub const AcquireTimelineFd = enum(c_int) {
+    pub const is_fd = true;
+
+    invalid_fd = -1,
+    _,
+};
+
+pub const ReleaseTimelineFd = enum(c_int) {
+    pub const is_fd = true;
+
+    invalid_fd = -1,
+    _,
+};
+
+pub const AcquireTimelineHandle = enum(u32) { _ };
+pub const ReleaseTimelineHandle = enum(u32) { _ };
+
+pub const AcquireTimelinePoint = enum(u64) {
+    _,
+
+    pub fn advance(p: *AcquireTimelinePoint) void {
+        const int = @intFromEnum(p.*);
+        p.* = @enumFromInt(int + 1);
+    }
+};
+
+pub const ReleaseTimelinePoint = enum(u64) {
+    _,
+
+    pub fn advance(p: *ReleaseTimelinePoint) void {
+        const int = @intFromEnum(p.*);
+        p.* = @enumFromInt(int + 1);
+    }
+};
+
 pub const BufferFormat = enum {
     argb8888,
 
@@ -51,9 +97,15 @@ pub const BufferFormat = enum {
 };
 
 pub const BufferAndTimelineFds = extern struct {
-    buffer: c_int,
-    acquire_timeline: c_int,
-    release_timeline: c_int,
+    pub const invalid_fd: BufferAndTimelineFds = .{
+        .buffer = .invalid_fd,
+        .acquire_timeline = .invalid_fd,
+        .release_timeline = .invalid_fd,
+    };
+
+    buffer: GpuBufferFd,
+    acquire_timeline: AcquireTimelineFd,
+    release_timeline: ReleaseTimelineFd,
 };
 
 pub const WindowCreate = struct {

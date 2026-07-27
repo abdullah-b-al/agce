@@ -178,8 +178,8 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
     if (result.subsurface.sync_surface) |sync_surface| {
         switch (buffer) {
             .gpu => |gpu| {
-                sync_surface.setAcquirePoint(gpu.timeline_acquire.?, 0, args.acquire_point);
-                sync_surface.setReleasePoint(gpu.timeline_release.?, 0, args.release_point);
+                gpu.timeline_acquire.?.set(sync_surface, args.acquire_point);
+                gpu.timeline_release.?.set(sync_surface, args.release_point);
             },
             .cpu => {},
         }

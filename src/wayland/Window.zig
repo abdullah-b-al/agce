@@ -10,7 +10,7 @@ xdg_toplevel: *xdg.Toplevel,
 configured: bool,
 running: bool,
 
-buffer_fd: c_int,
+buffer_fd: ptypes.CpuBufferFd,
 buffer_pixels: []align(std.heap.page_size_min) u8,
 buffer: Buffers.CpuBuffer,
 
@@ -32,14 +32,14 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
 
     const bytes_per_pixel = 4;
     const size = width * height * bytes_per_pixel;
-    const fd = try std.posix.memfd_create("agce-wayland", 0);
-    if (std.posix.errno(std.posix.system.ftruncate(fd, size)) != .SUCCESS) return error.FtruncateFailed;
+    const fd: ptypes.CpuBufferFd = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
+    if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), size)) != .SUCCESS) return error.FtruncateFailed;
     const pixels = try std.posix.mmap(
         null,
         @intCast(size),
         .{ .READ = true, .WRITE = true },
         .{ .TYPE = .SHARED },
-        fd,
+        @intFromEnum(fd),
         0,
     );
 
@@ -106,14 +106,14 @@ pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void 
         win.buffer.wl_buffer.destroy();
         win.buffer = new_buffer;
     } else {
-        const fd = try std.posix.memfd_create("agce-wayland", 0);
-        if (std.posix.errno(std.posix.system.ftruncate(fd, new_size)) != .SUCCESS) return error.FtruncateFailed;
+        const fd: ptypes.CpuBufferFd = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
+        if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), new_size)) != .SUCCESS) return error.FtruncateFailed;
         const pixels = try std.posix.mmap(
             null,
             @intCast(new_size),
             .{ .READ = true, .WRITE = true },
             .{ .TYPE = .SHARED },
-            fd,
+            @intFromEnum(fd),
             0,
         );
         const new_buffer = try wl.buffers.buffer_create_cpu(
@@ -127,7 +127,7 @@ pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void 
         errdefer comptime unreachable;
 
         std.posix.munmap(win.buffer_pixels);
-        _ = std.os.linux.close(win.buffer_fd);
+        _ = std.os.linux.close(@intFromEnum(win.buffer_fd));
 
         win.buffer_pixels = pixels;
         win.buffer_fd = fd;
@@ -151,3 +151,4 @@ const c_linux = @import("c_linux");
 const DoubleBuffer = Buffers.DoubleBuffer;
 const BufferID = Buffers.BufferID;
 const Wayland = @import("Wayland.zig");
+const ptypes = @import("../protocol/types.zig");

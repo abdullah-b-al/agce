@@ -121,7 +121,7 @@ fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } 
 
 pub const Buffer = struct {
     id: protocol_types.BufferID,
-    fd: c_int,
+    fd: protocol_types.CpuBufferFd,
     data: []align(std.heap.page_size_min) u8,
     released: bool,
     width: u32,
@@ -134,7 +134,7 @@ pub const Buffer = struct {
 
         return .{
             .id = id,
-            .fd = fd,
+            .fd = @enumFromInt(fd),
             .data = buffer,
             .released = true,
             .width = width,
@@ -145,7 +145,7 @@ pub const Buffer = struct {
 
     fn deinit(buffer: *Buffer) void {
         std.posix.munmap(buffer.data);
-        _ = std.os.linux.close(buffer.fd);
+        _ = std.os.linux.close(@intFromEnum(buffer.fd));
     }
 };
 

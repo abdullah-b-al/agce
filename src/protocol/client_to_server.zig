@@ -22,7 +22,7 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferCreateCpuWithFd = struct {
         id: types.BufferID,
 
-        fd: c_int,
+        fd: types.CpuBufferFd,
 
         width: u32,
         height: u32,
@@ -49,8 +49,8 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferPresentWithSync = struct {
         buffer_id: types.BufferID,
         viewport_id: types.ViewportID,
-        acquire_point: u32,
-        release_point: u32,
+        acquire_point: types.AcquireTimelinePoint,
+        release_point: types.ReleaseTimelinePoint,
     };
 
     pub const BufferDestroy = struct {
@@ -59,34 +59,19 @@ pub const MessagePayload = union(enum(u32)) {
 };
 
 pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, payload: MessagePayload) !void {
-    // TODO: Use a distinct type for the fd and through reflection set it to 0
     const json = switch (payload) {
-        .buffer_create_cpu_with_fd,
-        => |original| blk: {
-            // The fd that's part of the json is wrong.
-            // Set them to 0 to invalidate their use
+        inline else => |original| blk: {
             var p = original;
-            p.fd = 0;
+
+            // The fd that's part of the json is wrong.
+            // Set them to .invalid_fd to invalidate their use
+            const T = @TypeOf(p);
+            if (comptime common.contains_a_fd(T)) |name| {
+                @field(p, name) = .invalid_fd;
+            }
+
             break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
         },
-
-        .buffer_create_gpu_with_fds,
-        => |original| blk: {
-            // The fd that's part of the json is wrong.
-            // Set them to 0 to invalidate their use
-            var p = original;
-            p.fds.buffer = 0;
-            p.fds.acquire_timeline = 0;
-            p.fds.release_timeline = 0;
-            break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
-        },
-
-        inline .buffer_present,
-        .buffer_present_with_sync,
-        .buffer_destroy,
-        .window_create,
-        .viewport_resize,
-        => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
     };
     defer gpa.free(json);
 
@@ -99,7 +84,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     switch (payload) {
         .buffer_create_cpu_with_fd,
         => |p| {
-            try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, c_int, p.fd);
+            try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, types.CpuBufferFd, p.fd);
         },
         .buffer_create_gpu_with_fds,
         => |p| {
@@ -303,37 +288,25 @@ fn recv_fd_peek(comptime Fd: type, socket: c_int) !Fd {
 }
 
 fn parse_message_with_fd(comptime T: type, io: Io, arena: std.mem.Allocator, stream: net.Stream, receive_buf: []u8) !T {
-    switch (T) {
-        MessagePayload.BufferCreateGpuWithFds => {
-            const fds = try recv_fd_peek(
-                types.BufferAndTimelineFds,
-                stream.socket.handle,
-            );
+    const Fd = switch (T) {
+        MessagePayload.BufferCreateGpuWithFds => types.BufferAndTimelineFds,
+        MessagePayload.BufferCreateCpuWithFd => types.CpuBufferFd,
+        else => unreachable,
+    };
 
-            const msg = try stream.socket.receive(io, receive_buf);
-            const data = msg.data[@sizeOf(MessageHeader)..];
+    const fd = try recv_fd_peek(Fd, stream.socket.handle);
 
-            var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-                .allocate = .alloc_if_needed,
-            });
-            parsed.fds = fds;
+    const msg = try stream.socket.receive(io, receive_buf);
+    const data = msg.data[@sizeOf(MessageHeader)..];
 
-            return parsed;
-        },
-        else => {
-            const fd = try recv_fd_peek(c_int, stream.socket.handle);
+    var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+        .allocate = .alloc_if_needed,
+    });
 
-            const msg = try stream.socket.receive(io, receive_buf);
-            const data = msg.data[@sizeOf(MessageHeader)..];
+    const name = comptime common.contains_a_fd(T).?;
+    @field(parsed, name) = fd;
 
-            var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-                .allocate = .alloc_if_needed,
-            });
-            parsed.fd = fd;
-
-            return parsed;
-        },
-    }
+    return parsed;
 }
 
 const std = @import("std");
