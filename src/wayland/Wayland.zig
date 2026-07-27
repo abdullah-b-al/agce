@@ -95,6 +95,8 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
         return;
     };
 
+    // TODO: Kill windows
+
     rs.deinit(wl.gpa);
 
     _ = wl.resources.orderedRemove(id);
@@ -143,7 +145,7 @@ pub fn buffer_present(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPrese
 
     const rs = try wl.resources_get(args.client_id);
 
-    const subsurface = rs.subsurfaces.getPtr(args.viewport_id) orelse {
+    const vp = rs.viewports.getPtr(args.viewport_id) orelse {
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
@@ -158,10 +160,10 @@ pub fn buffer_present(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPrese
     };
 
     try rs.viewport_mark_commit(wl.gpa, args.buffer_id, args.viewport_id);
-    subsurface.surface.damage(0, 0, buffer.width(), buffer.height());
-    subsurface.surface.attach(buffer.wl_buffer(), 0, 0);
-    subsurface.surface.commit();
-    log.debug("buffer_present: commited subsurface for {} {} {}", .{ args.client_id, args.viewport_id, args.buffer_id });
+    vp.surface.damage(0, 0, buffer.width(), buffer.height());
+    vp.surface.attach(buffer.wl_buffer(), 0, 0);
+    vp.surface.commit();
+    log.debug("buffer_present: commited viewport for {} {} {}", .{ args.client_id, args.viewport_id, args.buffer_id });
 
     window.commit();
     _ = wl.display.flush();
@@ -177,7 +179,7 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
 
     const rs = try wl.resources_get(args.client_id);
 
-    const subsurface = rs.subsurfaces.getPtr(args.viewport_id) orelse {
+    const vp = rs.viewports.getPtr(args.viewport_id) orelse {
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
@@ -203,10 +205,10 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
         @intFromEnum(args.buffer_id),
     });
 
-    subsurface.surface.damage(0, 0, buffer.width(), buffer.height());
-    subsurface.surface.attach(buffer.wl_buffer(), 0, 0);
+    vp.surface.damage(0, 0, buffer.width(), buffer.height());
+    vp.surface.attach(buffer.wl_buffer(), 0, 0);
 
-    if (subsurface.sync_surface) |sync_surface| {
+    if (vp.sync_surface) |sync_surface| {
         switch (buffer) {
             .gpu => |gpu| {
                 gpu.timeline_acquire.?.set(sync_surface, args.acquire_point);
@@ -216,8 +218,8 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
         }
     }
 
-    subsurface.surface.commit();
-    // log.debug("buffer_present_with_sync: commited subsurface for {} {}", .{ buffer_key, viewport_key });
+    vp.surface.commit();
+    // log.debug("buffer_present_with_sync: commited viewport for {} {}", .{ buffer_key, viewport_key });
 
     window.commit();
     _ = wl.display.flush();
@@ -239,11 +241,11 @@ pub fn buffer_destroy(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSy
 
 pub fn viewport_resize(wl: *Wayland, args: Dispatch.WindowSystemEvent.ViewportResize) !void {
     const rs = try wl.resources_get(args.client_id);
-    const subsurface = rs.subsurfaces.get(args.viewport_id) orelse return error.ViewportDoesNotExist;
+    const vp = rs.viewports.get(args.viewport_id) orelse return error.ViewportDoesNotExist;
 
     // FIXME: Setting any value provided by the client may cause the window to suddenly close
     // if the dimensions are larger than the buffer's.
-    subsurface.viewport.setSource(
+    vp.viewport.setSource(
         .fromInt(0),
         .fromInt(0),
         .fromInt(@intCast(args.width)),
@@ -268,7 +270,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Dispatch.WindowSyste
         @intCast(args.height),
     );
 
-    try rs.subsurface_create(
+    try rs.viewport_create(
         wl,
         window.surface,
         args.viewport_id,
@@ -441,7 +443,6 @@ const log = std.log.scoped(.Wayland);
 const utils = @import("../server/utils.zig");
 const ClientResources = @import("ClientResources.zig");
 const Window = @import("Window.zig");
-const Subsurface = @import("Subsurface.zig");
 const c_linux = @import("c_linux");
 const Dispatch = @import("../Dispatch.zig");
 const BufferKey = WindowSystem.BufferKey;

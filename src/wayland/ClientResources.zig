@@ -8,7 +8,7 @@ buffers_commited: std.array_hash_map.Auto(BufferID, ViewportID),
 buffers_cpu: std.array_hash_map.Auto(BufferID, CpuBuffer),
 buffers_gpu: std.array_hash_map.Auto(BufferID, GpuBuffer),
 
-subsurfaces: std.array_hash_map.Auto(ViewportID, Subsurface),
+viewports: std.array_hash_map.Auto(ViewportID, Viewport),
 
 pub fn init(id: ClientID) ClientResources {
     return .{
@@ -17,7 +17,7 @@ pub fn init(id: ClientID) ClientResources {
         .buffers_commited = .empty,
         .buffers_cpu = .empty,
         .buffers_gpu = .empty,
-        .subsurfaces = .empty,
+        .viewports = .empty,
     };
 }
 
@@ -39,10 +39,10 @@ pub fn deinit(rs: *ClientResources, gpa: std.mem.Allocator) void {
 
     rs.buffers_gpu.deinit(gpa);
 
-    for (rs.subsurfaces.values()) |*subsurface| {
-        subsurface.deinit();
+    for (rs.viewports.values()) |*vp| {
+        vp.deinit();
     }
-    rs.subsurfaces.deinit(gpa);
+    rs.viewports.deinit(gpa);
 }
 
 pub fn buffer_get(rs: *ClientResources, key: BufferID) ?Buffer {
@@ -51,7 +51,7 @@ pub fn buffer_get(rs: *ClientResources, key: BufferID) ?Buffer {
     return null;
 }
 
-pub fn subsurface_create(
+pub fn viewport_create(
     rs: *ClientResources,
     wl: *Wayland,
     parent_surface: *cwl.Surface,
@@ -60,21 +60,21 @@ pub fn subsurface_create(
     height: i32,
     create_sync_timeline: bool,
 ) !void {
-    try rs.subsurfaces.ensureUnusedCapacity(wl.gpa, 1);
-    var subsurface = try Subsurface.init(
+    try rs.viewports.ensureUnusedCapacity(wl.gpa, 1);
+    var vp = try Viewport.init(
         wl,
         parent_surface,
         viewport_id,
     );
-    subsurface.viewport.setSource(.fromInt(0), .fromInt(0), .fromInt(@intCast(width)), .fromInt(@intCast(height)));
+    vp.viewport.setSource(.fromInt(0), .fromInt(0), .fromInt(@intCast(width)), .fromInt(@intCast(height)));
 
     if (create_sync_timeline) {
-        const sync_surface = try wl.sync_object_manager.getSurface(subsurface.surface);
-        std.debug.assert(subsurface.sync_surface == null);
-        subsurface.sync_surface = sync_surface;
+        const sync_surface = try wl.sync_object_manager.getSurface(vp.surface);
+        std.debug.assert(vp.sync_surface == null);
+        vp.sync_surface = sync_surface;
     }
 
-    rs.subsurfaces.putAssumeCapacity(viewport_id, subsurface);
+    rs.viewports.putAssumeCapacity(viewport_id, vp);
 }
 
 pub fn buffer_create_and_register_cpu(
@@ -148,9 +148,9 @@ pub fn buffer_create_and_register_gpu_async(
     try rs.buffer_set_listener_prepare(wl);
 
     std.debug.assert(@intFromEnum(fds.acquire_timeline) != @intFromEnum(fds.release_timeline));
-    const timeline_acquire: Subsurface.AcquireTimeline =
+    const timeline_acquire: Viewport.AcquireTimeline =
         try .init(wl.sync_object_manager, fds.acquire_timeline);
-    const timeline_release: Subsurface.ReleaseTimeline =
+    const timeline_release: Viewport.ReleaseTimeline =
         try .init(wl.sync_object_manager, fds.release_timeline);
 
     const params = try wl.dmabuf.createParams();
@@ -249,8 +249,8 @@ const Buffer = union(enum) {
 
 pub const GpuBuffer = struct {
     wl_buffer: *cwl.Buffer,
-    timeline_acquire: ?Subsurface.AcquireTimeline,
-    timeline_release: ?Subsurface.ReleaseTimeline,
+    timeline_acquire: ?Viewport.AcquireTimeline,
+    timeline_release: ?Viewport.ReleaseTimeline,
     width: i32,
     height: i32,
 };
@@ -345,7 +345,7 @@ const Wayland = @import("Wayland.zig");
 const BufferFormat = @import("../protocol/types.zig").BufferFormat;
 const BufferAndTimelineFds = @import("../protocol/types.zig").BufferAndTimelineFds;
 const c_linux = @import("c_linux");
-const log = std.log.scoped(.Buffers);
+const log = std.log.scoped(.ClientResources);
 const ViewportKey = @import("../WindowSystem.zig").ViewportKey;
 const BufferKey = @import("../WindowSystem.zig").BufferKey;
 const WindowSystem = @import("../WindowSystem.zig");
@@ -354,4 +354,4 @@ const ViewportID = @import("../protocol/types.zig").ViewportID;
 const CpuBufferFd = @import("../protocol/types.zig").CpuBufferFd;
 const ClientID = @import("../server/Clients.zig").ClientID;
 const Dispatch = @import("../Dispatch.zig");
-const Subsurface = @import("Subsurface.zig");
+const Viewport = @import("Viewport.zig");

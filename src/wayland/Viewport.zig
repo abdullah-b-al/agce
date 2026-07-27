@@ -1,4 +1,4 @@
-const Subsurface = @This();
+const Viewport = @This();
 
 id: ViewportID,
 subsurface: *cwl.Subsurface,
@@ -6,7 +6,7 @@ surface: *cwl.Surface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 
-pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID) !Subsurface {
+pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID) !Viewport {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
@@ -22,13 +22,13 @@ pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID) !Subsurf
     };
 }
 
-pub fn deinit(subsurface: *Subsurface) void {
-    if (subsurface.sync_surface) |sync| {
+pub fn deinit(vp: *Viewport) void {
+    if (vp.sync_surface) |sync| {
         sync.destroy();
     }
-    subsurface.viewport.destroy();
-    subsurface.subsurface.destroy();
-    subsurface.surface.destroy();
+    vp.viewport.destroy();
+    vp.subsurface.destroy();
+    vp.surface.destroy();
 }
 
 pub const AcquireTimeline = struct {
