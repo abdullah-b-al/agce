@@ -1,47 +1,42 @@
 const Clients = @This();
 
-mutex: Io.Mutex,
-map: std.array_hash_map.Auto(ClientID, Client),
+map: Map,
 next_id: ClientID,
 
 pub const init: Clients = .{
     .next_id = .first,
     .map = .empty,
-    .mutex = .init,
 };
 
-pub fn lock(cs: *Clients, io: Io) void {
-    cs.mutex.lockUncancelable(io);
+pub fn map_clone(cs: *Clients, gpa: std.mem.Allocator) !MapClone {
+    const map = try gpa.create(Map);
+    errdefer gpa.destroy(map);
+    map.* = try cs.map.clone(gpa);
+    return .{
+        .gpa = gpa,
+        .map = map,
+    };
 }
 
-pub fn unlock(cs: *Clients, io: Io) void {
-    cs.mutex.unlock(io);
-}
-
-pub fn ensure_unused_capacity(cs: *Clients, io: Io, gpa: std.mem.Allocator, count: usize) !void {
-    cs.lock(io);
-    defer cs.unlock(io);
-
-    try cs.map.ensureUnusedCapacity(gpa, count);
-}
-
-pub fn add_assume_capacity(cs: *Clients, io: Io, stream: net.Stream) ClientID {
-    cs.lock(io);
-    defer cs.unlock(io);
-
-    const id = cs.new_id();
-    cs.map.putAssumeCapacityNoClobber(id, .init(id, stream));
-
-    return id;
-}
-
-fn new_id(cs: *Clients) ClientID {
+pub fn new_id(cs: *Clients) ClientID {
     const id = cs.next_id;
 
     cs.next_id = @enumFromInt(@intFromEnum(cs.next_id) + 1);
 
     return id;
 }
+
+pub const Map = std.array_hash_map.Auto(ClientID, Client);
+
+pub const MapClone = struct {
+    gpa: std.mem.Allocator,
+    map: *Map,
+
+    pub fn deinit(clone: *const MapClone) void {
+        clone.map.deinit(clone.gpa);
+        clone.gpa.destroy(clone.map);
+    }
+};
 
 pub const ClientID = enum(u32) {
     pub const first: ClientID = @enumFromInt(1);

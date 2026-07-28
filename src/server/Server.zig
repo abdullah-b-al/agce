@@ -1,11 +1,12 @@
 const Server = @This();
 
-server: net.Server,
-gpa: std.mem.Allocator,
 io: Io,
+gpa: std.mem.Allocator,
 dispatch: *Dispatch,
 
+server: net.Server,
 clients: Clients,
+arena_pool: std.ArrayList(*std.heap.ArenaAllocator),
 
 pub fn create(
     io: Io,
@@ -27,19 +28,270 @@ pub fn create(
     };
     log.info("Created server on {s}", .{address.path});
 
+    const capacity = 32;
+    var arena_pool: std.ArrayList(*std.heap.ArenaAllocator) = try .initCapacity(gpa, capacity);
+    for (0..capacity) |_| {
+        const arena = try gpa.create(std.heap.ArenaAllocator);
+        arena.* = .init(gpa);
+        arena_pool.appendAssumeCapacity(arena);
+    }
+
     server.* = .{
         .server = net_server,
         .gpa = gpa,
         .io = io,
         .clients = .init,
         .dispatch = dispatch,
+        .arena_pool = arena_pool,
     };
     return server;
 }
 
 pub fn destroy(server: *Server) void {
+    for (server.clients.map.values()) |*client| {
+        if (!client.closed) {
+            client.close(server.io);
+        }
+    }
+    server.clients.map.deinit(server.gpa);
+
+    for (server.arena_pool.items) |arena| {
+        arena.deinit();
+        server.gpa.destroy(arena);
+    }
+    server.arena_pool.deinit(server.gpa);
+
     server.server.deinit(server.io);
+
     server.gpa.destroy(server);
+}
+
+pub fn task_handle(server: *Server, selected: Task) error{Canceled}!void {
+    switch (selected) {
+        .client_connected => |result| {
+            const stream = result catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => |e| {
+                    log.err("Server: {}", .{e});
+                    return;
+                },
+            };
+
+            server.client_connected(stream) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                error.OutOfMemory => |e| {
+                    log.err("Server: {}", .{e});
+                    return;
+                },
+            };
+        },
+
+        .client_has_message => |result| {
+            const r = result catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                error.OutOfMemory => return,
+                error.ConcurrencyUnavailable => @panic("ConcurrencyUnavailable"),
+            };
+            defer server.arena_release(r.arena);
+
+            for (r.messages) |message| {
+                try server.client_message_handle(r.arena.allocator(), message);
+            }
+        },
+
+        .server_has_event => |result| {
+            const event = try result;
+            server.handle_event(event) catch |err| switch (err) {
+                else => |e| log.err("Server: {}", .{e}),
+            };
+        },
+    }
+}
+
+pub fn task_start(server: *Server, select: *Io.Select(Task), tag: std.meta.Tag(Task)) error{Canceled}!void {
+    branch: switch (tag) {
+        .client_connected => {
+            select.concurrent(
+                .client_connected,
+                Task.fn_client_connected,
+                .{ server.io, &server.server },
+            ) catch @panic("ConcurrencyUnavailable");
+
+            continue :branch .client_has_message;
+        },
+
+        .client_has_message => {
+            server.remove_closed_clients();
+
+            if (server.clients.map.count() > 0) {
+                const map_clone = server.clients.map_clone(server.gpa) catch |err| switch (err) {
+                    error.OutOfMemory => @panic("OOM"),
+                };
+
+                select.concurrent(
+                    .client_has_message,
+                    Task.fn_client_has_message,
+                    .{ server.io, server.arena_acquire(), map_clone },
+                ) catch @panic("ConcurrencyUnavailable");
+            }
+        },
+
+        .server_has_event => {
+            select.concurrent(
+                .server_has_event,
+                Task.fn_server_has_event,
+                .{server.dispatch},
+            ) catch @panic("ConcurrencyUnavailable");
+        },
+    }
+}
+
+pub fn arena_acquire(server: *Server) *std.heap.ArenaAllocator {
+    return server.arena_pool.pop() orelse @panic("Too many acquire requests");
+}
+
+pub fn arena_release(server: *Server, arena: *std.heap.ArenaAllocator) void {
+    _ = arena.reset(.free_all);
+    server.arena_pool.appendAssumeCapacity(arena);
+}
+
+pub fn remove_closed_clients(server: *Server) void {
+    var i = server.clients.map.count();
+    while (i > 0) {
+        i -= 1;
+        const client = server.clients.map.values()[i];
+        if (client.closed) {
+            log.debug("Removed closed client {}", .{client.id});
+            _ = server.clients.map.orderedRemove(client.id);
+        }
+    }
+}
+
+pub fn client_connected(server: *Server, stream: net.Stream) !void {
+    const id = server.clients.new_id();
+    try server.clients.map.put(server.gpa, id, .init(id, stream));
+    try server.dispatch.window_system_put(.{ .client_connected = id });
+}
+
+pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_message: ClientMessage) error{Canceled}!void {
+    server.client_message_handle_inner(arena, client_message) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+
+        error.HeaderInvalidLen,
+        error.HeaderInvalidFormat,
+        error.HeaderInvalidMessageTag,
+        error.ConnectionClosed,
+        error.ConnectionResetByPeer,
+        error.SocketUnconnected,
+        error.CmsgNoHeader,
+        error.CmsgInvalidLevel,
+        error.CmsgInvalidType,
+        => {
+            const client = server.clients.map.getPtr(client_message.client_id) orelse return;
+            client.close(server.io);
+            log.err("Closing client {} with error {}\n", .{ client_message.client_id, err });
+
+            try server.dispatch.window_system_put(.{ .client_disconnected = client.id });
+        },
+
+        error.Overflow,
+        error.InvalidCharacter,
+        error.RecvMsgFailed,
+        error.UnexpectedToken,
+        error.InvalidNumber,
+        error.InvalidEnumTag,
+        error.DuplicateField,
+        error.UnknownField,
+        error.MissingField,
+        error.LengthMismatch,
+        error.SyntaxError,
+        error.UnexpectedEndOfInput,
+        error.BufferUnderrun,
+        error.ValueTooLong,
+        error.UnsupportedMessageOnOs,
+        error.SystemResources,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.MessageOversize,
+        error.NetworkDown,
+        error.PortUnreachable,
+        error.ConcurrencyUnavailable,
+        error.OutOfMemory,
+        error.Unexpected,
+        => |e| {
+            log.err("{} when handling client message", .{e});
+        },
+    };
+}
+
+fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client_message: ClientMessage) !void {
+    const id = client_message.client_id;
+    const client = server.clients.map.getPtr(id) orelse return;
+
+    // Will be removed later
+    if (client.closed) {
+        return;
+    }
+
+    if (client_message.err) |err| {
+        return err;
+    }
+
+    const timeout: Io.Timeout =
+        .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } };
+
+    const maybe_message = try client_to_server.message_receive(server.io, arena, client, timeout);
+
+    if (maybe_message) |message| {
+        if (server.window_system_event_from_message(client, message)) |e| {
+            try server.dispatch.window_system_put(e);
+            log.debug("Server dispatched event {}", .{e});
+        } else |err| {
+            log.err("{}", .{err});
+        }
+    }
+}
+
+pub fn handle_event(server: *Server, event: Dispatch.ServerEvent) !void {
+    switch (event) {
+        .viewport_resize => |e| {
+            const client = server.clients.map.getPtr(e.client_id) orelse return;
+
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{ .viewport_resize = e.resize },
+            );
+        },
+        .buffer_released => |e| {
+            const client = server.clients.map.getPtr(e.client_id) orelse return;
+
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{
+                    .buffer_released = .{
+                        .viewport_id = e.viewport_id,
+                        .buffer_id = e.buffer_id,
+                    },
+                },
+            );
+        },
+        .buffer_destroyed => |e| {
+            const client = server.clients.map.getPtr(e.client_id) orelse return;
+
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{
+                    .buffer_destroyed = .{ .buffer_id = e.buffer_id },
+                },
+            );
+        },
+    }
 }
 
 pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !Dispatch.WindowSystemEvent {
@@ -127,6 +379,89 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
     }
 }
 
+pub const ClientMessage = struct {
+    client_id: ClientID,
+    err: ?Io.Operation.NetReceive.Error,
+};
+
+fn ReturnType(comptime func: anytype) type {
+    return @typeInfo(@TypeOf(func)).@"fn".return_type.?;
+}
+
+pub const Task = union(enum) {
+    client_connected: ReturnType(fn_client_connected),
+    client_has_message: ReturnType(fn_client_has_message),
+    server_has_event: ReturnType(fn_server_has_event),
+
+    fn fn_client_has_message(
+        io: Io,
+        arena_instance: *std.heap.ArenaAllocator,
+        clone: Clients.MapClone,
+    ) error{ Canceled, ConcurrencyUnavailable, OutOfMemory }!struct { arena: *std.heap.ArenaAllocator, messages: []const Server.ClientMessage } {
+        std.debug.assert(clone.map.count() > 0);
+
+        defer clone.deinit();
+
+        const arena = arena_instance.allocator();
+        const count = clone.map.count();
+
+        const storage = try arena.alloc(Io.Operation.Storage, count);
+        const buffers = try arena.alloc([]u8, count);
+        for (buffers) |*buf| {
+            // TODO: calculate the maximum size
+            buf.* = try arena.alloc(u8, 4096);
+        }
+
+        var batch = Io.Batch.init(storage);
+        for (clone.map.values(), 0..) |client, i| {
+            if (client.closed) continue;
+
+            // len must be 1 for recv_fd to work
+            const msg_buf = try arena.alloc(net.IncomingMessage, 1);
+
+            const op: Io.Operation = .{
+                .net_receive = .{
+                    .socket_handle = client.stream.socket.handle,
+                    .message_buffer = msg_buf,
+                    .data_buffer = buffers[i],
+                    .flags = .{ .peek = true },
+                },
+            };
+
+            _ = batch.add(op);
+        }
+
+        batch.awaitConcurrent(io, .none) catch |err| switch (err) {
+            error.Timeout => unreachable,
+            else => |e| return e,
+        };
+
+        var list: std.ArrayList(Server.ClientMessage) = try .initCapacity(arena, count);
+        while (batch.next()) |completed| {
+            const err, const len = completed.result.net_receive;
+            std.debug.assert(len == 1);
+            const id = clone.map.values()[completed.index].id;
+            list.appendAssumeCapacity(.{
+                .client_id = id,
+                .err = if (err) |e| switch (e) {
+                    error.Canceled => |canceled| return canceled,
+                    else => |rest| rest,
+                } else null,
+            });
+        }
+
+        return .{ .arena = arena_instance, .messages = try list.toOwnedSlice(arena) };
+    }
+
+    fn fn_client_connected(io: Io, server: *net.Server) net.Server.AcceptError!net.Stream {
+        return server.accept(io);
+    }
+
+    fn fn_server_has_event(dispatch: *Dispatch) error{Canceled}!Dispatch.ServerEvent {
+        return try dispatch.server_get();
+    }
+};
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -138,3 +473,6 @@ const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
 const MessagePayload = @import("../protocol/client_to_server.zig").MessagePayload;
 const Dispatch = @import("../Dispatch.zig");
+const server_to_client = @import("../protocol/server_to_client.zig");
+const client_to_server = @import("../protocol/client_to_server.zig");
+const ClientID = Clients.ClientID;

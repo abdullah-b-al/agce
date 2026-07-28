@@ -112,7 +112,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     }
 }
 
-pub fn message_receive(io: Io, arena: std.mem.Allocator, client: *Client, timeout: Io.Timeout) !?MessagePayload {
+pub fn message_peek(io: Io, client: *Client, timeout: Io.Timeout) !?net.IncomingMessage {
     var buf: [@sizeOf(MessageHeader)]u8 = undefined;
     const peek = common.operation_net_receive_peek(MessageHeader, io, client.stream, timeout, &buf) catch |err|
         switch (err) {
@@ -123,6 +123,12 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, client: *Client, timeou
     if (peek.data.len == 0) {
         return error.ConnectionClosed;
     }
+
+    return peek;
+}
+
+pub fn message_receive(io: Io, arena: std.mem.Allocator, client: *Client, timeout: Io.Timeout) !?MessagePayload {
+    const peek = try message_peek(io, client, timeout) orelse return null;
 
     const header = try common.parse_message_header(MessageHeader, peek.data);
 

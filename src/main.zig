@@ -6,12 +6,11 @@ fn main_common(
     ws: *WindowSystem,
 ) !void {
     var group: Io.Group = .init;
+
     const server = try Server.create(io, environ_map, gpa, dispatch);
     defer server.destroy();
 
-    try group.concurrent(io, server_send, .{server});
-    try group.concurrent(io, server_receive, .{server});
-    try group.concurrent(io, server_accept_clients, .{server});
+    try group.concurrent(io, main_server, .{server});
 
     switch (ws.native) {
         .wayland => {
@@ -21,7 +20,9 @@ fn main_common(
                     ws.native.wayland.display.getFd(),
                 });
 
-                main_wayland(ws) catch {};
+                main_wayland(ws) catch |err| switch (err) {
+                    error.Canceled => {},
+                };
             }
         },
         .win32 => {
@@ -92,7 +93,8 @@ fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Cance
         const poll = std.os.linux.poll(&polls, @intCast(polls.len), -1);
         if (poll > 0) {
             try dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = &result } });
-            // Wait for the main thread to finish processing the compositers events
+
+            // Wait for the main thread to finish processing the compositer's events
             _ = result.queue.getOne(dispatch.io) catch |err| switch (err) {
                 error.Closed => unreachable,
                 error.Canceled => |e| return e,
@@ -101,7 +103,7 @@ fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Cance
     }
 }
 
-fn main_wayland(ws: *WindowSystem) !void {
+fn main_wayland(ws: *WindowSystem) error{Canceled}!void {
     const wl = ws.native.wayland;
     while (true) {
         const e = try ws.dispatch.window_system_get();
@@ -157,90 +159,17 @@ fn main_win32(ws: *WindowSystem) !void {
     }
 }
 
-fn server_accept_clients(server: *Server) !void {
-    while (true) {
-        // TODO: Better error handling
-        server.clients.ensure_unused_capacity(server.io, server.gpa, 1) catch continue;
-        const stream = server.server.accept(server.io) catch |err| {
-            log.err("Failed to accept client {}\n", .{err});
-            continue;
-        };
+fn main_server(server: *Server) error{Canceled}!void {
+    var buffer: [@typeInfo(Server.Task).@"union".fields.len]Server.Task = undefined;
+    var select = Io.Select(Server.Task).init(server.io, &buffer);
 
-        const id = server.clients.add_assume_capacity(server.io, stream);
-        try server.dispatch.window_system_put(.{ .client_connected = id });
-    }
-}
-
-fn server_send(server: *Server) error{Canceled}!void {
-    while (true) {
-        const event = try server.dispatch.server_get();
-
-        switch (event) {
-            inline .buffer_released,
-            .buffer_destroyed,
-            .viewport_resize,
-            => |e, tag| {
-                log.info("Server sent: {} {}", .{ tag, e });
-                const client = server.clients.map.getPtr(e.client_id) orelse continue;
-                client.event_handle(server, event) catch |err| {
-                    log.err("{}", .{err});
-                };
-            },
-        }
-    }
-}
-
-fn server_receive(server: *Server) error{Canceled}!void {
-    const io = server.io;
-
-    var arena_instance: std.heap.ArenaAllocator = .init(server.gpa);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
+    try server.task_start(&select, .client_connected);
+    try server.task_start(&select, .server_has_event);
 
     while (true) {
-        _ = arena_instance.reset(.free_all);
-
-        server.clients.lock(io);
-        defer server.clients.unlock(io);
-
-        var i = server.clients.map.count();
-        while (i > 0) {
-            i -= 1;
-
-            const id, const client = .{
-                server.clients.map.keys()[i], &server.clients.map.values()[i],
-            };
-
-            const timeout: Io.Timeout =
-                .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } };
-
-            const maybe_message = client_to_server.message_receive(io, arena, client, timeout) catch |err|
-                switch (err) {
-                    error.HeaderInvalidFormat,
-                    error.HeaderInvalidMessageTag,
-                    error.ConnectionClosed,
-                    => {
-                        log.err("{} closing client\n", .{err});
-                        client.stream.close(io);
-                        _ = server.clients.map.orderedRemove(id);
-                        try server.dispatch.window_system_put(.{ .client_disconnected = id });
-                        continue;
-                    },
-                    else => {
-                        log.err("Failed to receive message {}\n", .{err});
-                        continue;
-                    },
-                };
-
-            if (maybe_message) |message| {
-                if (server.window_system_event_from_message(client, message)) |e| {
-                    try server.dispatch.window_system_put(e);
-                    log.debug("Server dispatched event {}", .{e});
-                } else |err| {
-                    log.err("{}", .{err});
-                }
-            }
-        }
+        const selected = try select.await();
+        try server.task_handle(selected);
+        try server.task_start(&select, selected); // restart
     }
 }
 
@@ -260,3 +189,5 @@ const server_to_client = @import("protocol/server_to_client.zig");
 const log = std.log.scoped(.main);
 const os_tag = @import("builtin").os.tag;
 const Dispatch = @import("Dispatch.zig");
+const Clients = @import("server/Clients.zig");
+const ClientID = Clients.ClientID;

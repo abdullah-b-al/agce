@@ -48,7 +48,7 @@ pub fn parse_message_header(comptime Header: type, data: []const u8) !Header {
 
     const len = @sizeOf(Header);
     if (len > data.len) {
-        return error.InvalidLen;
+        return error.HeaderInvalidLen;
     }
     const data_header = data[0..len];
     const header: Header = try .parse(data_header);

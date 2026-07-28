@@ -2,6 +2,7 @@ const Client = @This();
 
 id: Clients.ClientID,
 stream: net.Stream,
+closed: bool,
 
 pub fn init(
     id: Clients.ClientID,
@@ -10,51 +11,13 @@ pub fn init(
     return .{
         .id = id,
         .stream = stream,
+        .closed = false,
     };
 }
 
-pub fn event_handle(client: *Client, server: *Server, event: Dispatch.ServerEvent) !void {
-    switch (event) {
-        .viewport_resize => |e| {
-            std.debug.assert(e.client_id == client.id);
-
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                .{ .viewport_resize = e.resize },
-            );
-        },
-        .buffer_released => |e| {
-            std.debug.assert(e.client_id == client.id);
-
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                .{
-                    .buffer_released = .{
-                        .viewport_id = e.viewport_id,
-                        .buffer_id = e.buffer_id,
-                    },
-                },
-            );
-        },
-        .buffer_destroyed => |e| {
-            std.debug.assert(e.client_id == client.id);
-
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                .{
-                    .buffer_destroyed = .{
-                        .buffer_id = e.buffer_id,
-                    },
-                },
-            );
-        },
-    }
+pub fn close(client: *Client, io: Io) void {
+    client.stream.close(io);
+    client.closed = true;
 }
 
 const std = @import("std");

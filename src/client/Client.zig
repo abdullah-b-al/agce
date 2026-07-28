@@ -157,6 +157,7 @@ pub fn poll_events(client: *Client) !void {
             },
 
             .buffer_released => |msg| {
+                log.debug("Received buffer_released {}", .{msg});
                 const vp = client.viewports.get(msg.viewport_id).?;
                 switch (vp) {
                     inline else => |v| v.buffer_released(msg.buffer_id),
@@ -283,3 +284,4 @@ const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const ViewportGL = @import("ViewportGL.zig");
 const ViewportCpu = @import("ViewportCpu.zig");
+const log = std.log.scoped(.Client);
