@@ -67,8 +67,19 @@ fn init_undefined_native(
     return ws;
 }
 
+pub fn destroy(ws: *WindowSystem) void {
+    std.debug.assert(ws.native == .wayland);
+    switch (ws.native) {
+        .wayland => |wl| wl.destroy(),
+        .win32 => @panic("TODO"),
+    }
+
+    ws.gpa.destroy(ws);
+}
+
 pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
     switch (event) {
+        .exit => return error.Exit,
         .client_connected => |id| {
             switch (ws.native) {
                 .wayland => |wl| try wl.client_connected(id),

@@ -20,6 +20,13 @@ pub fn create(io: Io, gpa: std.mem.Allocator) !*Dispatch {
     return dispatch;
 }
 
+pub fn destroy(dispatch: *Dispatch) void {
+    dispatch.window_system.destroy(dispatch.io, dispatch.gpa);
+    dispatch.server.destroy(dispatch.io, dispatch.gpa);
+
+    dispatch.gpa.destroy(dispatch);
+}
+
 pub fn window_system_put(dispatch: *Dispatch, event: WindowSystemEvent) error{Canceled}!void {
     dispatch.window_system.queue.putOne(dispatch.io, event) catch |err| switch (err) {
         error.Closed => unreachable,
@@ -51,6 +58,7 @@ pub fn server_get(dispatch: *Dispatch) error{Canceled}!ServerEvent {
 pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystemEvent);
 pub const WindowSystemEvent = union(enum) {
+    exit,
     client_connected: ClientID,
     client_disconnected: ClientID,
 
@@ -139,6 +147,7 @@ pub const WindowSystemResult = union(enum) {
 
 pub const ServerQueue = IoQueue(ServerEvent);
 pub const ServerEvent = union(enum) {
+    exit,
     viewport_resize: ViewportResize,
     buffer_released: WindowSystemEvent.BufferPresent,
     buffer_destroyed: WindowSystemEvent.BufferDestroy,
@@ -159,16 +168,18 @@ pub fn IoQueue(comptime T: type) type {
         pub fn create(gpa: std.mem.Allocator) !*@This() {
             const queue = try gpa.create(@This());
             errdefer gpa.destroy(queue);
-            queue.* = try .init(gpa);
-            return queue;
-        }
-
-        pub fn init(gpa: std.mem.Allocator) !@This() {
             const buffer = try gpa.alloc(T, 512);
-            return .{
+            queue.* = .{
                 .buffer = buffer,
                 .queue = .init(buffer),
             };
+            return queue;
+        }
+
+        pub fn destroy(queue: *@This(), io: Io, gpa: std.mem.Allocator) void {
+            queue.queue.close(io);
+            gpa.free(queue.buffer);
+            gpa.destroy(queue);
         }
     };
 }

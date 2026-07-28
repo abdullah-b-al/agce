@@ -1,3 +1,6 @@
+var global_dispatch: *Dispatch = undefined;
+var exit = false;
+
 fn main_common(
     io: Io,
     gpa: std.mem.Allocator,
@@ -5,10 +8,10 @@ fn main_common(
     dispatch: *Dispatch,
     ws: *WindowSystem,
 ) !void {
-    var group: Io.Group = .init;
-
     const server = try Server.create(io, environ_map, gpa, dispatch);
     defer server.destroy();
+
+    var group: Io.Group = .init;
 
     try group.concurrent(io, main_server, .{server});
 
@@ -38,9 +41,23 @@ pub fn main(init: std.process.Init) !void {
         @compileError("Unsupported OS");
     }
 
-    const dispatch: *Dispatch = try .create(init.io, init.gpa);
-    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa, dispatch);
-    try main_common(init.io, init.gpa, init.environ_map, dispatch, ws);
+    const sigaction: std.os.linux.Sigaction = .{
+        .handler = .{ .handler = &interrupt_handler },
+        .mask = @splat(0),
+        .flags = 0,
+    };
+    const result = std.os.linux.errno(std.os.linux.sigaction(.INT, &sigaction, null));
+    switch (result) {
+        .SUCCESS => {},
+        else => |e| log.err("{t}: Sigaction interrupt handler failure!", .{e}),
+    }
+
+    global_dispatch = try .create(init.io, init.gpa);
+    defer global_dispatch.destroy();
+
+    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa, global_dispatch);
+    defer ws.destroy();
+    try main_common(init.io, init.gpa, init.environ_map, global_dispatch, ws);
 }
 
 pub fn wWinMain(
@@ -79,6 +96,7 @@ pub fn wWinMain(
 }
 
 fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Canceled}!void {
+    defer log.info("{s} exited", .{@src().fn_name});
     var polls = [_]std.os.linux.pollfd{
         .{
             .fd = fd,
@@ -87,12 +105,14 @@ fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Cance
         },
     };
 
-    var result = Dispatch.WindowSystemResultQueue.init(dispatch.gpa) catch unreachable;
+    var result = Dispatch.WindowSystemResultQueue.create(dispatch.gpa) catch unreachable;
+    defer result.destroy(dispatch.io, dispatch.gpa);
 
-    while (true) {
-        const poll = std.os.linux.poll(&polls, @intCast(polls.len), -1);
+    const one_second = std.time.ms_per_s;
+    while (!exit) {
+        const poll = std.os.linux.poll(&polls, @intCast(polls.len), one_second);
         if (poll > 0) {
-            try dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = &result } });
+            try dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = result } });
 
             // Wait for the main thread to finish processing the compositer's events
             _ = result.queue.getOne(dispatch.io) catch |err| switch (err) {
@@ -104,11 +124,17 @@ fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Cance
 }
 
 fn main_wayland(ws: *WindowSystem) error{Canceled}!void {
+    defer log.info("{s} exited", .{@src().fn_name});
+
     const wl = ws.native.wayland;
     while (true) {
         const e = try ws.dispatch.window_system_get();
-        ws.event_handle(e) catch |err| {
-            log.err("event_handle {}", .{err});
+        ws.event_handle(e) catch |err| switch (err) {
+            error.Canceled => |canceled| return canceled,
+            error.Exit => return,
+            else => {
+                log.err("event_handle {}", .{err});
+            },
         };
 
         var i: usize = wl.windows.count();
@@ -160,6 +186,7 @@ fn main_win32(ws: *WindowSystem) !void {
 }
 
 fn main_server(server: *Server) error{Canceled}!void {
+    defer log.info("{s} exited", .{@src().fn_name});
     const tm = server.task_master;
 
     tm.start(server, .client_connected);
@@ -168,8 +195,22 @@ fn main_server(server: *Server) error{Canceled}!void {
 
     while (true) {
         const selected = try tm.await();
-        try tm.handle(server, selected);
+        tm.handle(server, selected) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            error.Exit => return,
+        };
         tm.start(server, selected); // restart
+    }
+}
+
+pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
+    switch (sig) {
+        .INT => {
+            global_dispatch.window_system_put(.exit) catch {};
+            global_dispatch.server_put(.exit) catch {};
+            exit = true;
+        },
+        else => unreachable,
     }
 }
 

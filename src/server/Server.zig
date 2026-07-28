@@ -52,6 +52,8 @@ pub fn create(
 }
 
 pub fn destroy(server: *Server) void {
+    server.task_master.destroy(server);
+
     for (server.clients.map.values()) |client| {
         if (!client.closed) {
             client.close(server.io);
@@ -191,10 +193,13 @@ fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client
 pub fn handle_event(
     server: *Server,
     event: Dispatch.ServerEvent,
-) error{ Canceled, WriteFailed, OutOfMemory }!void {
+) error{ Canceled, WriteFailed, OutOfMemory, Exit }!void {
     std.debug.assert(!server.task_master.is_running(.server_has_event));
 
     switch (event) {
+        .exit => {
+            return error.Exit;
+        },
         .viewport_resize => |e| {
             const client = server.clients.map.get(e.client_id) orelse return;
 
@@ -347,6 +352,28 @@ pub const TaskMaster = struct {
         return tm;
     }
 
+    pub fn destroy(tm: *TaskMaster, server: *Server) void {
+        if (tm.select.cancel()) |task| blk: {
+            switch (task) {
+                .client_connected => |result| {
+                    const stream = result catch break :blk;
+                    stream.close(server.io);
+                },
+                .client_has_message => |result| {
+                    // FIXME: Memory leak when an error occurs
+                    const r = result catch break :blk;
+                    server.arena_release(r.arena);
+                },
+                .server_has_event => {
+                    // TODO: Figure out if there is a need to do anything here
+                },
+            }
+        }
+
+        server.gpa.free(tm.select_buffer);
+        server.gpa.destroy(tm);
+    }
+
     pub fn await(tm: *TaskMaster) !Task {
         const selected = try tm.select.await();
         tm.running.remove(selected);
@@ -390,7 +417,7 @@ pub const TaskMaster = struct {
         }
     }
 
-    pub fn handle(tm: *TaskMaster, server: *Server, task: Task) !void {
+    pub fn handle(tm: *TaskMaster, server: *Server, task: Task) error{ Canceled, Exit }!void {
         std.debug.assert(!tm.is_running(task));
 
         switch (task) {
@@ -428,6 +455,7 @@ pub const TaskMaster = struct {
             .server_has_event => |result| {
                 const event = try result;
                 server.handle_event(event) catch |err| switch (err) {
+                    error.Exit => |e| return e,
                     else => |e| log.err("Server: {}", .{e}),
                 };
             },
@@ -451,11 +479,11 @@ pub const Task = union(enum) {
         arena_instance: *std.heap.ArenaAllocator,
         clone: Clients.MapClone,
     ) error{ Canceled, ConcurrencyUnavailable, OutOfMemory }!struct { arena: *std.heap.ArenaAllocator, messages: []const Server.ClientMessage } {
+        defer clone.deinit();
+
         if (clone.map.count() == 0) {
             return .{ .arena = arena_instance, .messages = &.{} };
         }
-
-        defer clone.deinit();
 
         const arena = arena_instance.allocator();
         const count = clone.map.count();
