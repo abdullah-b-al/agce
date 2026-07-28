@@ -26,7 +26,7 @@ pub fn new_id(cs: *Clients) ClientID {
     return id;
 }
 
-pub const Map = std.array_hash_map.Auto(ClientID, Client);
+pub const Map = std.array_hash_map.Auto(ClientID, *Client);
 
 pub const MapClone = struct {
     gpa: std.mem.Allocator,

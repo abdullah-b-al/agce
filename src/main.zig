@@ -160,16 +160,16 @@ fn main_win32(ws: *WindowSystem) !void {
 }
 
 fn main_server(server: *Server) error{Canceled}!void {
-    var buffer: [@typeInfo(Server.Task).@"union".fields.len]Server.Task = undefined;
-    var select = Io.Select(Server.Task).init(server.io, &buffer);
+    const tm = server.task_master;
 
-    try server.task_start(&select, .client_connected);
-    try server.task_start(&select, .server_has_event);
+    tm.start(server, .client_connected);
+    tm.start(server, .server_has_event);
+    tm.start(server, .client_has_message);
 
     while (true) {
-        const selected = try select.await();
-        try server.task_handle(selected);
-        try server.task_start(&select, selected); // restart
+        const selected = try tm.await();
+        try tm.handle(server, selected);
+        tm.start(server, selected); // restart
     }
 }
 
