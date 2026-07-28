@@ -106,6 +106,36 @@ pub fn resources_get(wl: *Wayland, id: ClientID) !*ClientResources {
     return wl.resources.getPtr(id) orelse return error.ClientDoesNotExist;
 }
 
+pub fn buffer_set_listener_prepare(wl: *Wayland) !void {
+    var total: usize = 0;
+
+    for (wl.resources.values()) |rs| {
+        total += rs.wl_buffers_pending.count() +
+            rs.buffers_cpu.count() +
+            rs.buffers_gpu.count() +
+            1;
+    }
+
+    try wl.buffer_listeners.ensureTotalCapacity(wl.gpa, total);
+    try wl.buffer_listeners_pool.addCapacity(wl.gpa, 1);
+}
+
+pub fn buffer_set_listener(wl: *Wayland, rs: *ClientResources, dispatch: *Dispatch, wl_buffer: *cwl.Buffer, buffer_id: BufferID) void {
+    const data = wl.buffer_listeners_pool.create(wl.gpa) catch unreachable;
+
+    data.* = .{
+        .dispatch = dispatch,
+        .wl = wl,
+        .client_id = rs.client_id,
+        .buffer_id = buffer_id,
+    };
+
+    wl_buffer.setListener(*ClientResources.BufferListener, ClientResources.BufferListener.callback, data);
+    wl.buffer_listeners.putAssumeCapacityNoClobber(.{ .client_id = rs.client_id, .buffer_id = buffer_id }, data);
+
+    log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_id });
+}
+
 pub fn buffer_create_gpu_with_fds(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferCreateGpuWithFds) !void {
     const rs = try wl.resources_get(args.client_id);
 
@@ -447,3 +477,4 @@ const c_linux = @import("c_linux");
 const Dispatch = @import("../Dispatch.zig");
 const BufferKey = WindowSystem.BufferKey;
 const ViewportKey = WindowSystem.ViewportKey;
+const BufferID = @import("../protocol/types.zig").BufferID;

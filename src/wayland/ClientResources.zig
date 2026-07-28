@@ -88,10 +88,10 @@ pub fn buffer_create_and_register_cpu(
     format: BufferFormat,
 ) !void {
     try rs.buffers_cpu.ensureUnusedCapacity(wl.gpa, 1);
-    try rs.buffer_set_listener_prepare(wl);
+    try wl.buffer_set_listener_prepare();
 
     const cpu = try buffer_create_cpu(wl.shm, fd, width, height, format);
-    rs.buffer_set_listener(wl, dispatch, cpu.wl_buffer, id);
+    wl.buffer_set_listener(rs, dispatch, cpu.wl_buffer, id);
 
     rs.buffers_cpu.putAssumeCapacityNoClobber(id, cpu);
 }
@@ -145,7 +145,7 @@ pub fn buffer_create_and_register_gpu_async(
 
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
     try rs.buffers_gpu.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
-    try rs.buffer_set_listener_prepare(wl);
+    try wl.buffer_set_listener_prepare();
 
     std.debug.assert(@intFromEnum(fds.acquire_timeline) != @intFromEnum(fds.release_timeline));
     const timeline_acquire: Viewport.AcquireTimeline =
@@ -183,36 +183,6 @@ pub fn buffer_destroy(rs: *ClientResources, id: BufferID) void {
     if (rs.buffers_gpu.fetchOrderedRemove(id)) |gpu| {
         gpu.value.wl_buffer.destroy();
     }
-}
-
-pub fn buffer_set_listener_prepare(
-    rs: *ClientResources,
-    wl: *Wayland,
-) !void {
-    const total =
-        rs.wl_buffers_pending.count() +
-        rs.buffers_cpu.count() +
-        rs.buffers_gpu.count() +
-        1;
-
-    try wl.buffer_listeners.ensureTotalCapacity(wl.gpa, total);
-    try wl.buffer_listeners_pool.addCapacity(wl.gpa, 1);
-}
-
-pub fn buffer_set_listener(rs: *ClientResources, wl: *Wayland, dispatch: *Dispatch, wl_buffer: *cwl.Buffer, buffer_id: BufferID) void {
-    const data = wl.buffer_listeners_pool.create(wl.gpa) catch unreachable;
-
-    data.* = .{
-        .dispatch = dispatch,
-        .wl = wl,
-        .client_id = rs.client_id,
-        .buffer_id = buffer_id,
-    };
-
-    wl_buffer.setListener(*BufferListener, BufferListener.callback, data);
-    wl.buffer_listeners.putAssumeCapacityNoClobber(.{ .client_id = rs.client_id, .buffer_id = buffer_id }, data);
-
-    log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_id });
 }
 
 pub fn viewport_mark_commit(rs: *ClientResources, gpa: std.mem.Allocator, buffer_id: BufferID, viewport_id: ViewportID) !void {
@@ -280,8 +250,8 @@ pub const RegisterGpuBuffer = struct {
                     break :blk;
                 };
 
-                rs.buffer_set_listener(
-                    data.wl,
+                data.wl.buffer_set_listener(
+                    rs,
                     data.dispatch,
                     result.buffer,
                     data.buffer_id,
