@@ -1,14 +1,12 @@
 var global_dispatch: *Dispatch = undefined;
-var exit = false;
 
 fn main_common(
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
-    dispatch: *Dispatch,
     ws: *WindowSystem,
 ) !void {
-    const server = try Server.create(io, environ_map, gpa, dispatch);
+    const server = try Server.create(io, environ_map, gpa, global_dispatch);
     defer server.destroy();
 
     var group: Io.Group = .init;
@@ -19,7 +17,6 @@ fn main_common(
         .wayland => {
             if (os_tag == .linux) {
                 try group.concurrent(io, notify_when_wayland_event_arrives, .{
-                    dispatch,
                     ws.native.wayland.display.getFd(),
                 });
 
@@ -57,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
 
     const ws: *WindowSystem = try .create_wayland(init.io, init.gpa, global_dispatch);
     defer ws.destroy();
-    try main_common(init.io, init.gpa, init.environ_map, global_dispatch, ws);
+    try main_common(init.io, init.gpa, init.environ_map, ws);
 }
 
 pub fn wWinMain(
@@ -95,27 +92,36 @@ pub fn wWinMain(
     return 0;
 }
 
-fn notify_when_wayland_event_arrives(dispatch: *Dispatch, fd: c_int) error{Canceled}!void {
+fn notify_when_wayland_event_arrives(fd: c_int) error{Canceled}!void {
     defer log.info("{s} exited", .{@src().fn_name});
-    var polls = [_]std.os.linux.pollfd{
-        .{
-            .fd = fd,
-            .events = std.os.linux.POLL.IN,
-            .revents = 0,
+
+    var result = Dispatch.WindowSystemResultQueue.create(global_dispatch.gpa) catch unreachable;
+    defer result.destroy(global_dispatch.io, global_dispatch.gpa);
+
+    var msg_buf: [1]net.IncomingMessage = undefined;
+    var buf: [1]u8 = undefined;
+
+    const op: Io.Operation = .{
+        .net_receive = .{
+            .socket_handle = fd,
+            .message_buffer = &msg_buf,
+            .data_buffer = &buf,
+            .flags = .{ .peek = true },
         },
     };
 
-    var result = Dispatch.WindowSystemResultQueue.create(dispatch.gpa) catch unreachable;
-    defer result.destroy(dispatch.io, dispatch.gpa);
-
-    const one_second = std.time.ms_per_s;
-    while (!exit) {
-        const poll = std.os.linux.poll(&polls, @intCast(polls.len), one_second);
-        if (poll > 0) {
-            try dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = result } });
+    while (true) {
+        const maybe_err, _ = (try global_dispatch.io.operate(op)).net_receive;
+        if (maybe_err) |err| {
+            switch (err) {
+                error.Canceled => |canceled| return canceled,
+                else => continue,
+            }
+        } else {
+            try global_dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = result } });
 
             // Wait for the main thread to finish processing the compositer's events
-            _ = result.queue.getOne(dispatch.io) catch |err| switch (err) {
+            _ = result.queue.getOne(global_dispatch.io) catch |err| switch (err) {
                 error.Closed => unreachable,
                 error.Canceled => |e| return e,
             };
@@ -207,7 +213,6 @@ pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
         .INT => {
             global_dispatch.window_system_put(.exit) catch {};
             global_dispatch.server_put(.exit) catch {};
-            exit = true;
         },
         else => unreachable,
     }
