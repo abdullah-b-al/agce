@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
     global_dispatch = try .create(init.io, init.gpa);
     defer global_dispatch.destroy();
 
-    const ws: *WindowSystem = try .init_wayland(init.io, init.gpa, global_dispatch);
+    const ws: *WindowSystem = try .create_wayland(init.io, init.gpa, global_dispatch);
     defer ws.destroy();
     try main_common(init.io, init.gpa, init.environ_map, global_dispatch, ws);
 }
@@ -78,7 +78,7 @@ pub fn wWinMain(
     defer environ_map.deinit();
 
     const dispatch = Dispatch.create(io, gpa) catch return 1;
-    const ws: *WindowSystem = WindowSystem.init_win32(
+    const ws: *WindowSystem = WindowSystem.create_win32(
         io,
         gpa,
         instance,
@@ -143,7 +143,7 @@ fn main_wayland(ws: *WindowSystem) error{Canceled}!void {
             const win = wl.windows.values()[i];
             if (win.configured and !win.running) {
                 // TODO: Proper deinit
-                win.destroy();
+                win.destroy(ws.gpa);
                 _ = wl.windows.orderedRemove(win.id);
             }
         }

@@ -74,15 +74,33 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
     return state;
 }
 
-pub fn destroy(state: *Wayland) void {
-    state.wm_base.destroy();
-    state.compositor.destroy();
-    state.shm.destroy();
+pub fn destroy(wl: *Wayland) void {
+    for (wl.windows.values()) |window| {
+        window.destroy(wl.gpa);
+    }
+    wl.windows.deinit(wl.gpa);
 
-    state.registry.destroy();
-    state.display.disconnect();
+    for (wl.resources.values()) |*rs| {
+        rs.deinit(wl.gpa);
+    }
+    wl.resources.deinit(wl.gpa);
 
-    state.gpa.destroy(state);
+    wl.buffer_listeners.deinit(wl.gpa);
+    wl.buffer_listeners_pool.deinit(wl.gpa);
+
+    wl.shm.destroy();
+    wl.compositor.destroy();
+    wl.subcompositor.destroy();
+    wl.wm_base.destroy();
+    wl.seat.destroy();
+    wl.dmabuf.destroy();
+    wl.viewporter.destroy();
+    wl.sync_object_manager.destroy();
+
+    wl.registry.destroy();
+    wl.display.disconnect();
+
+    wl.gpa.destroy(wl);
 }
 
 pub fn client_connected(wl: *Wayland, id: ClientID) !void {

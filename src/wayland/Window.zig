@@ -62,10 +62,16 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
     return window;
 }
 
-pub fn destroy(window: *Window) void {
+pub fn destroy(window: *Window, gpa: std.mem.Allocator) void {
     window.xdg_toplevel.destroy();
     window.xdg_surface.destroy();
     window.surface.destroy();
+
+    window.buffer.wl_buffer.destroy();
+    std.posix.munmap(window.buffer_pixels);
+    _ = std.os.linux.close(@intFromEnum(window.buffer_fd));
+
+    gpa.destroy(window);
 }
 
 pub fn commit(win: *Window) void {

@@ -36,7 +36,6 @@ pub fn deinit(rs: *ClientResources, gpa: std.mem.Allocator) void {
         if (gpu.timeline_acquire) |t| t.acquire.destroy();
         if (gpu.timeline_release) |t| t.release.destroy();
     }
-
     rs.buffers_gpu.deinit(gpa);
 
     for (rs.viewports.values()) |*vp| {

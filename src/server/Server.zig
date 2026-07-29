@@ -64,6 +64,7 @@ pub fn destroy(server: *Server) void {
         if (!client.closed) {
             client.close(server.io);
         }
+        server.gpa.destroy(client);
     }
     server.clients.map.deinit(server.gpa);
 
@@ -373,9 +374,7 @@ pub const TaskMaster = struct {
                     stream.close(server.io);
                 },
                 .client_has_message => |result| {
-                    // FIXME: Memory leak when an error occurs
-                    const r = result catch continue;
-                    server.arena_release(r.arena);
+                    server.arena_release(result.arena);
                 },
                 .server_has_event => {
                     // TODO: Figure out if there is a need to do anything here
@@ -457,15 +456,15 @@ pub const TaskMaster = struct {
             },
 
             .client_has_message => |result| {
-                const r = result catch |err| switch (err) {
-                    error.Canceled => |e| return e,
+                if (result.err) |e| switch (e) {
+                    error.Canceled => |canceled| return canceled,
                     error.OutOfMemory => return,
                     error.ConcurrencyUnavailable => @panic("ConcurrencyUnavailable"),
                 };
-                defer server.arena_release(r.arena);
+                defer server.arena_release(result.arena);
 
-                for (r.messages) |message| {
-                    try server.client_message_handle(r.arena.allocator(), message);
+                for (result.messages) |message| {
+                    try server.client_message_handle(result.arena.allocator(), message);
                 }
             },
 
@@ -496,22 +495,41 @@ pub const Task = union(enum) {
     client_has_message: ReturnType(fn_client_has_message),
     server_has_event: ReturnType(fn_server_has_event),
 
+    const ClientHasMessage = struct {
+        const Error = error{ Canceled, ConcurrencyUnavailable, OutOfMemory };
+
+        arena: *std.heap.ArenaAllocator,
+        messages: []const Server.ClientMessage,
+        err: ?Error,
+
+        pub fn @"try"(
+            arena: *std.heap.ArenaAllocator,
+            err: anytype,
+        ) ClientHasMessage {
+            return .{ .arena = arena, .messages = &.{}, .err = err };
+        }
+    };
+
     fn fn_client_has_message(
         io: Io,
         arena_instance: *std.heap.ArenaAllocator,
         clone: Clients.MapClone,
-    ) error{ Canceled, ConcurrencyUnavailable, OutOfMemory }!struct { arena: *std.heap.ArenaAllocator, messages: []const Server.ClientMessage } {
+    ) ClientHasMessage {
         std.debug.assert(clone.map.count() > 0);
         defer clone.deinit();
 
         const arena = arena_instance.allocator();
         const count = clone.map.count();
 
-        const storage = try arena.alloc(Io.Operation.Storage, count);
-        const buffers = try arena.alloc([]u8, count);
+        const storage = arena.alloc(Io.Operation.Storage, count) catch |err|
+            return .@"try"(arena_instance, err);
+        const buffers = arena.alloc([]u8, count) catch |err|
+            return .@"try"(arena_instance, err);
+
         for (buffers) |*buf| {
             // TODO: calculate the maximum size
-            buf.* = try arena.alloc(u8, 4096);
+            buf.* = arena.alloc(u8, 4096) catch |err|
+                return .@"try"(arena_instance, err);
         }
 
         var batch = Io.Batch.init(storage);
@@ -519,7 +537,7 @@ pub const Task = union(enum) {
             if (client.closed) continue;
 
             // len must be 1 for recv_fd to work
-            const msg_buf = try arena.alloc(net.IncomingMessage, 1);
+            const msg_buf = arena.alloc(net.IncomingMessage, 1) catch |err| return .@"try"(arena_instance, err);
 
             const op: Io.Operation = .{
                 .net_receive = .{
@@ -535,10 +553,12 @@ pub const Task = union(enum) {
 
         batch.awaitConcurrent(io, .none) catch |err| switch (err) {
             error.Timeout => unreachable,
-            else => |e| return e,
+            else => |e| return .@"try"(arena_instance, e),
         };
 
-        var list: std.ArrayList(Server.ClientMessage) = try .initCapacity(arena, count);
+        var list = std.ArrayList(Server.ClientMessage).initCapacity(arena, count) catch |err|
+            return .@"try"(arena_instance, err);
+
         while (batch.next()) |completed| {
             const err, const len = completed.result.net_receive;
             std.debug.assert(len == 1);
@@ -546,13 +566,17 @@ pub const Task = union(enum) {
             list.appendAssumeCapacity(.{
                 .client_id = id,
                 .err = if (err) |e| switch (e) {
-                    error.Canceled => |canceled| return canceled,
+                    error.Canceled => |canceled| return .@"try"(arena_instance, canceled),
                     else => |rest| rest,
                 } else null,
             });
         }
 
-        return .{ .arena = arena_instance, .messages = try list.toOwnedSlice(arena) };
+        return .{
+            .arena = arena_instance,
+            .messages = list.toOwnedSlice(arena) catch |err| return .@"try"(arena_instance, err),
+            .err = null,
+        };
     }
 
     fn fn_client_connected(io: Io, server: *net.Server) net.Server.AcceptError!net.Stream {

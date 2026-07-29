@@ -1,8 +1,8 @@
 const Viewport = @This();
 
 id: ViewportID,
-subsurface: *cwl.Subsurface,
 surface: *cwl.Surface,
+subsurface: *cwl.Subsurface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 

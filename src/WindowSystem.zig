@@ -8,12 +8,12 @@ window_next_id: WindowID,
 
 native: NativeWindowSystem,
 
-pub fn init_wayland(
+pub fn create_wayland(
     io: Io,
     gpa: std.mem.Allocator,
     dispatch: *Dispatch,
 ) !*WindowSystem {
-    const ws: *WindowSystem = try .init_undefined_native(
+    const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
         dispatch,
@@ -27,14 +27,14 @@ pub fn init_wayland(
     return ws;
 }
 
-pub fn init_win32(
+pub fn create_win32(
     io: Io,
     gpa: std.mem.Allocator,
     instance: Win32.HINSTANCE,
     cmd_show: c_int,
     dispatch: *Dispatch,
 ) !*WindowSystem {
-    const ws: *WindowSystem = try .init_undefined_native(
+    const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
         dispatch,
@@ -47,7 +47,7 @@ pub fn init_win32(
     return ws;
 }
 
-fn init_undefined_native(
+fn create_undefined_native(
     io: Io,
     gpa: std.mem.Allocator,
     dispatch: *Dispatch,
