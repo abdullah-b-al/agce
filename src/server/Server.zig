@@ -4,6 +4,7 @@ io: Io,
 gpa: std.mem.Allocator,
 dispatch: *Dispatch,
 
+unix_path: []const u8,
 server: net.Server,
 clients: Clients,
 arena_pool: std.ArrayList(*std.heap.ArenaAllocator),
@@ -20,12 +21,15 @@ pub fn create(
     errdefer gpa.destroy(server);
 
     var path_buf: [constants.socket_max_path]u8 = undefined;
-    const path = utils.unix_address_path(environ, &path_buf);
-    const address = net.UnixAddress.init(path) catch |err| switch (err) {
+    const unix_path = blk: {
+        const path = utils.unix_address_path(environ, &path_buf);
+        break :blk try gpa.dupe(u8, path);
+    };
+    const address = net.UnixAddress.init(unix_path) catch |err| switch (err) {
         error.NameTooLong => unreachable,
     };
     const net_server = address.listen(io, .{}) catch |err| {
-        log.err("Failed to listen to socket {s} {}", .{ path, err });
+        log.err("Failed to listen to socket {s} {}", .{ unix_path, err });
         return err;
     };
     log.info("Created server on {s}", .{address.path});
@@ -40,11 +44,13 @@ pub fn create(
 
     const task_master: *TaskMaster = try .create(io, gpa);
     server.* = .{
-        .server = net_server,
-        .gpa = gpa,
         .io = io,
-        .clients = .init,
+        .gpa = gpa,
         .dispatch = dispatch,
+
+        .unix_path = unix_path,
+        .server = net_server,
+        .clients = .init,
         .arena_pool = arena_pool,
         .task_master = task_master,
     };
@@ -68,7 +74,14 @@ pub fn destroy(server: *Server) void {
     server.arena_pool.deinit(server.gpa);
 
     server.server.deinit(server.io);
+    Io.Dir.deleteFileAbsolute(server.io, server.unix_path) catch |err| switch (err) {
+        error.Canceled => {},
+        else => |e| {
+            log.err("Could not delete unix socket {s} error {}", .{ server.unix_path, e });
+        },
+    };
 
+    server.gpa.free(server.unix_path);
     server.gpa.destroy(server);
 }
 
@@ -353,15 +366,15 @@ pub const TaskMaster = struct {
     }
 
     pub fn destroy(tm: *TaskMaster, server: *Server) void {
-        if (tm.select.cancel()) |task| blk: {
+        while (tm.select.cancel()) |task| {
             switch (task) {
                 .client_connected => |result| {
-                    const stream = result catch break :blk;
+                    const stream = result catch continue;
                     stream.close(server.io);
                 },
                 .client_has_message => |result| {
                     // FIXME: Memory leak when an error occurs
-                    const r = result catch break :blk;
+                    const r = result catch continue;
                     server.arena_release(r.arena);
                 },
                 .server_has_event => {
