@@ -191,7 +191,6 @@ fn main_server(server: *Server) error{Canceled}!void {
 
     tm.start(server, .client_connected);
     tm.start(server, .server_has_event);
-    tm.start(server, .client_has_message);
 
     while (true) {
         const selected = try tm.await();
