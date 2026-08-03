@@ -118,7 +118,7 @@ fn notify_when_wayland_event_arrives(fd: c_int) error{Canceled}!void {
                 else => continue,
             }
         } else {
-            try global_dispatch.window_system_put(.{ .wayland_dispatch = .{ .result_queue = result } });
+            try global_dispatch.window_system_put(@src(), .{ .wayland_dispatch = .{ .result_queue = result } });
 
             // Wait for the main thread to finish processing the compositer's events
             _ = result.queue.getOne(global_dispatch.io) catch |err| switch (err) {
@@ -211,8 +211,8 @@ fn main_server(server: *Server) error{Canceled}!void {
 pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
     switch (sig) {
         .INT => {
-            global_dispatch.window_system_put(.exit) catch {};
-            global_dispatch.server_put(.exit) catch {};
+            global_dispatch.window_system_put(@src(), .exit) catch {};
+            global_dispatch.server_put(@src(), .exit) catch {};
         },
         else => unreachable,
     }
@@ -227,7 +227,7 @@ const WindowSystem = @import("WindowSystem.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
 const Server = @import("server/Server.zig");
 const constants = @import("constants.zig");
-const utils = @import("server/utils.zig");
+const utils = @import("utils.zig");
 const c_linux = @import("c_linux");
 const client_to_server = @import("protocol/client_to_server.zig");
 const server_to_client = @import("protocol/server_to_client.zig");

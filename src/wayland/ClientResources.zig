@@ -171,7 +171,7 @@ pub fn buffer_create_and_register_gpu_async(
     params.create(width, height, format, .{});
     params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
 
-    log.debug("GPU Buffer Requsted {} for {}", .{ data.buffer_id, data.client_id });
+    log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
 }
 
 pub fn buffer_destroy(rs: *ClientResources, id: BufferID) void {
@@ -266,7 +266,7 @@ pub const RegisterGpuBuffer = struct {
                     },
                 );
 
-                log.debug("GPU buffer created {} for {}", .{ data.buffer_id, data.client_id });
+                log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
             },
             .failed => @panic("TODO"),
         }
@@ -291,8 +291,9 @@ pub const BufferListener = struct {
                 };
                 const entry = rs.buffers_commited.fetchSwapRemove(data.buffer_id) orelse return;
 
-                log.debug("Received release event for wl_buffer {} {} {}", .{ data.client_id, data.buffer_id, entry.value });
+                log.debug("Received release event for wl_buffer {f} {f} {f}", .{ data.client_id, data.buffer_id, entry.value });
                 data.dispatch.server_put(
+                    @src(),
                     .{
                         .buffer_released = .{
                             .client_id = data.client_id,

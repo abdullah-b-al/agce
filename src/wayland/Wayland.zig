@@ -278,6 +278,7 @@ pub fn buffer_destroy(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSy
     rs.buffer_destroy(args.buffer_id);
 
     try dispatch.server_put(
+        @src(),
         .{
             .buffer_destroyed = .{
                 .client_id = args.client_id,
@@ -488,7 +489,7 @@ const ClientID = @import("../server/Clients.zig").ClientID;
 const WindowSystem = @import("../WindowSystem.zig");
 const WindowID = WindowSystem.WindowID;
 const log = std.log.scoped(.Wayland);
-const utils = @import("../server/utils.zig");
+const utils = @import("../utils.zig");
 const ClientResources = @import("ClientResources.zig");
 const Window = @import("Window.zig");
 const c_linux = @import("c_linux");

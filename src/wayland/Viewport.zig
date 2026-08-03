@@ -77,6 +77,6 @@ const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
 const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
-const utils = @import("../server/utils.zig");
+const utils = @import("../utils.zig");
 const c_linux = @import("c_linux");
 const Wayland = @import("Wayland.zig");

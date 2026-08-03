@@ -41,6 +41,10 @@ pub const MapClone = struct {
 pub const ClientID = enum(u32) {
     pub const first: ClientID = @enumFromInt(1);
     _,
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ClientID({})", .{@intFromEnum(self)});
+    }
 };
 
 const std = @import("std");

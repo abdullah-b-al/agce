@@ -27,7 +27,12 @@ pub fn destroy(dispatch: *Dispatch) void {
     dispatch.gpa.destroy(dispatch);
 }
 
-pub fn window_system_put(dispatch: *Dispatch, event: WindowSystemEvent) error{Canceled}!void {
+pub fn window_system_put(dispatch: *Dispatch, src: SourceLocation, event: WindowSystemEvent) error{Canceled}!void {
+    log.debug("{s} dispatched by {s} with {f}", .{
+        @src().fn_name,
+        src.fn_name,
+        event,
+    });
     dispatch.window_system.queue.putOne(dispatch.io, event) catch |err| switch (err) {
         error.Closed => unreachable,
         error.Canceled => |e| return e,
@@ -41,7 +46,12 @@ pub fn window_system_get(dispatch: *Dispatch) error{Canceled}!WindowSystemEvent 
     };
 }
 
-pub fn server_put(dispatch: *Dispatch, event: ServerEvent) error{Canceled}!void {
+pub fn server_put(dispatch: *Dispatch, src: SourceLocation, event: ServerEvent) error{Canceled}!void {
+    log.debug("{s} dispatched by {s} with {f}", .{
+        @src().fn_name,
+        src.fn_name,
+        event,
+    });
     dispatch.server.queue.putOne(dispatch.io, event) catch |err| switch (err) {
         error.Closed => unreachable,
         error.Canceled => |e| return e,
@@ -75,6 +85,17 @@ pub const WindowSystemEvent = union(enum) {
     wayland_dispatch: struct {
         result_queue: *WindowSystemResultQueue,
     },
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .wayland_dispatch => |_, tag| {
+                try writer.print("{s}", .{@tagName(tag)});
+            },
+            inline else => |v, tag| {
+                try utils.format_active_union_field(v, @tagName(tag), writer);
+            },
+        }
+    }
 
     pub const WindowResize = struct {
         id: WindowID,
@@ -152,6 +173,10 @@ pub const ServerEvent = union(enum) {
     buffer_released: WindowSystemEvent.BufferPresent,
     buffer_destroyed: WindowSystemEvent.BufferDestroy,
 
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try utils.format_union(self, writer);
+    }
+
     pub const ViewportResize = struct {
         client_id: ClientID,
         resize: protocol_types.ViewportResize,
@@ -187,6 +212,8 @@ pub fn IoQueue(comptime T: type) type {
 const std = @import("std");
 const Io = std.Io;
 const protocol_types = @import("protocol/types.zig");
+const log = std.log.scoped(.Dispatch);
+const SourceLocation = std.builtin.SourceLocation;
 const ViewportFds = @import("protocol/types.zig").ViewportFds;
 const ViewportID = @import("protocol/types.zig").ViewportID;
 const BufferFormat = @import("protocol/types.zig").BufferFormat;
@@ -194,3 +221,4 @@ const BufferID = @import("protocol/types.zig").BufferID;
 const ClientID = @import("server/Clients.zig").ClientID;
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
 const WindowID = @import("WindowSystem.zig").WindowID;
+const utils = @import("utils.zig");

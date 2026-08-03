@@ -118,7 +118,7 @@ pub fn client_connected(server: *Server, stream: net.Stream) !void {
     const client: *Client = try .create(server.gpa, id, stream);
 
     server.clients.map.putAssumeCapacity(id, client);
-    server.dispatch.window_system_put(.{ .client_connected = id }) catch |err| switch (err) {
+    server.dispatch.window_system_put(@src(), .{ .client_connected = id }) catch |err| switch (err) {
         error.Canceled => return err,
     };
 }
@@ -143,7 +143,7 @@ pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_m
             client.close(server.io);
             log.err("Closing client {} with error {}", .{ client_message.client_id, err });
 
-            try server.dispatch.window_system_put(.{ .client_disconnected = client.id });
+            try server.dispatch.window_system_put(@src(), .{ .client_disconnected = client.id });
         },
 
         error.Overflow,
@@ -196,8 +196,8 @@ fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client
 
     if (maybe_message) |message| {
         if (server.window_system_event_from_message(client, message)) |e| {
-            try server.dispatch.window_system_put(e);
-            log.debug("Server dispatched event {}", .{e});
+            try server.dispatch.window_system_put(@src(), e);
+            // log.debug("Server dispatched event {}", .{e});
         } else |err| {
             log.err("{}", .{err});
         }
@@ -592,7 +592,7 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const constants = @import("../constants.zig");
-const utils = @import("utils.zig");
+const utils = @import("../utils.zig");
 const Clients = @import("Clients.zig");
 const Client = @import("Client.zig");
 const log = std.log.scoped(.Server);

@@ -23,6 +23,10 @@ pub const ViewportID = enum(u32) {
         id.* = @enumFromInt(int + 1);
         return @enumFromInt(int);
     }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ViewportID({})", .{@intFromEnum(self)});
+    }
 };
 
 pub const BufferID = enum(u32) {
@@ -34,6 +38,10 @@ pub const BufferID = enum(u32) {
         const int = @intFromEnum(this.*);
         this.* = @enumFromInt(int + 1);
         return @enumFromInt(int);
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("BufferID({})", .{@intFromEnum(self)});
     }
 };
 
@@ -75,6 +83,10 @@ pub const AcquireTimelinePoint = enum(u64) {
         const int = @intFromEnum(p.*);
         p.* = @enumFromInt(int + 1);
     }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("AcquireTimelinePoint({})", .{@intFromEnum(self)});
+    }
 };
 
 pub const ReleaseTimelinePoint = enum(u64) {
@@ -83,6 +95,10 @@ pub const ReleaseTimelinePoint = enum(u64) {
     pub fn advance(p: *ReleaseTimelinePoint) void {
         const int = @intFromEnum(p.*);
         p.* = @enumFromInt(int + 1);
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ReleaseTimelinePoint({})", .{@intFromEnum(self)});
     }
 };
 

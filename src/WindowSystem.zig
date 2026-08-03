@@ -142,7 +142,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             };
 
-            try ws.dispatch.server_put(.{ .viewport_resize = resize });
+            try ws.dispatch.server_put(@src(), .{ .viewport_resize = resize });
         },
         .wayland_dispatch => |dis| {
             switch (ws.native) {
@@ -175,6 +175,10 @@ pub const WindowID = enum(u32) {
         const int = @intFromEnum(this.*);
         this.* = @enumFromInt(int + 1);
         return @enumFromInt(int);
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("WindowID({})", .{@intFromEnum(self)});
     }
 };
 
