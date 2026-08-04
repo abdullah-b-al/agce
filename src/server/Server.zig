@@ -61,9 +61,7 @@ pub fn destroy(server: *Server) void {
     server.task_master.destroy(server);
 
     for (server.clients.map.values()) |client| {
-        if (!client.closed) {
-            client.close(server.io);
-        }
+        client.close(server.io);
         server.gpa.destroy(client);
     }
     server.clients.map.deinit(server.gpa);
@@ -589,7 +587,6 @@ const net = Io.net;
 const constants = @import("../constants.zig");
 const utils = @import("../utils.zig");
 const Clients = @import("Clients.zig");
-const Client = @import("Client.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
 const MessagePayload = @import("../protocol/client_to_server.zig").MessagePayload;
@@ -597,3 +594,4 @@ const Dispatch = @import("../Dispatch.zig");
 const server_to_client = @import("../protocol/server_to_client.zig");
 const client_to_server = @import("../protocol/client_to_server.zig");
 const ClientID = Clients.ClientID;
+const Client = Clients.Client;

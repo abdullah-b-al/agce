@@ -324,4 +324,4 @@ const os_tag = @import("builtin").os.tag;
 const types = @import("types.zig");
 const common = @import("common.zig");
 const ClientID = @import("../server/Clients.zig").ClientID;
-const Client = @import("../server/Client.zig");
+const Client = @import("../server/Clients.zig").Client;
