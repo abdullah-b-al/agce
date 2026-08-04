@@ -143,15 +143,20 @@ fn main_wayland(ws: *WindowSystem) error{Canceled}!void {
             },
         };
 
+        var removed = false;
         var i: usize = wl.windows.count();
         while (i > 0) {
             i -= 1;
             const win = wl.windows.values()[i];
             if (win.configured and !win.running) {
-                // TODO: Proper deinit
                 win.destroy(ws.gpa);
                 _ = wl.windows.orderedRemove(win.id);
+                removed = true;
             }
+        }
+
+        if (removed) {
+            _ = wl.display.flush();
         }
     }
 }

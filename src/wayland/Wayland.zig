@@ -108,7 +108,11 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
         return;
     };
 
-    // TODO: Kill windows
+    for (wl.windows.values()) |win| {
+        if (win.viewport_key.client_id == id) {
+            win.running = false;
+        }
+    }
 
     rs.deinit(wl);
     _ = wl.resources.orderedRemove(id);
