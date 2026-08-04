@@ -19,7 +19,7 @@ pub fn create_wayland(
         dispatch,
     );
 
-    const wl: *Wayland = try .create(gpa, io);
+    const wl: *Wayland = try .create(dispatch);
     ws.native = .{ .wayland = wl };
 
     try wl.set_listeners(ws);
@@ -100,7 +100,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         },
         .buffer_create_cpu_with_fd => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.buffer_create_cpu_with_fd(ws.dispatch, args),
+                .wayland => |wl| try wl.buffer_create_cpu_with_fd(args),
                 .win32 => @panic("TODO"),
             }
         },
@@ -120,7 +120,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
 
         .buffer_destroy => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.buffer_destroy(ws.dispatch, args),
+                .wayland => |wl| try wl.buffer_destroy(args),
                 .win32 => @panic("TODO"),
             }
         },

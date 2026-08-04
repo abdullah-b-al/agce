@@ -2,6 +2,7 @@ const Wayland = @This();
 
 io: std.Io,
 gpa: std.mem.Allocator,
+dispatch: *Dispatch,
 
 shm: *cwl.Shm,
 compositor: *cwl.Compositor,
@@ -18,11 +19,10 @@ registry: *cwl.Registry,
 windows: std.array_hash_map.Auto(WindowID, *Window),
 resources: std.array_hash_map.Auto(ClientID, ClientResources),
 
-buffer_listeners: std.array_hash_map.Auto(BufferKey, *ClientResources.BufferListener),
-buffer_listeners_pool: std.heap.MemoryPool(ClientResources.BufferListener),
+wl_buffers: std.array_hash_map.Auto(WlBufferID, BufferKey),
 
-pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
-    const state = try gpa.create(Wayland);
+pub fn create(dispatch: *Dispatch) !*Wayland {
+    const state = try dispatch.gpa.create(Wayland);
     const display = try cwl.Display.connect(null);
     const registry = try display.getRegistry();
 
@@ -50,8 +50,9 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
     const sync_object_manager = globals.sync_object_manager orelse return error.NoWpSyncobjManager;
 
     state.* = .{
-        .io = io,
-        .gpa = gpa,
+        .io = dispatch.io,
+        .gpa = dispatch.gpa,
+        .dispatch = dispatch,
 
         .shm = shm,
         .compositor = compositor,
@@ -67,26 +68,20 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io) !*Wayland {
 
         .windows = .empty,
         .resources = .empty,
-        .buffer_listeners = .empty,
-        .buffer_listeners_pool = .empty,
+        .wl_buffers = .empty,
     };
 
     return state;
 }
 
 pub fn destroy(wl: *Wayland) void {
-    for (wl.windows.values()) |window| {
-        window.destroy(wl.gpa);
-    }
+    for (wl.windows.values()) |window| window.destroy(wl.gpa);
     wl.windows.deinit(wl.gpa);
 
-    for (wl.resources.values()) |*rs| {
-        rs.deinit(wl.gpa);
-    }
+    for (wl.resources.values()) |*rs| rs.deinit(wl);
     wl.resources.deinit(wl.gpa);
 
-    wl.buffer_listeners.deinit(wl.gpa);
-    wl.buffer_listeners_pool.deinit(wl.gpa);
+    wl.wl_buffers.deinit(wl.gpa);
 
     wl.shm.destroy();
     wl.compositor.destroy();
@@ -115,8 +110,7 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
 
     // TODO: Kill windows
 
-    rs.deinit(wl.gpa);
-
+    rs.deinit(wl);
     _ = wl.resources.orderedRemove(id);
 }
 
@@ -128,28 +122,21 @@ pub fn buffer_set_listener_prepare(wl: *Wayland) !void {
     var total: usize = 0;
 
     for (wl.resources.values()) |rs| {
-        total += rs.wl_buffers_pending.count() +
-            rs.buffers_cpu.count() +
-            rs.buffers_gpu.count() +
+        total +=
+            rs.wl_buffers_pending.count() +
+            rs.buffers.count() +
             1;
     }
 
-    try wl.buffer_listeners.ensureTotalCapacity(wl.gpa, total);
-    try wl.buffer_listeners_pool.addCapacity(wl.gpa, 1);
+    try wl.wl_buffers.ensureTotalCapacity(wl.gpa, total);
 }
 
-pub fn buffer_set_listener(wl: *Wayland, rs: *ClientResources, dispatch: *Dispatch, wl_buffer: *cwl.Buffer, buffer_id: BufferID) void {
-    const data = wl.buffer_listeners_pool.create(wl.gpa) catch unreachable;
-
-    data.* = .{
-        .dispatch = dispatch,
-        .wl = wl,
-        .client_id = rs.client_id,
-        .buffer_id = buffer_id,
-    };
-
-    wl_buffer.setListener(*ClientResources.BufferListener, ClientResources.BufferListener.callback, data);
-    wl.buffer_listeners.putAssumeCapacityNoClobber(.{ .client_id = rs.client_id, .buffer_id = buffer_id }, data);
+pub fn buffer_set_listener(wl: *Wayland, rs: *ClientResources, wl_buffer: *cwl.Buffer, buffer_id: BufferID) void {
+    wl_buffer.setListener(*Wayland, ClientResources.BufferListener.callback, wl);
+    wl.wl_buffers.putAssumeCapacityNoClobber(
+        .from_wl_buffer(wl_buffer),
+        .{ .client_id = rs.client_id, .buffer_id = buffer_id },
+    );
 
     log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_id });
 }
@@ -169,12 +156,11 @@ pub fn buffer_create_gpu_with_fds(wl: *Wayland, dispatch: *Dispatch, args: Dispa
     );
 }
 
-pub fn buffer_create_cpu_with_fd(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferCreateCpuWithFd) !void {
+pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferCreateCpuWithFd) !void {
     const rs = try wl.resources_get(args.client_id);
 
     try rs.buffer_create_and_register_cpu(
         wl,
-        dispatch,
         args.buffer_id,
         args.fd,
         @intCast(args.width),
@@ -198,7 +184,7 @@ pub fn buffer_present(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferPrese
         return;
     };
 
-    const buffer = rs.buffer_get(args.buffer_id) orelse {
+    const buffer = rs.buffers.getPtr(args.buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(args.buffer_id)) {
             log.warn("Buffer is pending {} for {}", .{ args.buffer_id, args.client_id });
         } else {
@@ -232,7 +218,7 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
         return;
     };
 
-    const buffer = rs.buffer_get(args.buffer_id) orelse {
+    const buffer = rs.buffers.getPtr(args.buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(args.buffer_id)) {
             log.warn("Buffer is pending {} for {}", .{ args.buffer_id, args.client_id });
         } else {
@@ -257,7 +243,7 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
 
     if (vp.sync_surface) |sync_surface| {
-        switch (buffer) {
+        switch (buffer.*) {
             .gpu => |gpu| {
                 gpu.timeline_acquire.?.set(sync_surface, args.acquire_point);
                 gpu.timeline_release.?.set(sync_surface, args.release_point);
@@ -273,11 +259,11 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Dispatch.WindowSystemEvent.B
     _ = wl.display.flush();
 }
 
-pub fn buffer_destroy(wl: *Wayland, dispatch: *Dispatch, args: Dispatch.WindowSystemEvent.BufferDestroy) !void {
+pub fn buffer_destroy(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferDestroy) !void {
     const rs = try wl.resources_get(args.client_id);
-    rs.buffer_destroy(args.buffer_id);
+    rs.buffer_destroy(wl, args.buffer_id);
 
-    try dispatch.server_put(
+    try wl.dispatch.server_put(
         @src(),
         .{
             .buffer_destroyed = .{
@@ -468,6 +454,14 @@ pub const MaybeGlobals = struct {
     dmabuf: ?*zwp.LinuxDmabufV1,
     viewporter: ?*wp.Viewporter,
     sync_object_manager: ?*wp.LinuxDrmSyncobjManagerV1,
+};
+
+pub const WlBufferID = enum(u32) {
+    _,
+
+    pub fn from_wl_buffer(wl_buffer: *cwl.Buffer) WlBufferID {
+        return @enumFromInt(wl_buffer.getId());
+    }
 };
 
 pub fn fill_black(buffer: []u8, width: i32, height: i32, bpp: u8) void {

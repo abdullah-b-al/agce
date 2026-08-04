@@ -5,8 +5,7 @@ wl_buffers_pending: std.array_hash_map.Auto(BufferID, void),
 
 buffers_commited: std.array_hash_map.Auto(BufferID, ViewportID),
 
-buffers_cpu: std.array_hash_map.Auto(BufferID, CpuBuffer),
-buffers_gpu: std.array_hash_map.Auto(BufferID, GpuBuffer),
+buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
 viewports: std.array_hash_map.Auto(ViewportID, Viewport),
 
@@ -15,39 +14,23 @@ pub fn init(id: ClientID) ClientResources {
         .client_id = id,
         .wl_buffers_pending = .empty,
         .buffers_commited = .empty,
-        .buffers_cpu = .empty,
-        .buffers_gpu = .empty,
+        .buffers = .empty,
         .viewports = .empty,
     };
 }
 
-pub fn deinit(rs: *ClientResources, gpa: std.mem.Allocator) void {
-    rs.wl_buffers_pending.deinit(gpa);
-    rs.buffers_commited.deinit(gpa);
-
-    for (rs.buffers_cpu.values()) |cpu| {
-        cpu.wl_buffer.destroy();
+pub fn deinit(rs: *ClientResources, wl: *Wayland) void {
+    for (rs.buffers.values()) |*buffer| {
+        _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wl_buffer()));
+        buffer.destroy();
     }
-    rs.buffers_cpu.deinit(gpa);
+    rs.buffers.deinit(wl.gpa);
 
-    for (rs.buffers_gpu.values()) |gpu| {
-        gpu.wl_buffer.destroy();
+    rs.wl_buffers_pending.deinit(wl.gpa);
+    rs.buffers_commited.deinit(wl.gpa);
 
-        if (gpu.timeline_acquire) |t| t.acquire.destroy();
-        if (gpu.timeline_release) |t| t.release.destroy();
-    }
-    rs.buffers_gpu.deinit(gpa);
-
-    for (rs.viewports.values()) |*vp| {
-        vp.deinit();
-    }
-    rs.viewports.deinit(gpa);
-}
-
-pub fn buffer_get(rs: *ClientResources, key: BufferID) ?Buffer {
-    if (rs.buffers_gpu.get(key)) |gpu| return .{ .gpu = gpu };
-    if (rs.buffers_cpu.get(key)) |cpu| return .{ .cpu = cpu };
-    return null;
+    for (rs.viewports.values()) |*vp| vp.deinit();
+    rs.viewports.deinit(wl.gpa);
 }
 
 pub fn viewport_create(
@@ -79,20 +62,19 @@ pub fn viewport_create(
 pub fn buffer_create_and_register_cpu(
     rs: *ClientResources,
     wl: *Wayland,
-    dispatch: *Dispatch,
     id: BufferID,
     fd: CpuBufferFd,
     width: i32,
     height: i32,
     format: BufferFormat,
 ) !void {
-    try rs.buffers_cpu.ensureUnusedCapacity(wl.gpa, 1);
+    try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
     try wl.buffer_set_listener_prepare();
 
     const cpu = try buffer_create_cpu(wl.shm, fd, width, height, format);
-    wl.buffer_set_listener(rs, dispatch, cpu.wl_buffer, id);
+    wl.buffer_set_listener(rs, cpu.wl_buffer, id);
 
-    rs.buffers_cpu.putAssumeCapacityNoClobber(id, cpu);
+    rs.buffers.putAssumeCapacityNoClobber(id, .{ .cpu = cpu });
 }
 
 pub fn buffer_create_cpu(
@@ -143,7 +125,7 @@ pub fn buffer_create_and_register_gpu_async(
     errdefer wl.gpa.destroy(data);
 
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
-    try rs.buffers_gpu.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
+    try rs.buffers.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
     try wl.buffer_set_listener_prepare();
 
     std.debug.assert(@intFromEnum(fds.acquire_timeline) != @intFromEnum(fds.release_timeline));
@@ -174,14 +156,12 @@ pub fn buffer_create_and_register_gpu_async(
     log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
 }
 
-pub fn buffer_destroy(rs: *ClientResources, id: BufferID) void {
-    if (rs.buffers_cpu.fetchOrderedRemove(id)) |cpu| {
-        cpu.value.wl_buffer.destroy();
-    }
+pub fn buffer_destroy(rs: *ClientResources, wl: *Wayland, id: BufferID) void {
+    const buffer = rs.buffers.getPtr(id) orelse return;
 
-    if (rs.buffers_gpu.fetchOrderedRemove(id)) |gpu| {
-        gpu.value.wl_buffer.destroy();
-    }
+    _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wl_buffer()));
+    buffer.destroy();
+    _ = rs.buffers.orderedRemove(id);
 }
 
 pub fn viewport_mark_commit(rs: *ClientResources, gpa: std.mem.Allocator, buffer_id: BufferID, viewport_id: ViewportID) !void {
@@ -196,6 +176,12 @@ pub fn viewport_mark_commit(rs: *ClientResources, gpa: std.mem.Allocator, buffer
 const Buffer = union(enum) {
     gpu: GpuBuffer,
     cpu: CpuBuffer,
+
+    pub fn destroy(b: *Buffer) void {
+        switch (b.*) {
+            inline else => |v| v.destroy(),
+        }
+    }
 
     pub fn wl_buffer(b: Buffer) *cwl.Buffer {
         return switch (b) {
@@ -222,6 +208,12 @@ pub const GpuBuffer = struct {
     timeline_release: ?Viewport.ReleaseTimeline,
     width: i32,
     height: i32,
+
+    pub fn destroy(gpu: GpuBuffer) void {
+        gpu.wl_buffer.destroy();
+        if (gpu.timeline_acquire) |tl| tl.acquire.destroy();
+        if (gpu.timeline_release) |tl| tl.release.destroy();
+    }
 };
 
 pub const CpuBuffer = struct {
@@ -229,6 +221,10 @@ pub const CpuBuffer = struct {
     width: i32,
     height: i32,
     format: BufferFormat,
+
+    pub fn destroy(cpu: CpuBuffer) void {
+        cpu.wl_buffer.destroy();
+    }
 };
 
 pub const RegisterGpuBuffer = struct {
@@ -251,18 +247,19 @@ pub const RegisterGpuBuffer = struct {
 
                 data.wl.buffer_set_listener(
                     rs,
-                    data.dispatch,
                     result.buffer,
                     data.buffer_id,
                 );
-                rs.buffers_gpu.putAssumeCapacityNoClobber(
+                rs.buffers.putAssumeCapacityNoClobber(
                     data.buffer_id,
                     .{
-                        .wl_buffer = result.buffer,
-                        .width = data.gpu.width,
-                        .height = data.gpu.height,
-                        .timeline_acquire = data.gpu.timeline_acquire,
-                        .timeline_release = data.gpu.timeline_release,
+                        .gpu = .{
+                            .wl_buffer = result.buffer,
+                            .width = data.gpu.width,
+                            .height = data.gpu.height,
+                            .timeline_acquire = data.gpu.timeline_acquire,
+                            .timeline_release = data.gpu.timeline_release,
+                        },
                     },
                 );
 
@@ -277,27 +274,25 @@ pub const RegisterGpuBuffer = struct {
 };
 
 pub const BufferListener = struct {
-    dispatch: *Dispatch,
-    wl: *Wayland,
-    client_id: ClientID,
-    buffer_id: BufferID,
-
-    pub fn callback(_: *cwl.Buffer, event: cwl.Buffer.Event, data: *BufferListener) void {
+    pub fn callback(wl_buffer: *cwl.Buffer, event: cwl.Buffer.Event, wl: *Wayland) void {
         switch (event) {
             .release => {
-                // TODO: Figure out when to free memeory of this callback when the client disconnects
-                const rs = data.wl.resources_get(data.client_id) catch {
+                const key = wl.wl_buffers.get(.from_wl_buffer(wl_buffer)) orelse {
                     return;
                 };
-                const entry = rs.buffers_commited.fetchSwapRemove(data.buffer_id) orelse return;
 
-                log.debug("Received release event for wl_buffer {f} {f} {f}", .{ data.client_id, data.buffer_id, entry.value });
-                data.dispatch.server_put(
+                const rs = wl.resources_get(key.client_id) catch {
+                    return;
+                };
+                const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
+
+                log.debug("Received release event for wl_buffer {f} {f} {f}", .{ key.client_id, key.buffer_id, entry.value });
+                wl.dispatch.server_put(
                     @src(),
                     .{
                         .buffer_released = .{
-                            .client_id = data.client_id,
-                            .buffer_id = data.buffer_id,
+                            .client_id = key.client_id,
+                            .buffer_id = key.buffer_id,
                             .viewport_id = entry.value,
                         },
                     },
