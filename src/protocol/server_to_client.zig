@@ -10,13 +10,20 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_resize: types.ViewportResize,
     buffer_released: BufferReleased,
     buffer_destroyed: BufferDestroyed,
+    buffer_created: BufferCreated,
 
     pub const BufferReleased = struct {
         viewport_id: types.ViewportID,
         buffer_id: types.BufferID,
     };
+
     pub const BufferDestroyed = struct {
         buffer_id: types.BufferID,
+    };
+
+    pub const BufferCreated = struct {
+        buffer_id: types.BufferID,
+        status: types.Status,
     };
 };
 

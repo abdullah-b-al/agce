@@ -28,8 +28,9 @@ pub fn destroy(dispatch: *Dispatch) void {
 }
 
 pub fn window_system_put(dispatch: *Dispatch, src: SourceLocation, event: WindowSystemEvent) error{Canceled}!void {
-    log.debug("{s} dispatched by {s} with {f}", .{
+    log.debug("[{s}] <- {s}.{s}({f})", .{
         @src().fn_name,
+        std.fs.path.stem(src.file),
         src.fn_name,
         event,
     });
@@ -47,8 +48,9 @@ pub fn window_system_get(dispatch: *Dispatch) error{Canceled}!WindowSystemEvent 
 }
 
 pub fn server_put(dispatch: *Dispatch, src: SourceLocation, event: ServerEvent) error{Canceled}!void {
-    log.debug("{s} dispatched by {s} with {f}", .{
+    log.debug("[{s}] <- {s}.{s}({f})", .{
         @src().fn_name,
+        std.fs.path.stem(src.file),
         src.fn_name,
         event,
     });
@@ -115,7 +117,7 @@ pub const WindowSystemEvent = union(enum) {
         client_id: ClientID,
         buffer_id: BufferID,
 
-        fd: protocol_types.CpuBufferFd,
+        fd: ptypes.CpuBufferFd,
 
         width: u32,
         height: u32,
@@ -126,7 +128,7 @@ pub const WindowSystemEvent = union(enum) {
         client_id: ClientID,
         buffer_id: BufferID,
 
-        fds: protocol_types.BufferAndTimelineFds,
+        fds: ptypes.BufferAndTimelineFds,
 
         width: u32,
         height: u32,
@@ -145,8 +147,8 @@ pub const WindowSystemEvent = union(enum) {
         client_id: ClientID,
         viewport_id: ViewportID,
         buffer_id: BufferID,
-        acquire_point: protocol_types.AcquireTimelinePoint,
-        release_point: protocol_types.ReleaseTimelinePoint,
+        acquire_point: ptypes.AcquireTimelinePoint,
+        release_point: ptypes.ReleaseTimelinePoint,
     };
 
     pub const BufferDestroy = struct {
@@ -172,6 +174,7 @@ pub const ServerEvent = union(enum) {
     viewport_resize: ViewportResize,
     buffer_released: WindowSystemEvent.BufferPresent,
     buffer_destroyed: WindowSystemEvent.BufferDestroy,
+    buffer_created: BufferCreated,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
@@ -179,7 +182,13 @@ pub const ServerEvent = union(enum) {
 
     pub const ViewportResize = struct {
         client_id: ClientID,
-        resize: protocol_types.ViewportResize,
+        resize: ptypes.ViewportResize,
+    };
+
+    pub const BufferCreated = struct {
+        client_id: ClientID,
+        buffer_id: BufferID,
+        status: ptypes.Status,
     };
 };
 
@@ -211,7 +220,7 @@ pub fn IoQueue(comptime T: type) type {
 
 const std = @import("std");
 const Io = std.Io;
-const protocol_types = @import("protocol/types.zig");
+const ptypes = @import("protocol/types.zig");
 const log = std.log.scoped(.Dispatch);
 const SourceLocation = std.builtin.SourceLocation;
 const ViewportFds = @import("protocol/types.zig").ViewportFds;

@@ -264,6 +264,17 @@ pub const RegisterGpuBuffer = struct {
                 );
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
+
+                data.dispatch.server_put(
+                    @src(),
+                    .{
+                        .buffer_created = .{
+                            .client_id = data.client_id,
+                            .buffer_id = data.buffer_id,
+                            .status = .success,
+                        },
+                    },
+                ) catch {};
             },
             .failed => @panic("TODO"),
         }

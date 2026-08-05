@@ -8,18 +8,11 @@ frame_number: usize,
 width: u32,
 height: u32,
 format: ptypes.BufferFormat,
-modifier: u64,
 
-old_buffers: std.ArrayList(Buffer),
-front_buffer: Buffer,
-back_buffer: Buffer,
+buffers: Buffers(Buffer),
 
 pub fn init(client: *Client, width: u32, height: u32) !ViewportGL {
     const format: ptypes.BufferFormat = .argb8888;
-    const front_buffer = try Buffer.init(client, width, height, format);
-    const back_buffer = try Buffer.init(client, width, height, format);
-    const bytes = c_linux.gbm_bo_get_bpp(front_buffer.bo) / 8;
-    std.debug.assert(bytes == 4);
 
     const id = client.next_viewport_id.increment_for_client();
     return .{
@@ -28,24 +21,31 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportGL {
         .frame_number = 0,
         .width = width,
         .height = height,
-        .modifier = c_linux.gbm_bo_get_modifier(front_buffer.bo),
         .format = format,
 
-        .old_buffers = .empty,
-        .front_buffer = front_buffer,
-        .back_buffer = back_buffer,
+        .buffers = .empty,
     };
 }
 
 pub fn deinit(vp: *ViewportGL) void {
-    const gl = vp.client.gl_context.?;
-    vp.front_buffer.deinit(gl);
-    vp.back_buffer.deinit(gl);
+    vp.buffers.deinit(vp.client.gpa);
+}
 
-    for (vp.old_buffers.items) |*old| {
-        // TODO: Add a check that the buffer must be released. Failure means a leaked buffer.
-        old.deinit(gl);
-    }
+pub fn buffer_new(vp: *ViewportGL, width: u32, height: u32, format: ptypes.BufferFormat) !void {
+    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 1);
+
+    var buffer = try Buffer.init(vp.client, width, height, format);
+    const bytes = c_linux.gbm_bo_get_bpp(buffer.bo) / 8;
+    std.debug.assert(bytes == 4);
+    errdefer buffer.deinit();
+
+    try vp.client.send_buffer_create_gpu_with_fds(buffer);
+
+    vp.buffers.pending.appendAssumeCapacity(buffer);
+}
+
+pub fn has_buffer(vp: *ViewportGL, id: BufferID) bool {
+    return vp.buffers.has(id);
 }
 
 pub fn end_frame(vp: *ViewportGL, buffer: *Buffer) !void {
@@ -105,55 +105,58 @@ pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
         },
     );
 
-    buffer.released = false;
     buffer.acquire.point.advance();
 }
 
 pub fn get_buffer(vp: *ViewportGL) ?*Buffer {
     const dri = vp.client.gbm.?.dri;
 
-    if (vp.back_buffer.released) {
-        return &vp.back_buffer;
-    } else if (vp.front_buffer.released) {
-        return &vp.front_buffer;
+    if (vp.buffers.available.items.len == 0)
+        return null;
+
+    for (vp.buffers.available.items) |*buffer| {
+        if (buffer.released) return buffer;
     }
 
-    var timelines: [2]u32 = .{
-        @intFromEnum(vp.back_buffer.release.handle),
-        @intFromEnum(vp.front_buffer.release.handle),
-    };
-    var points: [timelines.len]u64 = .{
-        @intFromEnum(vp.back_buffer.release.point),
-        @intFromEnum(vp.front_buffer.release.point),
-    };
+    const buffer_len = 2;
+    std.debug.assert(buffer_len >= vp.buffers.available.items.len);
+
+    var timelines_buffer: [buffer_len]u32 = undefined;
+    var points_buffer: [buffer_len]u64 = undefined;
+    var timelines: std.ArrayList(u32) = .initBuffer(&timelines_buffer);
+    var points: std.ArrayList(u64) = .initBuffer(&points_buffer);
+
+    for (vp.buffers.available.items) |buffer| {
+        timelines.appendBounded(@intFromEnum(buffer.release.handle)) catch unreachable;
+        points.appendBounded(@intFromEnum(buffer.release.point)) catch unreachable;
+    }
 
     const timeout: i64 = 0;
     var index: u32 = undefined;
     const signaled = c_linux.drmSyncobjTimelineWait(
         dri.handle,
-        &timelines,
-        &points,
-        timelines.len,
+        timelines.items.ptr,
+        points.items.ptr,
+        @intCast(timelines.items.len),
         timeout,
         c_linux.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE,
         &index,
     );
 
-    if (index == 0) {
-        vp.back_buffer.release.point.advance();
-        return &vp.back_buffer;
-    }
+    const buffer =
+        if (index < vp.buffers.available.items.len)
+            &vp.buffers.available.items[index]
+        else
+            return null;
 
-    if (index == 1) {
-        vp.front_buffer.release.point.advance();
-        return &vp.front_buffer;
-    }
+    buffer.release.point.advance();
+    buffer.released = true;
 
     if (@abs(signaled) == c_linux.ETIME or signaled == 0) {
         return null;
     }
 
-    unreachable;
+    return buffer;
 }
 
 pub fn resize(
@@ -181,13 +184,13 @@ pub fn resize(
 }
 
 pub fn buffer_released(vp: *ViewportGL, id: BufferID) void {
-    for (vp.old_buffers.items) |*old| {
+    for (vp.buffers.old.items) |*old| {
         if (old.id == id) {
             old.released = true;
         }
     }
 
-    inline for (&.{ &vp.back_buffer, &vp.front_buffer }) |buffer| {
+    for (vp.buffers.available.items) |*buffer| {
         if (buffer.id == id) {
             buffer.released = true;
         }
@@ -195,45 +198,45 @@ pub fn buffer_released(vp: *ViewportGL, id: BufferID) void {
 }
 
 pub fn buffer_destroyed(vp: *ViewportGL, id: BufferID) void {
-    var i = vp.old_buffers.items.len;
+    var i = vp.buffers.old.items.len;
     while (i > 0) {
         i -= 1;
-        const old = &vp.old_buffers.items[i];
+        const old = &vp.buffers.old.items[i];
         if (old.id == id) {
-            old.deinit(vp.client.gl_context.?);
-            _ = vp.old_buffers.orderedRemove(i);
+            old.deinit();
+            _ = vp.buffers.old.orderedRemove(i);
         }
     }
+}
+
+pub fn buffer_created(vp: *ViewportGL, id: BufferID) !void {
+    vp.buffers.buffer_created(id);
 }
 
 fn resize_buffers(vp: *ViewportGL, requested_width: u32, requested_height: u32) !void {
     const new_width, const new_height = new_dimensions(requested_width, requested_height);
 
-    const current_width = c_linux.gbm_bo_get_width(vp.front_buffer.bo);
-    const current_height = c_linux.gbm_bo_get_height(vp.front_buffer.bo);
+    const buffer = vp.buffers.available.getLastOrNull() orelse return error.NoBuffers;
+    const current_width = c_linux.gbm_bo_get_width(buffer.bo);
+    const current_height = c_linux.gbm_bo_get_height(buffer.bo);
     if (current_width >= new_width and current_height >= new_height) {
         return;
     }
 
-    const front_buffer = try Buffer.init(vp.client, new_width, new_height, vp.format);
-    const back_buffer = try Buffer.init(vp.client, new_width, new_height, vp.format);
+    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 2);
+    try vp.buffer_new(new_width, new_height, vp.format);
+    try vp.buffer_new(new_width, new_height, vp.format);
 
-    try vp.old_buffers.append(vp.client.gpa, vp.front_buffer);
-    try vp.old_buffers.append(vp.client.gpa, vp.back_buffer);
-
-    try vp.client.send_buffer_destroy(vp.front_buffer.id);
-    try vp.client.send_buffer_destroy(vp.back_buffer.id);
-
-    vp.front_buffer = front_buffer;
-    vp.back_buffer = back_buffer;
-
-    try vp.client.send_buffer_create_gpu_with_fds(vp.back_buffer);
-    try vp.client.send_buffer_create_gpu_with_fds(vp.front_buffer);
+    while (vp.buffers.available.pop()) |b| {
+        vp.buffers.old.appendAssumeCapacity(b);
+        try vp.client.send_buffer_destroy(b.id);
+    }
 }
 
 pub const Buffer = struct {
     bo: *c_linux.struct_gbm_bo,
     gbm_texture: opengl.GbmBackedTexture,
+    gl_context: opengl.ContextLinux,
     fbo: glad.GLuint,
 
     format: ptypes.BufferFormat,
@@ -252,6 +255,7 @@ pub const Buffer = struct {
         return .{
             .bo = bo,
             .gbm_texture = gbm_texture,
+            .gl_context = client.gl_context.?,
             .fbo = fbo,
             .id = id,
             .format = format,
@@ -261,10 +265,10 @@ pub const Buffer = struct {
         };
     }
 
-    pub fn deinit(buffer: *Buffer, gl: opengl.ContextLinux) void {
+    pub fn deinit(buffer: *Buffer) void {
         glad.glDeleteTextures(1, &buffer.gbm_texture.texture);
         glad.glDeleteFramebuffers(1, &buffer.fbo);
-        _ = glad.eglDestroyImageKHR(gl.egl_display, buffer.gbm_texture.image);
+        _ = glad.eglDestroyImageKHR(buffer.gl_context.egl_display, buffer.gbm_texture.image);
         c_linux.gbm_bo_destroy(buffer.bo);
     }
 };
@@ -389,3 +393,4 @@ const c_linux = @import("c_linux");
 const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
+const Buffers = @import("buffers.zig").Buffers;

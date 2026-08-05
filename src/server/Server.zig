@@ -99,9 +99,10 @@ pub fn remove_closed_clients(server: *Server) void {
         i -= 1;
         const client = server.clients.map.values()[i];
         if (client.closed) {
-            log.debug("Removed closed client {f}", .{client.id});
+            const id = client.id;
+            log.debug("Removed closed client {f}", .{id});
             client.destroy(server.gpa);
-            _ = server.clients.map.orderedRemove(client.id);
+            _ = server.clients.map.orderedRemove(id);
         }
     }
 }
@@ -242,6 +243,21 @@ pub fn handle_event(
                 client.stream,
                 .{
                     .buffer_destroyed = .{ .buffer_id = e.buffer_id },
+                },
+            );
+        },
+        .buffer_created => |e| {
+            const client = server.clients.map.get(e.client_id) orelse return;
+
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{
+                    .buffer_created = .{
+                        .buffer_id = e.buffer_id,
+                        .status = e.status,
+                    },
                 },
             );
         },

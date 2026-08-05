@@ -6,14 +6,10 @@ width: u32,
 height: u32,
 format: protocol_types.BufferFormat,
 
-front: Buffer,
-back: Buffer,
+buffers: Buffers(Buffer),
 
 pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
     const format: protocol_types.BufferFormat = .argb8888;
-    const front: Buffer = try .init(client.next_buffer_id.increment(), width, height, format);
-    const back: Buffer = try .init(client.next_buffer_id.increment(), width, height, format);
-
     return .{
         .client = client,
         .id = client.next_viewport_id.increment_for_client(),
@@ -21,14 +17,24 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
         .height = height,
         .format = format,
 
-        .front = front,
-        .back = back,
+        .buffers = .empty,
     };
 }
 
 pub fn deinit(vp: *ViewportCpu) void {
-    vp.front.deinit();
-    vp.back.deinit();
+    vp.buffers.deinit(vp.client.gpa);
+}
+
+pub fn buffer_new(vp: *ViewportCpu, width: u32, height: u32) !void {
+    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 1);
+
+    const id = vp.client.next_buffer_id.increment();
+    var buffer: Buffer = try .init(id, width, height, vp.format);
+    errdefer buffer.deinit();
+
+    try vp.client.send_buffer_create_cpu_with_fd(buffer);
+
+    vp.buffers.pending.appendAssumeCapacity(buffer);
 }
 
 pub fn resize(
@@ -41,11 +47,15 @@ pub fn resize(
         return;
     }
 
-    const front: Buffer = try .init(vp.client.next_buffer_id.increment(), msg.width, msg.height, vp.format);
-    const back: Buffer = try .init(vp.client.next_buffer_id.increment(), msg.width, msg.height, vp.format);
+    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 2);
+    try vp.buffer_new(msg.width, msg.height);
+    try vp.buffer_new(msg.width, msg.height);
 
-    try vp.client.send_buffer_create_cpu_with_fd(back);
-    try vp.client.send_buffer_create_cpu_with_fd(front);
+    while (vp.buffers.available.pop()) |b| {
+        vp.buffers.old.appendAssumeCapacity(b);
+        try vp.client.send_buffer_destroy(b.id);
+    }
+
     try client_to_server.message_send_json(
         vp.client.io,
         vp.client.gpa,
@@ -61,20 +71,20 @@ pub fn resize(
 
     errdefer comptime unreachable;
 
-    vp.back.deinit();
-    vp.front.deinit();
-
-    vp.back = back;
-    vp.front = front;
-
     vp.width = msg.width;
     vp.height = msg.height;
 }
 
 pub fn get_buffer(vp: *ViewportCpu) ?*Buffer {
-    if (vp.back.released) return &vp.back;
-    if (vp.front.released) return &vp.front;
+    for (vp.buffers.available.items) |*buffer| {
+        if (buffer.released) return buffer;
+    }
+
     return null;
+}
+
+pub fn has_buffer(vp: *ViewportCpu, id: BufferID) bool {
+    return vp.buffers.has(id);
 }
 
 pub fn buffer_present(vp: *ViewportCpu, buffer: *Buffer) !void {
@@ -95,7 +105,7 @@ pub fn buffer_present(vp: *ViewportCpu, buffer: *Buffer) !void {
 }
 
 pub fn buffer_released(vp: *ViewportCpu, id: BufferID) void {
-    inline for (&.{ &vp.back, &vp.front }) |buffer| {
+    for (vp.buffers.available.items) |*buffer| {
         if (buffer.id == id) {
             buffer.released = true;
         }
@@ -103,6 +113,10 @@ pub fn buffer_released(vp: *ViewportCpu, id: BufferID) void {
 }
 
 pub fn buffer_destroyed(_: *ViewportCpu, _: BufferID) void {}
+
+pub fn buffer_created(vp: *ViewportCpu, id: BufferID) !void {
+    vp.buffers.buffer_created(id);
+}
 
 fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } {
     const fd = try std.posix.memfd_create("agce-buffer", 0);
@@ -143,7 +157,7 @@ pub const Buffer = struct {
         };
     }
 
-    fn deinit(buffer: *Buffer) void {
+    pub fn deinit(buffer: *Buffer) void {
         std.posix.munmap(buffer.data);
         _ = std.os.linux.close(@intFromEnum(buffer.fd));
     }
@@ -164,3 +178,4 @@ const glad = @import("glad");
 const ViewportID = protocol_types.ViewportID;
 const BufferID = protocol_types.BufferID;
 const Client = @import("Client.zig");
+const Buffers = @import("buffers.zig").Buffers;

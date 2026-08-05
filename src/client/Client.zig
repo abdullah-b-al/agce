@@ -86,15 +86,21 @@ pub fn init_gl(client: *Client) !void {
 }
 
 pub fn viewport_create_gl(client: *Client, width: u32, height: u32) !*ViewportGL {
+    const format: ptypes.BufferFormat = .argb8888;
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
 
     const vp = try client.gpa.create(ViewportGL);
     vp.* = try .init(client, width, height);
 
-    try client.send_buffer_create_gpu_with_fds(vp.back_buffer);
-    try client.send_buffer_create_gpu_with_fds(vp.front_buffer);
+    try vp.buffer_new(width, height, format);
+    try vp.buffer_new(width, height, format);
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
+
+    while (vp.buffers.available.items.len < 2) {
+        try client.poll_events();
+    }
+
     return vp;
 }
 
@@ -103,10 +109,14 @@ pub fn viewport_create_cpu(client: *Client, width: u32, height: u32) !*ViewportC
     const vp = try client.gpa.create(ViewportCpu);
     vp.* = try .init(client, width, height);
 
-    try client.send_buffer_create_cpu_with_fd(vp.back);
-    try client.send_buffer_create_cpu_with_fd(vp.front);
+    try vp.buffer_new(width, height);
+    try vp.buffer_new(width, height);
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
+
+    while (vp.buffers.available.items.len < 2) {
+        try client.poll_events();
+    }
     return vp;
 }
 
@@ -135,6 +145,13 @@ pub fn window_create(
 }
 
 pub fn poll_events(client: *Client) !void {
+    client.poll_events_inner() catch |err| switch (err) {
+        error.NoBuffers => {},
+        else => |e| return e,
+    };
+}
+
+fn poll_events_inner(client: *Client) !void {
     _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
     const timeout: Io.Timeout =
         .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
@@ -148,30 +165,58 @@ pub fn poll_events(client: *Client) !void {
         ) orelse return;
 
         switch (message) {
-            .viewport_resize => |resize| {
-                const vp = client.viewports.get(resize.viewport_id).?;
+            .viewport_resize => |msg| {
+                log.debug("Received {t} {}", .{ message, msg });
+                const vp = client.viewports.get(msg.viewport_id).?;
                 switch (vp) {
-                    .gl => |gl| try gl.resize(resize.width, resize.height),
-                    .cpu => |cpu| try cpu.resize(resize),
+                    .gl => |gl| try gl.resize(msg.width, msg.height),
+                    .cpu => |cpu| try cpu.resize(msg),
                 }
             },
 
             .buffer_released => |msg| {
-                log.debug("Received buffer_released {}", .{msg});
+                log.debug("Received {t} {}", .{ message, msg });
                 const vp = client.viewports.get(msg.viewport_id).?;
                 switch (vp) {
                     inline else => |v| v.buffer_released(msg.buffer_id),
                 }
             },
+            .buffer_created => |msg| {
+                log.debug("Received {t} {}", .{ message, msg });
+
+                const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
+                switch (msg.status) {
+                    .success => {
+                        switch (vp) {
+                            inline else => |v| try v.buffer_created(msg.buffer_id),
+                        }
+                    },
+                    .failure => @panic("TODO"),
+                }
+            },
             .buffer_destroyed => |msg| {
-                for (client.viewports.values()) |vp| {
-                    switch (vp) {
-                        inline else => |v| v.buffer_destroyed(msg.buffer_id),
-                    }
+                log.debug("Received {t} {}", .{ message, msg });
+                const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
+                switch (vp) {
+                    inline else => |v| v.buffer_destroyed(msg.buffer_id),
                 }
             },
         }
     }
+}
+
+pub fn viewport_from_buffer_id(client: *Client, buffer_id: BufferID) ?Viewport {
+    for (client.viewports.values()) |vp| {
+        switch (vp) {
+            inline else => |v| {
+                if (v.has_buffer(buffer_id)) {
+                    return vp;
+                }
+            },
+        }
+    }
+
+    return null;
 }
 
 pub fn send_buffer_create_gpu_with_fds(

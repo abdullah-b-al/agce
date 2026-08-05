@@ -158,6 +158,8 @@ pub fn buffer_create_gpu_with_fds(wl: *Wayland, dispatch: *Dispatch, args: Dispa
         args.format,
         args.gbm_bo_modifier,
     );
+
+    _ = wl.display.flush();
 }
 
 pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Dispatch.WindowSystemEvent.BufferCreateCpuWithFd) !void {
@@ -170,6 +172,18 @@ pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Dispatch.WindowSystemEvent.
         @intCast(args.width),
         @intCast(args.height),
         args.format,
+    );
+
+    // TODO: Send failure in that case
+    try wl.dispatch.server_put(
+        @src(),
+        .{
+            .buffer_created = .{
+                .client_id = args.client_id,
+                .buffer_id = args.buffer_id,
+                .status = .success,
+            },
+        },
     );
 }
 

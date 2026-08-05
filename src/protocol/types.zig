@@ -73,6 +73,8 @@ pub const ReleaseTimelineFd = enum(c_int) {
     _,
 };
 
+pub const Status = enum { success, failure };
+
 pub const AcquireTimelineHandle = enum(u32) { _ };
 pub const ReleaseTimelineHandle = enum(u32) { _ };
 
