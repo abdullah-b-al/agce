@@ -4,12 +4,13 @@ io: Io,
 gpa: std.mem.Allocator,
 connection: net.Stream,
 
-messages_arena: std.heap.ArenaAllocator,
-
 next_viewport_id: ptypes.ViewportID,
 next_buffer_id: ptypes.BufferID,
 
 viewports: std.array_hash_map.Auto(ViewportID, Viewport),
+
+messages_arena: std.heap.ArenaAllocator,
+messages: std.ArrayList(server_to_client.MessagePayload),
 
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
@@ -30,6 +31,7 @@ pub fn init(
         .gpa = gpa,
         .connection = stream,
         .messages_arena = .init(gpa),
+        .messages = .empty,
         .next_viewport_id = .first_for_client,
         .next_buffer_id = .first,
         .viewports = .empty,
@@ -97,9 +99,8 @@ pub fn viewport_create_gl(client: *Client, width: u32, height: u32) !*ViewportGL
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
 
-    while (vp.buffers.available.items.len < 2) {
-        try client.poll_events();
-    }
+    try client.messages_wait_for_buffer_created(2);
+    try client.messages_handle();
 
     return vp;
 }
@@ -114,9 +115,9 @@ pub fn viewport_create_cpu(client: *Client, width: u32, height: u32) !*ViewportC
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
 
-    while (vp.buffers.available.items.len < 2) {
-        try client.poll_events();
-    }
+    try client.messages_wait_for_buffer_created(2);
+    try client.messages_handle();
+
     return vp;
 }
 
@@ -144,64 +145,96 @@ pub fn window_create(
     });
 }
 
-pub fn poll_events(client: *Client) !void {
-    client.poll_events_inner() catch |err| switch (err) {
-        error.NoBuffers => {},
-        else => |e| return e,
-    };
+pub fn messages_poll_and_handle(client: *Client, timeout: Io.Timeout) !void {
+    while (true) {
+        client.message_poll(timeout) catch |err| switch (err) {
+            error.Timeout => break,
+            else => |e| return e,
+        };
+    }
+
+    try client.messages_handle();
 }
 
-fn poll_events_inner(client: *Client) !void {
-    _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
-    const timeout: Io.Timeout =
-        .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
-
+pub fn messages_wait_for_buffer_created(client: *Client, min_count: usize) !void {
+    const timeout: Io.Timeout = .none;
     while (true) {
-        const message = try server_to_client.message_receive(
-            client.io,
-            client.messages_arena.allocator(),
-            client.connection,
-            timeout,
-        ) orelse return;
+        try client.message_poll(timeout);
 
-        switch (message) {
-            .viewport_resize => |msg| {
-                log.debug("Received {t} {}", .{ message, msg });
-                const vp = client.viewports.get(msg.viewport_id).?;
-                switch (vp) {
-                    .gl => |gl| try gl.resize(msg.width, msg.height),
-                    .cpu => |cpu| try cpu.resize(msg),
-                }
-            },
-
-            .buffer_released => |msg| {
-                log.debug("Received {t} {}", .{ message, msg });
-                const vp = client.viewports.get(msg.viewport_id).?;
-                switch (vp) {
-                    inline else => |v| v.buffer_released(msg.buffer_id),
-                }
-            },
-            .buffer_created => |msg| {
-                log.debug("Received {t} {}", .{ message, msg });
-
-                const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
-                switch (msg.status) {
-                    .success => {
-                        switch (vp) {
-                            inline else => |v| try v.buffer_created(msg.buffer_id),
-                        }
-                    },
-                    .failure => @panic("TODO"),
-                }
-            },
-            .buffer_destroyed => |msg| {
-                log.debug("Received {t} {}", .{ message, msg });
-                const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
-                switch (vp) {
-                    inline else => |v| v.buffer_destroyed(msg.buffer_id),
-                }
-            },
+        var count: usize = 0;
+        for (client.messages.items) |message| {
+            if (message == .buffer_created)
+                count += 1;
         }
+
+        if (count >= min_count) {
+            break;
+        }
+    }
+}
+
+fn message_poll(client: *Client, timeout: Io.Timeout) !void {
+    if (client.messages.items.len == 0) {
+        _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
+    }
+
+    try client.messages.ensureUnusedCapacity(client.gpa, 1);
+    const message = try server_to_client.message_receive(
+        client.io,
+        client.messages_arena.allocator(),
+        client.connection,
+        timeout,
+    );
+
+    client.messages.insertAssumeCapacity(0, message);
+}
+
+fn messages_handle(client: *Client) !void {
+    while (client.messages.pop()) |message| {
+        try client.message_handle(message);
+    }
+
+    _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
+}
+
+fn message_handle(client: *Client, message: server_to_client.MessagePayload) !void {
+    switch (message) {
+        .viewport_resize => |msg| {
+            log.debug("Received {t} {}", .{ message, msg });
+            const vp = client.viewports.get(msg.viewport_id).?;
+            switch (vp) {
+                .gl => |gl| try gl.resize(msg.width, msg.height),
+                .cpu => |cpu| try cpu.resize(msg),
+            }
+        },
+
+        .buffer_released => |msg| {
+            log.debug("Received {t} {}", .{ message, msg });
+            const vp = client.viewports.get(msg.viewport_id).?;
+            switch (vp) {
+                inline else => |v| v.buffer_released(msg.buffer_id),
+            }
+        },
+        .buffer_created => |msg| {
+            log.debug("Received {t} {}", .{ message, msg });
+
+            const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
+            switch (msg.status) {
+                .success => {
+                    switch (vp) {
+                        inline else => |v| try v.buffer_created(msg.buffer_id),
+                    }
+                },
+                .failure => @panic("TODO"),
+            }
+        },
+        .buffer_destroyed => |msg| {
+            log.debug("Received {t} {}", .{ message, msg });
+            const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
+            switch (vp) {
+                inline else => |v| v.buffer_destroyed(msg.buffer_id),
+            }
+        },
     }
 }
 

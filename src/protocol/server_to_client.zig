@@ -48,13 +48,9 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     try writer.interface.flush();
 }
 
-pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !?MessagePayload {
+pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !MessagePayload {
     var buf: [@sizeOf(MessageHeader)]u8 = undefined;
-    const peek = common.operation_net_receive_peek(MessageHeader, io, stream, timeout, &buf) catch |err|
-        switch (err) {
-            error.Timeout => return null,
-            else => |e| return e,
-        };
+    const peek = try common.operation_net_receive_peek(MessageHeader, io, stream, timeout, &buf);
 
     if (peek.data.len == 0) {
         return error.ConnectionClosed;

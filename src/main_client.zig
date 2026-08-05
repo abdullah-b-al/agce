@@ -42,7 +42,12 @@ pub fn main(init: std.process.Init) !void {
     var time = Io.Timestamp.now(init.io, .awake);
     var first_frame = true;
     while (true) {
-        try client.poll_events();
+        const timeout: Io.Timeout =
+            .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
+        client.messages_poll_and_handle(timeout) catch |err| switch (err) {
+            error.NoBuffers => {},
+            else => |e| return e,
+        };
 
         const should_render =
             time.untilNow(init.io, .awake).toMilliseconds() >= 1000 or
