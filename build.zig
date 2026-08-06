@@ -10,9 +10,6 @@ pub fn build(b: *std.Build) !void {
         }
     }
 
-    const glad = build_glad(b, target, optimize);
-
-    const check = b.step("check", "Check the compilation");
     const c_linux =
         switch (target.result.os.tag) {
             .linux => blk: {
@@ -26,10 +23,54 @@ pub fn build(b: *std.Build) !void {
                 c.linkSystemLibrary("egl", .{});
                 c.linkSystemLibrary("gbm", .{});
                 c.linkSystemLibrary("drm", .{});
-                break :blk c;
+                break :blk c.createModule();
             },
             else => null,
         };
+
+    const glad = build_glad(b, target, optimize);
+
+    const utils = b.createModule(.{
+        .root_source_file = b.path("src/utils.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const protocol = blk: {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/protocol/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "utils", .module = utils },
+            },
+        });
+
+        if (c_linux) |c| module.addImport("c_linux", c);
+
+        break :blk module;
+    };
+
+    const client = blk: {
+        const module = b.addModule("client", .{
+            .root_source_file = b.path("src/client/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "protocol", .module = protocol },
+                .{ .name = "utils", .module = utils },
+                .{ .name = "glad", .module = glad.c },
+            },
+        });
+
+        if (c_linux) |c| module.addImport("c_linux", c);
+
+        module.linkLibrary(glad.lib);
+
+        break :blk module;
+    };
+
+    const check = b.step("check", "Check the compilation");
 
     { // client cli
         const exe = b.addExecutable(.{
@@ -41,12 +82,12 @@ pub fn build(b: *std.Build) !void {
                 .link_libc = true,
                 .imports = &.{
                     .{ .name = "glad", .module = glad.c },
+                    .{ .name = "client", .module = client },
                 },
             }),
         });
-        if (c_linux) |c| {
-            exe.root_module.addImport("c_linux", c.createModule());
-        }
+
+        if (c_linux) |c| exe.root_module.addImport("c_linux", c);
 
         exe.root_module.linkLibrary(glad.lib);
 
@@ -100,7 +141,7 @@ pub fn build(b: *std.Build) !void {
                     .optimize = optimize,
                     .imports = &.{
                         .{ .name = "wayland", .module = wayland },
-                        .{ .name = "c_linux", .module = c_linux.?.createModule() },
+                        .{ .name = "c_linux", .module = c_linux.? },
                     },
                 }),
             });

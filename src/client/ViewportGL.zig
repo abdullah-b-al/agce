@@ -381,14 +381,10 @@ fn query_syncobj(
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const constants = @import("../constants.zig");
-const utils = @import("../utils.zig");
-const client_to_server = @import("../protocol/client_to_server.zig");
-const server_to_client = @import("../protocol/server_to_client.zig");
-const common = @import("../protocol/common.zig");
-const ptypes = @import("../protocol/types.zig");
+const client_to_server = @import("protocol").client_to_server;
+const ptypes = @import("protocol").types;
 const ViewportID = ptypes.ViewportID;
-const opengl = @import("../opengl.zig");
+const opengl = @import("opengl.zig");
 const c_linux = @import("c_linux");
 const glad = @import("glad");
 const Client = @import("Client.zig");

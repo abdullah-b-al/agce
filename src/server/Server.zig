@@ -20,7 +20,7 @@ pub fn create(
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
 
-    var path_buf: [constants.socket_max_path]u8 = undefined;
+    var path_buf: [utils.socket_max_path]u8 = undefined;
     const unix_path = blk: {
         const path = utils.unix_address_path(environ, &path_buf);
         break :blk try gpa.dupe(u8, path);
@@ -187,7 +187,7 @@ fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client
     const timeout: Io.Timeout =
         .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } };
 
-    const maybe_message = try client_to_server.message_receive(server.io, arena, client, timeout);
+    const maybe_message = try client_to_server.message_receive(server.io, arena, client.stream, timeout);
 
     if (maybe_message) |message| {
         if (server.window_system_event_from_message(client, message)) |e| {
@@ -600,7 +600,6 @@ pub const Task = union(enum) {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const constants = @import("../constants.zig");
 const utils = @import("../utils.zig");
 const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);

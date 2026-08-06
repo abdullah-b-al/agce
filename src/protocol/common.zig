@@ -109,4 +109,3 @@ fn enum_is_fd(comptime E: type) bool {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const constants = @import("../constants.zig");

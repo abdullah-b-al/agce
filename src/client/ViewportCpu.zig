@@ -4,12 +4,12 @@ client: *Client,
 id: ViewportID,
 width: u32,
 height: u32,
-format: protocol_types.BufferFormat,
+format: ptypes.BufferFormat,
 
 buffers: Buffers(Buffer),
 
 pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
-    const format: protocol_types.BufferFormat = .argb8888;
+    const format: ptypes.BufferFormat = .argb8888;
     return .{
         .client = client,
         .id = client.next_viewport_id.increment_for_client(),
@@ -39,7 +39,7 @@ pub fn buffer_new(vp: *ViewportCpu, width: u32, height: u32) !void {
 
 pub fn resize(
     vp: *ViewportCpu,
-    msg: protocol_types.ViewportResize,
+    msg: ptypes.ViewportResize,
 ) !void {
     std.debug.assert(msg.viewport_id == vp.id);
 
@@ -134,15 +134,15 @@ fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } 
 }
 
 pub const Buffer = struct {
-    id: protocol_types.BufferID,
-    fd: protocol_types.CpuBufferFd,
+    id: ptypes.BufferID,
+    fd: ptypes.CpuBufferFd,
     data: []align(std.heap.page_size_min) u8,
     released: bool,
     width: u32,
     height: u32,
-    format: protocol_types.BufferFormat,
+    format: ptypes.BufferFormat,
 
-    pub fn init(id: BufferID, width: u32, height: u32, format: protocol_types.BufferFormat) !Buffer {
+    pub fn init(id: BufferID, width: u32, height: u32, format: ptypes.BufferFormat) !Buffer {
         const s = width * height * format.bytes_per_pixel();
         const fd, const buffer = try create_fd(s);
 
@@ -166,16 +166,11 @@ pub const Buffer = struct {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const constants = @import("../constants.zig");
-const utils = @import("../utils.zig");
-const client_to_server = @import("../protocol/client_to_server.zig");
-const server_to_client = @import("../protocol/server_to_client.zig");
-const common = @import("../protocol/common.zig");
-const protocol_types = @import("../protocol/types.zig");
-const opengl = @import("../opengl.zig");
+const client_to_server = @import("protocol").client_to_server;
+const ptypes = @import("protocol").types;
 const c_linux = @import("c_linux");
 const glad = @import("glad");
-const ViewportID = protocol_types.ViewportID;
-const BufferID = protocol_types.BufferID;
+const ViewportID = ptypes.ViewportID;
+const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
 const Buffers = @import("buffers.zig").Buffers;

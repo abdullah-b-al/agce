@@ -200,4 +200,3 @@ pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
 }
 
 const std = @import("std");
-const constants = @import("../constants.zig");

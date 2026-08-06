@@ -112,9 +112,9 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     }
 }
 
-pub fn message_peek(io: Io, client: *Client, timeout: Io.Timeout) !?net.IncomingMessage {
+pub fn message_peek(io: Io, stream: net.Stream, timeout: Io.Timeout) !?net.IncomingMessage {
     var buf: [@sizeOf(MessageHeader)]u8 = undefined;
-    const peek = common.operation_net_receive_peek(MessageHeader, io, client.stream, timeout, &buf) catch |err|
+    const peek = common.operation_net_receive_peek(MessageHeader, io, stream, timeout, &buf) catch |err|
         switch (err) {
             error.Timeout => return null,
             else => |e| return e,
@@ -127,8 +127,8 @@ pub fn message_peek(io: Io, client: *Client, timeout: Io.Timeout) !?net.Incoming
     return peek;
 }
 
-pub fn message_receive(io: Io, arena: std.mem.Allocator, client: *Client, timeout: Io.Timeout) !?MessagePayload {
-    const peek = try message_peek(io, client, timeout) orelse return null;
+pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !?MessagePayload {
+    const peek = try message_peek(io, stream, timeout) orelse return null;
 
     const header = try common.parse_message_header(MessageHeader, peek.data);
 
@@ -137,11 +137,11 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, client: *Client, timeou
         .json => {
             return switch (os_tag) {
                 .linux => {
-                    const message = try read_and_parse_data_json_linux(io, arena, client, header, message_buf);
+                    const message = try read_and_parse_data_json_linux(io, arena, stream, header, message_buf);
                     return message;
                 },
                 else => {
-                    const message = try read_and_parse_data_json(io, arena, client, header, message_buf);
+                    const message = try read_and_parse_data_json(io, arena, stream, header, message_buf);
                     return message;
                 },
             };
@@ -169,13 +169,12 @@ fn message_send_json_with_fd(stream: net.Stream, message: Message, comptime Fd: 
 fn read_and_parse_data_json_linux(
     io: Io,
     arena: std.mem.Allocator,
-    client: *Client,
+    stream: net.Stream,
     header: MessageHeader,
     receive_buf: []u8,
 ) !MessagePayload {
     std.debug.assert(header.format == .json);
     std.debug.assert(receive_buf.len == header.len);
-    const stream = client.stream;
 
     switch (header.message_tag) {
         inline .buffer_create_cpu_with_fd,
@@ -196,7 +195,7 @@ fn read_and_parse_data_json_linux(
         .window_create,
         .viewport_resize,
         => {
-            return try read_and_parse_data_json(io, arena, client, header, receive_buf);
+            return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
         },
     }
 }
@@ -204,7 +203,7 @@ fn read_and_parse_data_json_linux(
 fn read_and_parse_data_json(
     io: Io,
     arena: std.mem.Allocator,
-    client: *Client,
+    stream: net.Stream,
     header: MessageHeader,
     receive_buf: []u8,
 ) !MessagePayload {
@@ -225,7 +224,7 @@ fn read_and_parse_data_json(
                 T,
                 io,
                 arena,
-                client.stream,
+                stream,
                 header,
                 receive_buf,
             );
@@ -318,10 +317,7 @@ fn parse_message_with_fd(comptime T: type, io: Io, arena: std.mem.Allocator, str
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const constants = @import("../constants.zig");
 const c_linux = @import("c_linux");
 const os_tag = @import("builtin").os.tag;
 const types = @import("types.zig");
 const common = @import("common.zig");
-const ClientID = @import("../server/Clients.zig").ClientID;
-const Client = @import("../server/Clients.zig").Client;

@@ -20,7 +20,7 @@ pub fn init(
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
 ) !Client {
-    var path_buf: [constants.socket_max_path]u8 = undefined;
+    var path_buf: [utils.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
 
@@ -349,13 +349,11 @@ const Viewport = union(enum) {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const constants = @import("../constants.zig");
-const utils = @import("../utils.zig");
-const client_to_server = @import("../protocol/client_to_server.zig");
-const server_to_client = @import("../protocol/server_to_client.zig");
-const common = @import("../protocol/common.zig");
-const ptypes = @import("../protocol/types.zig");
-const opengl = @import("../opengl.zig");
+const utils = @import("utils");
+const client_to_server = @import("protocol").client_to_server;
+const server_to_client = @import("protocol").server_to_client;
+const ptypes = @import("protocol").types;
+const opengl = @import("opengl.zig");
 const c_linux = @import("c_linux");
 const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
