@@ -101,9 +101,14 @@ pub const GbmBackedTexture = struct {
 };
 
 pub fn egl_image_from_gbm_bo(ctx: ContextLinux, bo: *c_linux.struct_gbm_bo) !GbmBackedTexture {
+    gl_error_clear(.clear);
+
     var texture: glad.GLuint = 0;
     glad.glGenTextures(1, &texture);
+    try gl_error_check();
+
     glad.glBindTexture(glad.GL_TEXTURE_2D, texture);
+    try gl_error_check();
 
     const image = glad.eglCreateImageKHR(
         ctx.egl_display,
@@ -114,14 +119,20 @@ pub fn egl_image_from_gbm_bo(ctx: ContextLinux, bo: *c_linux.struct_gbm_bo) !Gbm
     ) orelse return error.eglCreateImageKHR;
 
     glad.glEGLImageTargetTexture2DOES(glad.GL_TEXTURE_2D, image);
+    try gl_error_check();
 
     return .{ .image = image, .texture = texture };
 }
 
 pub fn fbo_gen(texture: glad.GLuint) !glad.GLuint {
+    gl_error_clear(.clear);
+
     var fbo: glad.GLuint = undefined;
     glad.glGenFramebuffers(1, &fbo);
+    try gl_error_check();
+
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, fbo);
+    try gl_error_check();
 
     glad.glFramebufferTexture2D(
         glad.GL_FRAMEBUFFER,
@@ -130,11 +141,8 @@ pub fn fbo_gen(texture: glad.GLuint) !glad.GLuint {
         texture,
         0,
     );
+    try gl_error_check();
 
-    const fbo_error = glad.glGetError();
-    if (fbo_error != glad.GL_NO_ERROR) {
-        return error.FailedToGenFbo;
-    }
     //
     const status = glad.glCheckFramebufferStatus(glad.GL_FRAMEBUFFER);
     if (status != glad.GL_FRAMEBUFFER_COMPLETE) {
@@ -168,7 +176,30 @@ fn egl_get_error_context() struct { num: i32, string: []const u8 } {
     return .{ .num = err, .string = string };
 }
 
+fn gl_error_check() !void {
+    return switch (glad.glGetError()) {
+        glad.GL_NO_ERROR => {},
+        glad.GL_INVALID_ENUM => error.GlInvalidEnum,
+        glad.GL_INVALID_VALUE => error.GlInvalidValue,
+        glad.GL_INVALID_OPERATION => error.GlInvalidOperation,
+        glad.GL_INVALID_FRAMEBUFFER_OPERATION => error.GlInvalidFramebufferOperation,
+        glad.GL_OUT_OF_MEMORY => error.GlOutOfMemory,
+        else => |v| {
+            log.err("GlUnknownError {}", .{v});
+            return error.GlUnknownError;
+        },
+    };
+}
+
+fn gl_error_clear(action: enum { panic, clear }) void {
+    gl_error_check() catch switch (action) {
+        .panic => @panic("GL error was previously ignored"),
+        .clear => {},
+    };
+}
+
 const std = @import("std");
 const Io = std.Io;
 const c_linux = @import("c_linux");
 const glad = @import("glad");
+const log = std.log.scoped(.opengl);
