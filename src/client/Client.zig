@@ -11,6 +11,7 @@ viewports: std.array_hash_map.Auto(ViewportID, Viewport),
 
 messages_arena: std.heap.ArenaAllocator,
 messages: std.ArrayList(server_to_client.MessagePayload),
+events: std.ArrayList(Event),
 
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
@@ -32,6 +33,7 @@ pub fn init(
         .connection = stream,
         .messages_arena = .init(gpa),
         .messages = .empty,
+        .events = .empty,
         .next_viewport_id = .first_for_client,
         .next_buffer_id = .first,
         .viewports = .empty,
@@ -56,6 +58,9 @@ pub fn deinit(client: *Client) void {
         c_linux.gbm_device_destroy(gbm.device);
     }
     client.messages_arena.deinit();
+    client.messages.deinit(client.gpa);
+    client.events.deinit(client.gpa);
+
     client.connection.close(client.io);
 }
 
@@ -175,17 +180,27 @@ pub fn messages_wait_for_buffer_created(client: *Client, min_count: usize) !void
 
 // TODO: Poll all available messages
 pub fn message_poll(client: *Client, timeout: Io.Timeout) !void {
-    if (client.messages.items.len == 0) {
-        _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
-    }
+    defer _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
 
     try client.messages.ensureUnusedCapacity(client.gpa, 1);
+    try client.events.ensureUnusedCapacity(client.gpa, 1);
     const message = try server_to_client.message_receive(
         client.io,
         client.messages_arena.allocator(),
         client.connection,
         timeout,
     );
+
+    switch (message) {
+        .viewport_resize => |e| {
+            client.events.insertAssumeCapacity(0, .{ .viewport_resize = e });
+        },
+
+        .buffer_released,
+        .buffer_destroyed,
+        .buffer_created,
+        => {},
+    }
 
     client.messages.insertAssumeCapacity(0, message);
 }
@@ -194,8 +209,6 @@ fn messages_handle(client: *Client) !void {
     while (client.messages.pop()) |message| {
         try client.message_handle(message);
     }
-
-    _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
 }
 
 fn message_handle(client: *Client, message: server_to_client.MessagePayload) !void {
@@ -340,6 +353,10 @@ pub const Gbm = struct {
 const Viewport = union(enum) {
     gl: *ViewportGL,
     cpu: *ViewportCpu,
+};
+
+pub const Event = union(enum) {
+    viewport_resize: ptypes.ViewportResize,
 };
 
 const std = @import("std");
