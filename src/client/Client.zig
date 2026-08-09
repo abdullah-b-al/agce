@@ -77,11 +77,11 @@ pub fn init_gbm(client: *Client) !void {
     };
 }
 
-pub fn init_gl(client: *Client) !void {
+pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
     std.debug.assert(client.gbm != null);
     const gbm = client.gbm.?;
 
-    const gl = try opengl.init_linux(gbm.device);
+    const gl = try opengl.init_linux(gbm.device, major, minor);
     try opengl.load_gl(gl);
 
     client.gl_context = gl;
@@ -173,7 +173,8 @@ pub fn messages_wait_for_buffer_created(client: *Client, min_count: usize) !void
     }
 }
 
-fn message_poll(client: *Client, timeout: Io.Timeout) !void {
+// TODO: Poll all available messages
+pub fn message_poll(client: *Client, timeout: Io.Timeout) !void {
     if (client.messages.items.len == 0) {
         _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
     }
@@ -200,7 +201,6 @@ fn messages_handle(client: *Client) !void {
 fn message_handle(client: *Client, message: server_to_client.MessagePayload) !void {
     switch (message) {
         .viewport_resize => |msg| {
-            log.debug("Received {t} {}", .{ message, msg });
             const vp = client.viewports.get(msg.viewport_id).?;
             switch (vp) {
                 .gl => |gl| try gl.resize(msg.width, msg.height),
@@ -209,15 +209,12 @@ fn message_handle(client: *Client, message: server_to_client.MessagePayload) !vo
         },
 
         .buffer_released => |msg| {
-            log.debug("Received {t} {}", .{ message, msg });
             const vp = client.viewports.get(msg.viewport_id).?;
             switch (vp) {
                 inline else => |v| v.buffer_released(msg.buffer_id),
             }
         },
         .buffer_created => |msg| {
-            log.debug("Received {t} {}", .{ message, msg });
-
             const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
             switch (msg.status) {
                 .success => {
@@ -229,7 +226,6 @@ fn message_handle(client: *Client, message: server_to_client.MessagePayload) !vo
             }
         },
         .buffer_destroyed => |msg| {
-            log.debug("Received {t} {}", .{ message, msg });
             const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
             switch (vp) {
                 inline else => |v| v.buffer_destroyed(msg.buffer_id),

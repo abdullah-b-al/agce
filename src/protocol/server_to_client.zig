@@ -12,6 +12,17 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_destroyed: BufferDestroyed,
     buffer_created: BufferCreated,
 
+    pub fn format(
+        self: @This(),
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        switch (self) {
+            inline else => |v, tag| {
+                try utils.format_active_union_field(v, @tagName(tag), writer);
+            },
+        }
+    }
+
     pub const BufferReleased = struct {
         viewport_id: types.ViewportID,
         buffer_id: types.BufferID,
@@ -89,6 +100,7 @@ fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
+const utils = @import("utils");
 const types = @import("types.zig");
 const common = @import("common.zig");
 const os_tag = @import("builtin").os.tag;

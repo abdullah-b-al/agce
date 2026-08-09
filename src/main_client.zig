@@ -24,7 +24,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (use_gl) {
         try client.init_gbm();
-        try client.init_gl();
+        try client.init_gl(3, 3);
     }
 
     const viewport_gl = if (use_gl) try client.viewport_create_gl(1280, 720) else null;

@@ -3,7 +3,7 @@ pub const ContextLinux = struct {
     egl_context: *anyopaque,
 };
 
-pub fn init_linux(gbm_device: *c_linux.struct_gbm_device) !ContextLinux {
+pub fn init_linux(gbm_device: *c_linux.struct_gbm_device, major: c_int, minor: c_int) !ContextLinux {
     const display =
         c_linux.eglGetPlatformDisplay(c_linux.EGL_PLATFORM_GBM_KHR, gbm_device, null) orelse
         return error.CouldNotGetPlatformDisplay;
@@ -50,9 +50,9 @@ pub fn init_linux(gbm_device: *c_linux.struct_gbm_device) !ContextLinux {
 
     const context_attribs: []const c_linux.EGLint = &.{
         c_linux.EGL_CONTEXT_MAJOR_VERSION,
-        4,
+        major,
         c_linux.EGL_CONTEXT_MINOR_VERSION,
-        6,
+        minor,
         c_linux.EGL_NONE,
     };
 
@@ -79,12 +79,16 @@ pub fn init_linux(gbm_device: *c_linux.struct_gbm_device) !ContextLinux {
     };
 }
 
+pub fn get_proc_address(procname: [*c]const u8) callconv(.c) c_linux.__eglMustCastToProperFunctionPointerType {
+    return c_linux.eglGetProcAddress(procname);
+}
+
 pub fn load_gl(ctx: ContextLinux) !void {
-    if (glad.gladLoadEGL(ctx.egl_display, c_linux.eglGetProcAddress) == 0) {
+    if (glad.gladLoadEGL(ctx.egl_display, get_proc_address) == 0) {
         return error.FailedToGladLoadEGL;
     }
 
-    if (glad.gladLoadGLES2(c_linux.eglGetProcAddress) == 0) {
+    if (glad.gladLoadGLES2(get_proc_address) == 0) {
         return error.FailedToGladLoadGLES2;
     }
 }
