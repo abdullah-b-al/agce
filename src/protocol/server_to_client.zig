@@ -53,8 +53,8 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const MouseMotion = struct {
         viewport_id: types.ViewportID,
-        x: i32,
-        y: i32,
+        x: f32,
+        y: f32,
     };
 
     pub const MouseButton = struct {
@@ -66,7 +66,7 @@ pub const MessagePayload = union(enum(u32)) {
     pub const MouseScroll = struct {
         viewport_id: types.ViewportID,
         axis: types.ScrollAxis,
-        value: i32,
+        value: f32,
     };
 };
 

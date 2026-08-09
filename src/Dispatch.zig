@@ -180,8 +180,8 @@ pub const WindowSystemEvent = union(enum) {
     };
 
     pub const MouseMotion = struct {
-        x: i32,
-        y: i32,
+        x: f32,
+        y: f32,
     };
 
     pub const MouseButton = struct {
@@ -191,7 +191,7 @@ pub const WindowSystemEvent = union(enum) {
 
     pub const MouseScroll = struct {
         axis: ptypes.ScrollAxis,
-        value: i32,
+        value: f32,
     };
 };
 

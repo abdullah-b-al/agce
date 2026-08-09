@@ -550,8 +550,8 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
         },
         .motion => |e| .{
             .mouse_motion = .{
-                .x = e.surface_x.toInt(),
-                .y = e.surface_y.toInt(),
+                .x = @floatCast(e.surface_x.toDouble()),
+                .y = @floatCast(e.surface_y.toDouble()),
             },
         },
         .button => |e| {
@@ -592,7 +592,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
             break :blk .{
                 .mouse_scroll = .{
                     .axis = axis,
-                    .value = e.value.toInt(),
+                    .value = @floatCast(e.value.toDouble()),
                 },
             };
         },
