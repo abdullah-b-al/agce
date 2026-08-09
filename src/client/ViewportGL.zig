@@ -108,11 +108,11 @@ pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
     buffer.acquire.point.advance();
 }
 
-pub fn get_buffer(vp: *ViewportGL) ?*Buffer {
+pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{ Timeout, NoAvaiableBuffer }!*Buffer {
     const dri = vp.client.gbm.?.dri;
 
     if (vp.buffers.available.items.len == 0)
-        return null;
+        return error.NoAvaiableBuffer;
 
     for (vp.buffers.available.items) |*buffer| {
         if (buffer.released) return buffer;
@@ -131,30 +131,26 @@ pub fn get_buffer(vp: *ViewportGL) ?*Buffer {
         points.appendBounded(@intFromEnum(buffer.release.point)) catch unreachable;
     }
 
-    const timeout: i64 = 0;
     var index: u32 = undefined;
     const signaled = c_linux.drmSyncobjTimelineWait(
         dri.handle,
         timelines.items.ptr,
         points.items.ptr,
         @intCast(timelines.items.len),
-        timeout,
+        timeout_ns,
         c_linux.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE,
         &index,
     );
 
-    const buffer =
-        if (index < vp.buffers.available.items.len)
-            &vp.buffers.available.items[index]
-        else
-            return null;
+    if (@abs(signaled) == c_linux.ETIME) {
+        return error.Timeout;
+    }
+
+    std.debug.assert(signaled == 0);
+    const buffer = &vp.buffers.available.items[index];
 
     buffer.release.point.advance();
     buffer.released = true;
-
-    if (@abs(signaled) == c_linux.ETIME or signaled == 0) {
-        return null;
-    }
 
     return buffer;
 }

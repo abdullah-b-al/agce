@@ -88,7 +88,9 @@ fn render_cpu(vp: *ViewportCpu, random: std.Random) !void {
 }
 
 fn render_gpu(vp: *ViewportGL, random: std.Random) !void {
-    const buffer = vp.get_buffer() orelse return;
+    const buffer = vp.get_buffer(0) catch |err| switch (err) {
+        error.NoAvaiableBuffer, error.Timeout => return,
+    };
 
     const fr = random.float(f32);
     const fg = random.float(f32);
