@@ -88,6 +88,12 @@ pub const WindowSystemEvent = union(enum) {
         result_queue: *WindowSystemResultQueue,
     },
 
+    mouse_enter: MouseEnter,
+    mouse_leave: MouseLeave,
+    mouse_motion: MouseMotion,
+    mouse_button: MouseButton,
+    mouse_scroll: MouseScroll,
+
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self) {
             .wayland_dispatch => |_, tag| {
@@ -162,6 +168,31 @@ pub const WindowSystemEvent = union(enum) {
         width: u32,
         height: u32,
     };
+
+    pub const MouseEnter = struct {
+        client_id: ClientID,
+        viewport_id: ptypes.ViewportID,
+    };
+
+    pub const MouseLeave = struct {
+        client_id: ClientID,
+        viewport_id: ptypes.ViewportID,
+    };
+
+    pub const MouseMotion = struct {
+        x: i32,
+        y: i32,
+    };
+
+    pub const MouseButton = struct {
+        button: ptypes.MouseButton,
+        state: ptypes.MouseButtonState,
+    };
+
+    pub const MouseScroll = struct {
+        axis: ptypes.ScrollAxis,
+        value: i32,
+    };
 };
 
 pub const WindowSystemResult = union(enum) {
@@ -171,25 +202,29 @@ pub const WindowSystemResult = union(enum) {
 pub const ServerQueue = IoQueue(ServerEvent);
 pub const ServerEvent = union(enum) {
     exit,
-    viewport_resize: ViewportResize,
-    buffer_released: WindowSystemEvent.BufferPresent,
-    buffer_destroyed: WindowSystemEvent.BufferDestroy,
-    buffer_created: BufferCreated,
+
+    viewport_resize: WithClientID(ptypes.ViewportResize),
+
+    buffer_released: WithClientID(MessagePayload.BufferReleased),
+    buffer_destroyed: WithClientID(MessagePayload.BufferDestroyed),
+    buffer_created: WithClientID(MessagePayload.BufferCreated),
+
+    mouse_enter: WithClientID(MessagePayload.MouseEnter),
+    mouse_leave: WithClientID(MessagePayload.MouseLeave),
+    mouse_motion: WithClientID(MessagePayload.MouseMotion),
+    mouse_button: WithClientID(MessagePayload.MouseButton),
+    mouse_scroll: WithClientID(MessagePayload.MouseScroll),
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
     }
 
-    pub const ViewportResize = struct {
-        client_id: ClientID,
-        resize: ptypes.ViewportResize,
-    };
-
-    pub const BufferCreated = struct {
-        client_id: ClientID,
-        buffer_id: BufferID,
-        status: ptypes.Status,
-    };
+    fn WithClientID(comptime T: type) type {
+        return struct {
+            client_id: ClientID,
+            payload: T,
+        };
+    }
 };
 
 pub fn IoQueue(comptime T: type) type {
@@ -220,14 +255,16 @@ pub fn IoQueue(comptime T: type) type {
 
 const std = @import("std");
 const Io = std.Io;
-const ptypes = @import("protocol/types.zig");
+const ptypes = @import("protocol").types;
+const server_to_client = @import("protocol").server_to_client;
 const log = std.log.scoped(.Dispatch);
 const SourceLocation = std.builtin.SourceLocation;
-const ViewportFds = @import("protocol/types.zig").ViewportFds;
-const ViewportID = @import("protocol/types.zig").ViewportID;
-const BufferFormat = @import("protocol/types.zig").BufferFormat;
-const BufferID = @import("protocol/types.zig").BufferID;
+const ViewportFds = ptypes.ViewportFds;
+const ViewportID = ptypes.ViewportID;
+const BufferFormat = ptypes.BufferFormat;
+const BufferID = ptypes.BufferID;
 const ClientID = @import("server/Clients.zig").ClientID;
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
 const WindowID = @import("WindowSystem.zig").WindowID;
-const utils = @import("utils.zig");
+const utils = @import("utils");
+const MessagePayload = server_to_client.MessagePayload;

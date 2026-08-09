@@ -12,6 +12,12 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_destroyed: BufferDestroyed,
     buffer_created: BufferCreated,
 
+    mouse_enter: MouseEnter,
+    mouse_leave: MouseLeave,
+    mouse_motion: MouseMotion,
+    mouse_button: MouseButton,
+    mouse_scroll: MouseScroll,
+
     pub fn format(
         self: @This(),
         writer: *std.Io.Writer,
@@ -35,6 +41,32 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferCreated = struct {
         buffer_id: types.BufferID,
         status: types.Status,
+    };
+
+    pub const MouseEnter = struct {
+        viewport_id: types.ViewportID,
+    };
+
+    pub const MouseLeave = struct {
+        viewport_id: types.ViewportID,
+    };
+
+    pub const MouseMotion = struct {
+        viewport_id: types.ViewportID,
+        x: i32,
+        y: i32,
+    };
+
+    pub const MouseButton = struct {
+        viewport_id: types.ViewportID,
+        button: types.MouseButton,
+        state: types.MouseButtonState,
+    };
+
+    pub const MouseScroll = struct {
+        viewport_id: types.ViewportID,
+        axis: types.ScrollAxis,
+        value: i32,
     };
 };
 

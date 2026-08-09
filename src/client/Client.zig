@@ -191,9 +191,18 @@ pub fn message_poll(client: *Client, timeout: Io.Timeout) !void {
         timeout,
     );
 
+    errdefer comptime unreachable;
+
     switch (message) {
-        .viewport_resize => |e| {
-            client.events.insertAssumeCapacity(0, .{ .viewport_resize = e });
+        inline .mouse_enter,
+        .mouse_leave,
+        .mouse_motion,
+        .mouse_button,
+        .mouse_scroll,
+        .viewport_resize,
+        => |e, tag| {
+            const event = @unionInit(Event, @tagName(tag), e);
+            client.events.insertAssumeCapacity(0, event);
         },
 
         .buffer_released,
@@ -244,6 +253,14 @@ fn message_handle(client: *Client, message: server_to_client.MessagePayload) !vo
                 inline else => |v| v.buffer_destroyed(msg.buffer_id),
             }
         },
+
+        // events only
+        .mouse_enter,
+        .mouse_leave,
+        .mouse_motion,
+        .mouse_button,
+        .mouse_scroll,
+        => {},
     }
 }
 
@@ -357,6 +374,11 @@ const Viewport = union(enum) {
 
 pub const Event = union(enum) {
     viewport_resize: ptypes.ViewportResize,
+    mouse_enter: server_to_client.MessagePayload.MouseEnter,
+    mouse_leave: server_to_client.MessagePayload.MouseLeave,
+    mouse_motion: server_to_client.MessagePayload.MouseMotion,
+    mouse_button: server_to_client.MessagePayload.MouseButton,
+    mouse_scroll: server_to_client.MessagePayload.MouseScroll,
 };
 
 const std = @import("std");

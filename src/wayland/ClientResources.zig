@@ -270,8 +270,10 @@ pub const RegisterGpuBuffer = struct {
                     .{
                         .buffer_created = .{
                             .client_id = data.client_id,
-                            .buffer_id = data.buffer_id,
-                            .status = .success,
+                            .payload = .{
+                                .buffer_id = data.buffer_id,
+                                .status = .success,
+                            },
                         },
                     },
                 ) catch {};
@@ -303,8 +305,10 @@ pub const BufferListener = struct {
                     .{
                         .buffer_released = .{
                             .client_id = key.client_id,
-                            .buffer_id = key.buffer_id,
-                            .viewport_id = entry.value,
+                            .payload = .{
+                                .buffer_id = key.buffer_id,
+                                .viewport_id = entry.value,
+                            },
                         },
                     },
                 ) catch {};
@@ -318,16 +322,17 @@ const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const Wayland = @import("Wayland.zig");
-const BufferFormat = @import("../protocol/types.zig").BufferFormat;
-const BufferAndTimelineFds = @import("../protocol/types.zig").BufferAndTimelineFds;
+const ptypes = @import("protocol").types;
+const BufferFormat = ptypes.BufferFormat;
+const BufferAndTimelineFds = ptypes.BufferAndTimelineFds;
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.ClientResources);
 const ViewportKey = @import("../WindowSystem.zig").ViewportKey;
 const BufferKey = @import("../WindowSystem.zig").BufferKey;
 const WindowSystem = @import("../WindowSystem.zig");
-const BufferID = @import("../protocol/types.zig").BufferID;
-const ViewportID = @import("../protocol/types.zig").ViewportID;
-const CpuBufferFd = @import("../protocol/types.zig").CpuBufferFd;
+const BufferID = ptypes.BufferID;
+const ViewportID = ptypes.ViewportID;
+const CpuBufferFd = ptypes.CpuBufferFd;
 const ClientID = @import("../server/Clients.zig").ClientID;
 const Dispatch = @import("../Dispatch.zig");
 const Viewport = @import("Viewport.zig");

@@ -142,6 +142,8 @@ pub fn build(b: *std.Build) !void {
                     .imports = &.{
                         .{ .name = "wayland", .module = wayland },
                         .{ .name = "c_linux", .module = c_linux.? },
+                        .{ .name = "protocol", .module = protocol },
+                        .{ .name = "utils", .module = utils },
                     },
                 }),
             });

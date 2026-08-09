@@ -133,14 +133,25 @@ pub const WindowCreate = struct {
     create_sync_timeline: bool,
 };
 
-pub const ViewportBuffersSwap = struct {
-    viewport_id: ViewportID,
-};
-
 pub const ViewportResize = struct {
     viewport_id: ViewportID,
     width: u32,
     height: u32,
+};
+
+pub const ScrollAxis = enum(u8) {
+    vertical,
+    horizontal,
+};
+
+pub const MouseButton = enum(u8) {
+    left,
+    right,
+};
+
+pub const MouseButtonState = enum(u8) {
+    pressed,
+    released,
 };
 
 pub fn MessageHeaderGeneric(comptime MessageTag: type) type {

@@ -209,56 +209,28 @@ pub fn handle_event(
         .exit => {
             return error.Exit;
         },
-        .viewport_resize => |e| {
+        inline .viewport_resize,
+        .buffer_released,
+        .buffer_destroyed,
+        .buffer_created,
+        .mouse_enter,
+        .mouse_leave,
+        .mouse_motion,
+        .mouse_button,
+        .mouse_scroll,
+        => |e, tag| {
             const client = server.clients.map.get(e.client_id) orelse return;
 
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                .{ .viewport_resize = e.resize },
+            const payload = @unionInit(
+                server_to_client.MessagePayload,
+                @tagName(tag),
+                e.payload,
             );
-        },
-        .buffer_released => |e| {
-            const client = server.clients.map.get(e.client_id) orelse return;
-
             try server_to_client.message_send_json(
                 server.io,
                 server.gpa,
                 client.stream,
-                .{
-                    .buffer_released = .{
-                        .viewport_id = e.viewport_id,
-                        .buffer_id = e.buffer_id,
-                    },
-                },
-            );
-        },
-        .buffer_destroyed => |e| {
-            const client = server.clients.map.get(e.client_id) orelse return;
-
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                .{
-                    .buffer_destroyed = .{ .buffer_id = e.buffer_id },
-                },
-            );
-        },
-        .buffer_created => |e| {
-            const client = server.clients.map.get(e.client_id) orelse return;
-
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                .{
-                    .buffer_created = .{
-                        .buffer_id = e.buffer_id,
-                        .status = e.status,
-                    },
-                },
+                payload,
             );
         },
     }
@@ -600,13 +572,13 @@ pub const Task = union(enum) {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const utils = @import("../utils.zig");
+const utils = @import("utils");
 const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
-const MessagePayload = @import("../protocol/client_to_server.zig").MessagePayload;
+const MessagePayload = client_to_server.MessagePayload;
 const Dispatch = @import("../Dispatch.zig");
-const server_to_client = @import("../protocol/server_to_client.zig");
-const client_to_server = @import("../protocol/client_to_server.zig");
+const server_to_client = @import("protocol").server_to_client;
+const client_to_server = @import("protocol").client_to_server;
 const ClientID = Clients.ClientID;
 const Client = Clients.Client;

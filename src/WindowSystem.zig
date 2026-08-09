@@ -137,12 +137,40 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
             }
         },
         .window_resize_by_display_server => |args| {
-            const resize = switch (ws.native) {
+            switch (ws.native) {
                 .wayland => |wl| try wl.window_resize_by_display_server(args),
                 .win32 => @panic("TODO"),
-            };
-
-            try ws.dispatch.server_put(@src(), .{ .viewport_resize = resize });
+            }
+        },
+        .mouse_enter => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.mouse_enter(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .mouse_leave => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.mouse_leave(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .mouse_motion => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.mouse_motion(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .mouse_button => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.mouse_button(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .mouse_scroll => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.mouse_scroll(args),
+                .win32 => @panic("TODO"),
+            }
         },
         .wayland_dispatch => |dis| {
             switch (ws.native) {
@@ -190,10 +218,11 @@ pub const NativeWindowSystem = union(enum) {
 const std = @import("std");
 const Io = std.Io;
 const ClientID = @import("server/Clients.zig").ClientID;
-const ViewportID = @import("protocol/types.zig").ViewportID;
+const ptypes = @import("protocol").types;
+const ViewportID = ptypes.ViewportID;
 const Wayland = @import("wayland/Wayland.zig");
 const Win32 = @import("win32/Win32.zig");
 const os_tag = @import("builtin").os.tag;
 const log = std.log.scoped(.WindowSystem);
-const BufferID = @import("protocol/types.zig").BufferID;
+const BufferID = ptypes.BufferID;
 const Dispatch = @import("Dispatch.zig");
