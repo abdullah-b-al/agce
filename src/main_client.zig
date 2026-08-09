@@ -44,10 +44,9 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         const timeout: Io.Timeout =
             .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
-        client.messages_poll_and_handle(timeout) catch |err| switch (err) {
-            error.NoBuffers => {},
-            else => |e| return e,
-        };
+
+        try client.poll(timeout);
+        try client.update();
 
         const should_render =
             time.untilNow(init.io, .awake).toMilliseconds() >= 1000 or

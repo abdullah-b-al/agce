@@ -10,7 +10,7 @@ next_buffer_id: ptypes.BufferID,
 viewports: std.array_hash_map.Auto(ViewportID, Viewport),
 
 messages_arena: std.heap.ArenaAllocator,
-messages: std.ArrayList(server_to_client.MessagePayload),
+messages: std.ArrayList(Message),
 events: std.ArrayList(Event),
 
 gbm: ?Gbm,
@@ -105,7 +105,7 @@ pub fn viewport_create_gl(client: *Client, width: u32, height: u32) !*ViewportGL
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
 
     try client.messages_wait_for_buffer_created(2);
-    try client.messages_handle();
+    try client.update();
 
     return vp;
 }
@@ -121,7 +121,7 @@ pub fn viewport_create_cpu(client: *Client, width: u32, height: u32) !*ViewportC
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
 
     try client.messages_wait_for_buffer_created(2);
-    try client.messages_handle();
+    try client.update();
 
     return vp;
 }
@@ -150,36 +150,26 @@ pub fn window_create(
     });
 }
 
-pub fn messages_poll_and_handle(client: *Client, timeout: Io.Timeout) !void {
+pub fn poll(client: *Client, timeout: Io.Timeout) !void {
     while (true) {
-        client.message_poll(timeout) catch |err| switch (err) {
+        client.poll_once(timeout) catch |err| switch (err) {
             error.Timeout => break,
             else => |e| return e,
         };
     }
-
-    try client.messages_handle();
 }
 
-pub fn messages_wait_for_buffer_created(client: *Client, min_count: usize) !void {
-    const timeout: Io.Timeout = .none;
-    while (true) {
-        try client.message_poll(timeout);
-
-        var count: usize = 0;
-        for (client.messages.items) |message| {
-            if (message == .buffer_created)
-                count += 1;
-        }
-
-        if (count >= min_count) {
-            break;
-        }
+pub fn update(client: *Client) !void {
+    while (client.messages.pop()) |message| {
+        client.message_handle(message) catch |err| switch (err) {
+            error.NoBuffers => {},
+            else => |e| return e,
+        };
     }
 }
 
 // TODO: Poll all available messages
-pub fn message_poll(client: *Client, timeout: Io.Timeout) !void {
+pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
     defer _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
 
     try client.messages.ensureUnusedCapacity(client.gpa, 1);
@@ -199,28 +189,40 @@ pub fn message_poll(client: *Client, timeout: Io.Timeout) !void {
         .mouse_motion,
         .mouse_button,
         .mouse_scroll,
-        .viewport_resize,
         => |e, tag| {
             const event = @unionInit(Event, @tagName(tag), e);
             client.events.insertAssumeCapacity(0, event);
         },
 
+        inline .viewport_resize,
         .buffer_released,
         .buffer_destroyed,
         .buffer_created,
-        => {},
-    }
-
-    client.messages.insertAssumeCapacity(0, message);
-}
-
-fn messages_handle(client: *Client) !void {
-    while (client.messages.pop()) |message| {
-        try client.message_handle(message);
+        => |e, tag| {
+            const msg = @unionInit(Message, @tagName(tag), e);
+            client.messages.insertAssumeCapacity(0, msg);
+        },
     }
 }
 
-fn message_handle(client: *Client, message: server_to_client.MessagePayload) !void {
+fn messages_wait_for_buffer_created(client: *Client, min_count: usize) !void {
+    const timeout: Io.Timeout = .none;
+    while (true) {
+        try client.poll_once(timeout);
+
+        var count: usize = 0;
+        for (client.messages.items) |message| {
+            if (message == .buffer_created)
+                count += 1;
+        }
+
+        if (count >= min_count) {
+            break;
+        }
+    }
+}
+
+fn message_handle(client: *Client, message: Message) !void {
     switch (message) {
         .viewport_resize => |msg| {
             const vp = client.viewports.get(msg.viewport_id).?;
@@ -253,14 +255,6 @@ fn message_handle(client: *Client, message: server_to_client.MessagePayload) !vo
                 inline else => |v| v.buffer_destroyed(msg.buffer_id),
             }
         },
-
-        // events only
-        .mouse_enter,
-        .mouse_leave,
-        .mouse_motion,
-        .mouse_button,
-        .mouse_scroll,
-        => {},
     }
 }
 
@@ -373,12 +367,18 @@ const Viewport = union(enum) {
 };
 
 pub const Event = union(enum) {
-    viewport_resize: ptypes.ViewportResize,
     mouse_enter: server_to_client.MessagePayload.MouseEnter,
     mouse_leave: server_to_client.MessagePayload.MouseLeave,
     mouse_motion: server_to_client.MessagePayload.MouseMotion,
     mouse_button: server_to_client.MessagePayload.MouseButton,
     mouse_scroll: server_to_client.MessagePayload.MouseScroll,
+};
+
+pub const Message = union(enum) {
+    viewport_resize: ptypes.ViewportResize,
+    buffer_released: server_to_client.MessagePayload.BufferReleased,
+    buffer_destroyed: server_to_client.MessagePayload.BufferDestroyed,
+    buffer_created: server_to_client.MessagePayload.BufferCreated,
 };
 
 const std = @import("std");
