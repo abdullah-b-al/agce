@@ -88,7 +88,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         },
         .client_disconnected => |id| {
             switch (ws.native) {
-                .wayland => |wl| wl.client_disconnected(id),
+                .wayland => |wl| try wl.client_disconnected(id),
                 .win32 => @panic("TODO"),
             }
         },

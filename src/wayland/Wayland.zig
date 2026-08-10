@@ -109,7 +109,7 @@ pub fn client_connected(wl: *Wayland, id: ClientID) !void {
     try wl.resources.putNoClobber(wl.gpa, id, .init(id));
 }
 
-pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
+pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
     const rs = wl.resources_get(id) catch {
         log.warn("Tried to disconnected an nonexistent client {}", .{id});
         return;
@@ -123,6 +123,8 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
 
     rs.deinit(wl);
     _ = wl.resources.orderedRemove(id);
+
+    try wl.windows_destroy();
 }
 
 pub fn resources_get(wl: *Wayland, id: ClientID) !*ClientResources {
@@ -180,6 +182,8 @@ pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Event.BufferCreateCpuWithFd
         @intCast(args.height),
         args.format,
     );
+
+    _ = std.os.linux.close(@intFromEnum(args.fd));
 
     // TODO: Send failure in that case
     try wl.dispatch.server_put(
@@ -328,8 +332,9 @@ pub fn windows_destroy(wl: *Wayland) !void {
                 },
             });
 
+            const id = win.id;
+            _ = wl.windows.orderedRemove(id);
             win.destroy(wl.gpa);
-            _ = wl.windows.orderedRemove(win.id);
             removed = true;
         }
     }

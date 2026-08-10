@@ -90,7 +90,10 @@ pub fn buffer_create_cpu(
     const stride = width * format.bytes_per_pixel();
     const size = width * height * format.bytes_per_pixel();
     const pool = try shm.createPool(@intFromEnum(fd), size);
-    defer pool.destroy();
+    defer {
+        _ = std.os.linux.close(@intFromEnum(fd));
+        pool.destroy();
+    }
 
     const wl_format: cwl.Shm.Format = switch (format) {
         .argb8888 => .argb8888,
@@ -155,6 +158,10 @@ pub fn buffer_create_and_register_gpu_async(
     params.add(@intFromEnum(fds.buffer), 0, 0, stride, mod_hi, mod_lo);
     params.create(width, height, format, .{});
     params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
+
+    _ = std.os.linux.close(@intFromEnum(fds.buffer));
+    _ = std.os.linux.close(@intFromEnum(fds.acquire_timeline));
+    _ = std.os.linux.close(@intFromEnum(fds.release_timeline));
 
     log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
 }
