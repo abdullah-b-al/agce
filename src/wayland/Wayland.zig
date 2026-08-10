@@ -221,12 +221,12 @@ pub fn buffer_present(wl: *Wayland, args: Event.BufferPresent) !void {
     };
 
     try rs.viewport_mark_commit(wl.gpa, args.buffer_id, args.viewport_id);
+    vp.set_source_min(window, buffer);
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
     vp.surface.commit();
     log.debug("buffer_present: commited viewport for {} {} {}", .{ args.client_id, args.viewport_id, args.buffer_id });
 
-    window.commit();
     _ = wl.display.flush();
 }
 
@@ -237,7 +237,6 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Event.BufferPresentWithSync)
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
-
     const rs = try wl.resources_get(args.client_id);
 
     const vp = rs.viewports.getPtr(args.viewport_id) orelse {
@@ -269,6 +268,7 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Event.BufferPresentWithSync)
         @intFromEnum(args.buffer_id),
     });
 
+    vp.set_source_min(window, buffer);
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
 
@@ -285,7 +285,6 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Event.BufferPresentWithSync)
     vp.surface.commit();
     // log.debug("buffer_present_with_sync: commited viewport for {} {}", .{ buffer_key, viewport_key });
 
-    window.commit();
     _ = wl.display.flush();
 }
 
@@ -308,16 +307,9 @@ pub fn buffer_destroy(wl: *Wayland, args: Event.BufferDestroy) !void {
 
 pub fn viewport_resize(wl: *Wayland, args: Event.ViewportResize) !void {
     const rs = try wl.resources_get(args.client_id);
-    const vp = rs.viewports.get(args.viewport_id) orelse return error.ViewportDoesNotExist;
+    const vp = rs.viewports.getPtr(args.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    // FIXME: Setting any value provided by the client may cause the window to suddenly close
-    // if the dimensions are larger than the buffer's.
-    vp.viewport.setSource(
-        .fromInt(0),
-        .fromInt(0),
-        .fromInt(@intCast(args.width)),
-        .fromInt(@intCast(args.height)),
-    );
+    vp.set_source(@intCast(args.width), @intCast(args.height));
 }
 
 pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.WindowCreate) !void {

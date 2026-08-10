@@ -48,9 +48,10 @@ pub fn viewport_create(
         wl,
         parent_surface,
         viewport_id,
+        width,
+        height,
         vsync,
     );
-    vp.viewport.setSource(.fromInt(0), .fromInt(0), .fromInt(@intCast(width)), .fromInt(@intCast(height)));
 
     if (create_sync_timeline) {
         const sync_surface = try wl.sync_object_manager.getSurface(vp.surface);
@@ -175,7 +176,7 @@ pub fn viewport_mark_commit(rs: *ClientResources, gpa: std.mem.Allocator, buffer
     commited.value_ptr.* = viewport_id;
 }
 
-const Buffer = union(enum) {
+pub const Buffer = union(enum) {
     gpu: GpuBuffer,
     cpu: CpuBuffer,
 

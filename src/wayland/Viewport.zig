@@ -7,12 +7,29 @@ viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 vsync: bool,
 
-pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID, vsync: bool) !Viewport {
+width: i32,
+height: i32,
+
+pub fn init(
+    wl: *Wayland,
+    parent_surface: *cwl.Surface,
+    id: ViewportID,
+    width: i32,
+    height: i32,
+    vsync: bool,
+) !Viewport {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
+    subsurface.setDesync();
     const viewport = try wl.viewporter.getViewport(surface);
+    viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(width)),
+        .fromInt(@intCast(height)),
+    );
 
     return .{
         .id = id,
@@ -21,6 +38,9 @@ pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID, vsync: b
         .sync_surface = null,
         .viewport = viewport,
         .vsync = vsync,
+
+        .width = width,
+        .height = height,
     };
 }
 
@@ -31,6 +51,39 @@ pub fn deinit(vp: *Viewport) void {
     vp.viewport.destroy();
     vp.subsurface.destroy();
     vp.surface.destroy();
+}
+
+pub fn set_source(vp: *Viewport, width: i32, height: i32) void {
+    vp.width = width;
+    vp.height = height;
+
+    vp.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(vp.width)),
+        .fromInt(@intCast(vp.height)),
+    );
+}
+
+pub fn set_source_min(vp: *Viewport, window: *Window, buffer: *Buffer) void {
+    const width = @min(
+        vp.width,
+        buffer.width(),
+        window.buffer.width,
+    );
+
+    const height = @min(
+        vp.height,
+        buffer.height(),
+        window.buffer.height,
+    );
+
+    vp.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(width)),
+        .fromInt(@intCast(height)),
+    );
 }
 
 pub const AcquireTimeline = struct {
@@ -81,3 +134,5 @@ const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");
 const Wayland = @import("Wayland.zig");
+const Window = @import("Window.zig");
+const Buffer = @import("ClientResources.zig").Buffer;
