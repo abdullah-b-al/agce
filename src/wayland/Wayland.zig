@@ -412,9 +412,7 @@ pub fn mouse_leave(wl: *Wayland, args: Event.MouseLeave) !void {
     );
 }
 pub fn mouse_motion(wl: *Wayland, args: Event.MouseMotion) !void {
-    const key = wl.viewport_of_mouse orelse {
-        @panic("Expected a viewport with the mouse event");
-    };
+    const key = wl.viewport_of_mouse orelse return;
 
     try wl.dispatch.server_put(@src(), .{
         .mouse_motion = .{
@@ -428,9 +426,7 @@ pub fn mouse_motion(wl: *Wayland, args: Event.MouseMotion) !void {
     });
 }
 pub fn mouse_button(wl: *Wayland, args: Event.MouseButton) !void {
-    const key = wl.viewport_of_mouse orelse {
-        @panic("Expected a viewport with the mouse event");
-    };
+    const key = wl.viewport_of_mouse orelse return;
     try wl.dispatch.server_put(@src(), .{
         .mouse_button = .{
             .client_id = key.client_id,
@@ -443,9 +439,7 @@ pub fn mouse_button(wl: *Wayland, args: Event.MouseButton) !void {
     });
 }
 pub fn mouse_scroll(wl: *Wayland, args: Event.MouseScroll) !void {
-    const key = wl.viewport_of_mouse orelse {
-        @panic("Expected a viewport with the mouse event");
-    };
+    const key = wl.viewport_of_mouse orelse return;
     try wl.dispatch.server_put(@src(), .{
         .mouse_scroll = .{
             .client_id = key.client_id,
@@ -656,8 +650,7 @@ pub fn frame_listener_set(wl: *Wayland, surface: *cwl.Surface, key: ViewportKey)
     wl.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
 }
 
-fn frame_listener(cb: *cwl.Callback, e: cwl.Callback.Event, wl: *Wayland) void {
-    std.debug.print("Frame callback {}\n", .{e.done.callback_data / std.time.ms_per_s});
+fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, wl: *Wayland) void {
     const vp_key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
 
     const rs = wl.resources.get(vp_key.client_id) orelse return;
@@ -674,11 +667,6 @@ fn frame_listener(cb: *cwl.Callback, e: cwl.Callback.Event, wl: *Wayland) void {
             },
         },
     ) catch {};
-
-    // wl.frame_listener_set(vp.surface, vp_key) catch |err| switch (err) {
-    //     error.OutOfMemory => {},
-    // };
-
 }
 
 pub const MaybeGlobals = struct {

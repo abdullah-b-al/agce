@@ -185,6 +185,13 @@ pub fn update_by_tag(client: *Client, comptime tag: Message.Tag) !void {
     }
 }
 
+pub fn poll_for_events(client: *Client, timeout: Io.Timeout) !void {
+    // In a loop to ignore messages that are not events
+    while (client.events.items.len == 0) {
+        try client.poll_once(timeout);
+    }
+}
+
 pub fn wait_for(client: *Client, tag: Message.Tag) !void {
     try client.wait_for_count(tag, 1);
 }
@@ -221,6 +228,11 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
     errdefer comptime unreachable;
 
     switch (message) {
+        .viewport_resize => |e| {
+            client.events.insertAssumeCapacity(0, .viewport_resized);
+            client.messages.insertAssumeCapacity(0, .{ .viewport_resize = e });
+        },
+
         inline .mouse_enter,
         .mouse_leave,
         .mouse_motion,
@@ -231,8 +243,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
             client.events.insertAssumeCapacity(0, event);
         },
 
-        inline .viewport_resize,
-        .frame_render,
+        inline .frame_render,
         .buffer_released,
         .buffer_destroyed,
         .buffer_created,
@@ -397,6 +408,7 @@ const Viewport = union(enum) {
 };
 
 pub const Event = union(enum) {
+    viewport_resized,
     mouse_enter: server_to_client.MessagePayload.MouseEnter,
     mouse_leave: server_to_client.MessagePayload.MouseLeave,
     mouse_motion: server_to_client.MessagePayload.MouseMotion,
