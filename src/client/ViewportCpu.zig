@@ -104,6 +104,8 @@ pub fn buffer_present(vp: *ViewportCpu, buffer: *Buffer) !void {
     );
 }
 
+pub fn frame_render(_: *ViewportCpu) void {}
+
 pub fn buffer_released(vp: *ViewportCpu, id: BufferID) void {
     for (vp.buffers.available.items) |*buffer| {
         if (buffer.id == id) {

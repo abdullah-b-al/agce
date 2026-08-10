@@ -117,6 +117,7 @@ pub const WindowSystemEvent = union(enum) {
         width: u32,
         height: u32,
         create_sync_timeline: bool,
+        vsync: bool,
     };
 
     pub const BufferCreateCpuWithFd = struct {
@@ -204,6 +205,8 @@ pub const ServerEvent = union(enum) {
     exit,
 
     viewport_resize: WithClientID(ptypes.ViewportResize),
+
+    frame_render: WithClientID(MessagePayload.FrameRender),
 
     buffer_released: WithClientID(MessagePayload.BufferReleased),
     buffer_destroyed: WithClientID(MessagePayload.BufferDestroyed),

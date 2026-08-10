@@ -6,12 +6,14 @@ pub fn main(init: std.process.Init) !void {
 
     var use_cpu = false;
     var use_gl = false;
+    var vsync = false;
     var iter = try init.minimal.args.iterateAllocator(init.gpa);
     defer iter.deinit();
     _ = iter.skip();
     while (iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "use_cpu")) use_cpu = true;
         if (std.mem.eql(u8, arg, "use_gl")) use_gl = true;
+        if (std.mem.eql(u8, arg, "vsync")) vsync = true;
     }
 
     if (!use_gl and !use_cpu) {
@@ -27,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
         try client.init_gl(3, 3);
     }
 
-    const viewport_gl = if (use_gl) try client.viewport_create_gl(1280, 720) else null;
+    const viewport_gl = if (use_gl) try client.viewport_create_gl(1280, 720, vsync) else null;
     const viewport_cpu = if (use_cpu) try client.viewport_create_cpu(1280, 720) else null;
 
     if (viewport_cpu) |cpu| {
@@ -39,7 +41,8 @@ pub fn main(init: std.process.Init) !void {
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();
-    var time = Io.Timestamp.now(init.io, .awake);
+    var time_cpu = Io.Timestamp.now(init.io, .awake);
+    var time_gpu = Io.Timestamp.now(init.io, .awake);
     var first_frame = true;
     while (true) {
         const timeout: Io.Timeout =
@@ -48,20 +51,28 @@ pub fn main(init: std.process.Init) !void {
         try client.poll(timeout);
         try client.update();
 
-        const should_render =
-            time.untilNow(init.io, .awake).toMilliseconds() >= 1000 or
+        const should_render_cpu =
+            time_cpu.untilNow(init.io, .awake).toMilliseconds() >= 1000 or
             first_frame;
 
-        if (should_render) {
+        const should_render_gpu =
+            time_gpu.untilNow(init.io, .awake).toMilliseconds() >= 1000 or
+            first_frame;
+
+        if (should_render_cpu) {
             if (viewport_cpu) |cpu| {
                 try render_cpu(cpu, random);
+                time_cpu = .now(init.io, .awake);
             }
+        }
 
+        if (should_render_gpu) {
             if (viewport_gl) |gl| {
-                try render_gpu(gl, random);
+                if (gl.can_render) {
+                    try render_gpu(gl, random);
+                    time_gpu = .now(init.io, .awake);
+                }
             }
-
-            time = .now(init.io, .awake);
         }
 
         first_frame = false;

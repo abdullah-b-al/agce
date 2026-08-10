@@ -41,12 +41,14 @@ pub fn viewport_create(
     width: i32,
     height: i32,
     create_sync_timeline: bool,
+    vsync: bool,
 ) !void {
     try rs.viewports.ensureUnusedCapacity(wl.gpa, 1);
     var vp = try Viewport.init(
         wl,
         parent_surface,
         viewport_id,
+        vsync,
     );
     vp.viewport.setSource(.fromInt(0), .fromInt(0), .fromInt(@intCast(width)), .fromInt(@intCast(height)));
 

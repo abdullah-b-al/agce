@@ -209,16 +209,7 @@ pub fn handle_event(
         .exit => {
             return error.Exit;
         },
-        inline .viewport_resize,
-        .buffer_released,
-        .buffer_destroyed,
-        .buffer_created,
-        .mouse_enter,
-        .mouse_leave,
-        .mouse_motion,
-        .mouse_button,
-        .mouse_scroll,
-        => |e, tag| {
+        inline else => |e, tag| {
             const client = server.clients.map.get(e.client_id) orelse return;
 
             const payload = @unionInit(
@@ -305,6 +296,7 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                     .width = msg.width,
                     .height = msg.height,
                     .create_sync_timeline = msg.create_sync_timeline,
+                    .vsync = msg.vsync,
                 },
             };
         },

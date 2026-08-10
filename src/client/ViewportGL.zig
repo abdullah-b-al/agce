@@ -9,9 +9,12 @@ width: u32,
 height: u32,
 format: ptypes.BufferFormat,
 
+vsync: bool,
+can_render: bool,
+
 buffers: Buffers(Buffer),
 
-pub fn init(client: *Client, width: u32, height: u32) !ViewportGL {
+pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
     const format: ptypes.BufferFormat = .argb8888;
 
     const id = client.next_viewport_id.increment_for_client();
@@ -22,6 +25,9 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportGL {
         .width = width,
         .height = height,
         .format = format,
+
+        .vsync = vsync,
+        .can_render = true,
 
         .buffers = .empty,
     };
@@ -106,9 +112,18 @@ pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
     );
 
     buffer.acquire.point.advance();
+    if (vp.vsync) {
+        vp.can_render = false;
+    }
+}
+
+pub fn frame_render(vp: *ViewportGL) void {
+    vp.can_render = true;
 }
 
 pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{ Timeout, NoAvaiableBuffer }!*Buffer {
+    std.debug.assert(vp.can_render);
+
     const dri = vp.client.gbm.?.dri;
 
     if (vp.buffers.available.items.len == 0)

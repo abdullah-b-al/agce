@@ -20,6 +20,7 @@ windows: std.array_hash_map.Auto(WindowID, *Window),
 resources: std.array_hash_map.Auto(ClientID, ClientResources),
 
 wl_buffers: std.array_hash_map.Auto(WlBufferID, BufferKey),
+frame_callbacks: std.array_hash_map.Auto(CallbackID, ViewportKey),
 
 viewport_of_mouse: ?ViewportKey,
 
@@ -71,6 +72,7 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
         .windows = .empty,
         .resources = .empty,
         .wl_buffers = .empty,
+        .frame_callbacks = .empty,
 
         .viewport_of_mouse = null,
     };
@@ -86,6 +88,7 @@ pub fn destroy(wl: *Wayland) void {
     wl.resources.deinit(wl.gpa);
 
     wl.wl_buffers.deinit(wl.gpa);
+    wl.frame_callbacks.deinit(wl.gpa);
 
     wl.shm.destroy();
     wl.compositor.destroy();
@@ -253,6 +256,9 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Event.BufferPresentWithSync)
 
     try rs.viewport_mark_commit(wl.gpa, args.buffer_id, args.viewport_id);
 
+    if (vp.vsync) {
+        try wl.frame_listener_set(vp.surface, viewport_key);
+    }
     errdefer comptime unreachable;
 
     log.debug("Set acquire point {} and release point {} for ClientID({}) ViewportID({}) BufferID({})", .{
@@ -338,6 +344,7 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.WindowCreate) 
         @intCast(args.width),
         @intCast(args.height),
         args.create_sync_timeline,
+        args.vsync,
     );
 
     wl.windows.putAssumeCapacityNoClobber(id, window);
@@ -641,6 +648,39 @@ pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?Vie
     return null;
 }
 
+pub fn frame_listener_set(wl: *Wayland, surface: *cwl.Surface, key: ViewportKey) !void {
+    try wl.frame_callbacks.ensureUnusedCapacity(wl.gpa, 1);
+    const cb = try surface.frame();
+
+    cb.setListener(*Wayland, frame_listener, wl);
+    wl.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
+}
+
+fn frame_listener(cb: *cwl.Callback, e: cwl.Callback.Event, wl: *Wayland) void {
+    std.debug.print("Frame callback {}\n", .{e.done.callback_data / std.time.ms_per_s});
+    const vp_key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
+
+    const rs = wl.resources.get(vp_key.client_id) orelse return;
+    const vp = rs.viewports.get(vp_key.viewport_id) orelse return;
+
+    wl.dispatch.server_put(
+        @src(),
+        .{
+            .frame_render = .{
+                .client_id = vp_key.client_id,
+                .payload = .{
+                    .viewport_id = vp.id,
+                },
+            },
+        },
+    ) catch {};
+
+    // wl.frame_listener_set(vp.surface, vp_key) catch |err| switch (err) {
+    //     error.OutOfMemory => {},
+    // };
+
+}
+
 pub const MaybeGlobals = struct {
     shm: ?*cwl.Shm,
     compositor: ?*cwl.Compositor,
@@ -657,6 +697,14 @@ pub const WlBufferID = enum(u32) {
 
     pub fn from_wl_buffer(wl_buffer: *cwl.Buffer) WlBufferID {
         return @enumFromInt(wl_buffer.getId());
+    }
+};
+
+pub const CallbackID = enum(u32) {
+    _,
+
+    pub fn from_callback(cb: *cwl.Callback) CallbackID {
+        return @enumFromInt(cb.getId());
     }
 };
 

@@ -92,20 +92,20 @@ pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
     client.gl_context = gl;
 }
 
-pub fn viewport_create_gl(client: *Client, width: u32, height: u32) !*ViewportGL {
+pub fn viewport_create_gl(client: *Client, width: u32, height: u32, vsync: bool) !*ViewportGL {
     const format: ptypes.BufferFormat = .argb8888;
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
 
     const vp = try client.gpa.create(ViewportGL);
-    vp.* = try .init(client, width, height);
+    vp.* = try .init(client, width, height, vsync);
 
     try vp.buffer_new(width, height, format);
     try vp.buffer_new(width, height, format);
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
 
-    try client.messages_wait_for_buffer_created(2);
-    try client.update();
+    try client.wait_for_count(.buffer_created, 2);
+    try client.update_by_tag(.buffer_created);
 
     return vp;
 }
@@ -120,8 +120,8 @@ pub fn viewport_create_cpu(client: *Client, width: u32, height: u32) !*ViewportC
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
 
-    try client.messages_wait_for_buffer_created(2);
-    try client.update();
+    try client.wait_for_count(.buffer_created, 2);
+    try client.update_by_tag(.buffer_created);
 
     return vp;
 }
@@ -132,11 +132,11 @@ pub fn window_create(
     width: u32,
     height: u32,
 ) !void {
-    const create_sync_timeline = blk: {
+    const create_sync_timeline, const vsync = blk: {
         const vp = client.viewports.get(viewport_id).?;
         break :blk switch (vp) {
-            .gl => true,
-            .cpu => false,
+            .gl => |gl| .{ true, gl.vsync },
+            .cpu => .{ false, false },
         };
     };
 
@@ -146,6 +146,7 @@ pub fn window_create(
             .width = width,
             .height = height,
             .create_sync_timeline = create_sync_timeline,
+            .vsync = vsync,
         },
     });
 }
@@ -161,10 +162,46 @@ pub fn poll(client: *Client, timeout: Io.Timeout) !void {
 
 pub fn update(client: *Client) !void {
     while (client.messages.pop()) |message| {
-        client.message_handle(message) catch |err| switch (err) {
-            error.NoBuffers => {},
-            else => |e| return e,
-        };
+        switch (message) {
+            inline else => |_, tag| {
+                client.message_handle(tag, message) catch |err| switch (err) {
+                    error.NoBuffers => {},
+                    else => |e| return e,
+                };
+            },
+        }
+    }
+}
+
+pub fn update_by_tag(client: *Client, comptime tag: Message.Tag) !void {
+    var i = client.messages.items.len;
+    while (i > 0) {
+        i -= 1;
+        const message = client.messages.items[i];
+        if (message == tag) {
+            try client.message_handle(tag, message);
+            _ = client.messages.orderedRemove(i);
+        }
+    }
+}
+
+pub fn wait_for(client: *Client, tag: Message.Tag) !void {
+    try client.wait_for_count(tag, 1);
+}
+
+pub fn wait_for_count(client: *Client, tag: Message.Tag, min_count: usize) !void {
+    while (true) {
+        try client.poll_once(.none);
+
+        var count: usize = 0;
+        for (client.messages.items) |message| {
+            if (message == tag)
+                count += 1;
+        }
+
+        if (count >= min_count) {
+            break;
+        }
     }
 }
 
@@ -195,6 +232,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         },
 
         inline .viewport_resize,
+        .frame_render,
         .buffer_released,
         .buffer_destroyed,
         .buffer_created,
@@ -205,40 +243,26 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
     }
 }
 
-fn messages_wait_for_buffer_created(client: *Client, min_count: usize) !void {
-    const timeout: Io.Timeout = .none;
-    while (true) {
-        try client.poll_once(timeout);
+fn message_handle(client: *Client, comptime tag: Message.Tag, message: Message) !void {
+    std.debug.assert(tag == message);
+    const msg = @field(message, @tagName(tag));
 
-        var count: usize = 0;
-        for (client.messages.items) |message| {
-            if (message == .buffer_created)
-                count += 1;
-        }
-
-        if (count >= min_count) {
-            break;
-        }
-    }
-}
-
-fn message_handle(client: *Client, message: Message) !void {
-    switch (message) {
-        .viewport_resize => |msg| {
-            const vp = client.viewports.get(msg.viewport_id).?;
+    switch (tag) {
+        .viewport_resize => {
+            const vp = client.viewports.get(msg.viewport_id) orelse return;
             switch (vp) {
                 .gl => |gl| try gl.resize(msg.width, msg.height),
                 .cpu => |cpu| try cpu.resize(msg),
             }
         },
 
-        .buffer_released => |msg| {
-            const vp = client.viewports.get(msg.viewport_id).?;
+        .buffer_released => {
+            const vp = client.viewports.get(msg.viewport_id) orelse return;
             switch (vp) {
                 inline else => |v| v.buffer_released(msg.buffer_id),
             }
         },
-        .buffer_created => |msg| {
+        .buffer_created => {
             const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
             switch (msg.status) {
                 .success => {
@@ -249,10 +273,16 @@ fn message_handle(client: *Client, message: Message) !void {
                 .failure => @panic("TODO"),
             }
         },
-        .buffer_destroyed => |msg| {
+        .buffer_destroyed => {
             const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
             switch (vp) {
                 inline else => |v| v.buffer_destroyed(msg.buffer_id),
+            }
+        },
+        .frame_render => {
+            const vp = client.viewports.get(msg.viewport_id).?;
+            switch (vp) {
+                inline else => |v| v.frame_render(),
             }
         },
     }
@@ -375,10 +405,13 @@ pub const Event = union(enum) {
 };
 
 pub const Message = union(enum) {
+    pub const Tag = std.meta.Tag(Message);
+
     viewport_resize: ptypes.ViewportResize,
     buffer_released: server_to_client.MessagePayload.BufferReleased,
     buffer_destroyed: server_to_client.MessagePayload.BufferDestroyed,
     buffer_created: server_to_client.MessagePayload.BufferCreated,
+    frame_render: server_to_client.MessagePayload.FrameRender,
 };
 
 const std = @import("std");

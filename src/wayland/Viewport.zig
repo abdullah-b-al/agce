@@ -5,8 +5,9 @@ surface: *cwl.Surface,
 subsurface: *cwl.Subsurface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
+vsync: bool,
 
-pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID) !Viewport {
+pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID, vsync: bool) !Viewport {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
@@ -19,6 +20,7 @@ pub fn init(wl: *Wayland, parent_surface: *cwl.Surface, id: ViewportID) !Viewpor
         .subsurface = subsurface,
         .sync_surface = null,
         .viewport = viewport,
+        .vsync = vsync,
     };
 }
 

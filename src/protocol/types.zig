@@ -131,6 +131,7 @@ pub const WindowCreate = struct {
     width: u32,
     height: u32,
     create_sync_timeline: bool,
+    vsync: bool,
 };
 
 pub const ViewportResize = struct {

@@ -12,6 +12,8 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_destroyed: BufferDestroyed,
     buffer_created: BufferCreated,
 
+    frame_render: FrameRender,
+
     mouse_enter: MouseEnter,
     mouse_leave: MouseLeave,
     mouse_motion: MouseMotion,
@@ -32,6 +34,10 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferReleased = struct {
         viewport_id: types.ViewportID,
         buffer_id: types.BufferID,
+    };
+
+    pub const FrameRender = struct {
+        viewport_id: types.ViewportID,
     };
 
     pub const BufferDestroyed = struct {
