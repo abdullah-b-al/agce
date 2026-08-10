@@ -132,7 +132,6 @@ fn notify_when_wayland_event_arrives(fd: c_int) error{Canceled}!void {
 fn main_wayland(ws: *WindowSystem) error{Canceled}!void {
     defer log.info("{s} exited", .{@src().fn_name});
 
-    const wl = ws.native.wayland;
     while (true) {
         const e = try ws.dispatch.window_system_get();
         ws.event_handle(e) catch |err| switch (err) {
@@ -142,22 +141,6 @@ fn main_wayland(ws: *WindowSystem) error{Canceled}!void {
                 log.err("event_handle {}", .{err});
             },
         };
-
-        var removed = false;
-        var i: usize = wl.windows.count();
-        while (i > 0) {
-            i -= 1;
-            const win = wl.windows.values()[i];
-            if (win.configured and !win.running) {
-                win.destroy(ws.gpa);
-                _ = wl.windows.orderedRemove(win.id);
-                removed = true;
-            }
-        }
-
-        if (removed) {
-            _ = wl.display.flush();
-        }
     }
 }
 

@@ -312,6 +312,32 @@ pub fn viewport_resize(wl: *Wayland, args: Event.ViewportResize) !void {
     vp.set_source(@intCast(args.width), @intCast(args.height));
 }
 
+pub fn windows_destroy(wl: *Wayland) !void {
+    var removed = false;
+    var i: usize = wl.windows.count();
+    while (i > 0) {
+        i -= 1;
+        const win = wl.windows.values()[i];
+        if (win.configured and !win.running) {
+            try wl.dispatch.server_put(@src(), .{
+                .viewport_closed = .{
+                    .client_id = win.viewport_key.client_id,
+                    .payload = .{
+                        .viewport_id = win.viewport_key.viewport_id,
+                    },
+                },
+            });
+
+            win.destroy(wl.gpa);
+            _ = wl.windows.orderedRemove(win.id);
+            removed = true;
+        }
+    }
+
+    if (removed) {
+        _ = wl.display.flush();
+    }
+}
 pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.WindowCreate) !void {
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
@@ -511,6 +537,7 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
 
         .close => {
             window.running = false;
+            ws.dispatch.window_system_put(@src(), .windows_destroy) catch {};
         },
     }
 }

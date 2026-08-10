@@ -5,6 +5,7 @@ id: ViewportID,
 width: u32,
 height: u32,
 format: ptypes.BufferFormat,
+open: bool,
 
 buffers: Buffers(Buffer),
 
@@ -16,6 +17,7 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
         .width = width,
         .height = height,
         .format = format,
+        .open = true,
 
         .buffers = .empty,
     };
@@ -23,6 +25,10 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
 
 pub fn deinit(vp: *ViewportCpu) void {
     vp.buffers.deinit(vp.client.gpa);
+}
+
+pub fn close(vp: *ViewportCpu) void {
+    vp.open = false;
 }
 
 pub fn buffer_new(vp: *ViewportCpu, width: u32, height: u32) !void {

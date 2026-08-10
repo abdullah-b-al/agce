@@ -75,6 +75,12 @@ pub fn main(init: std.process.Init) !void {
             }
         }
 
+        const exit_gpu = if (viewport_gl) |gl| !gl.open else true;
+        const exit_cpu = if (viewport_cpu) |cpu| !cpu.open else true;
+        if (exit_gpu and exit_cpu) {
+            break;
+        }
+
         first_frame = false;
     }
 }

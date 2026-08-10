@@ -8,6 +8,8 @@ pub const Message = struct {
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     viewport_resize: types.ViewportResize,
+    viewport_closed: ViewportClosed,
+
     buffer_released: BufferReleased,
     buffer_destroyed: BufferDestroyed,
     buffer_created: BufferCreated,
@@ -37,6 +39,10 @@ pub const MessagePayload = union(enum(u32)) {
     };
 
     pub const FrameRender = struct {
+        viewport_id: types.ViewportID,
+    };
+
+    pub const ViewportClosed = struct {
         viewport_id: types.ViewportID,
     };
 

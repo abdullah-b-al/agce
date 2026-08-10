@@ -232,6 +232,10 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
             client.events.insertAssumeCapacity(0, .viewport_resized);
             client.messages.insertAssumeCapacity(0, .{ .viewport_resize = e });
         },
+        .viewport_closed => |e| {
+            client.events.insertAssumeCapacity(0, .{ .viewport_closed = e });
+            client.messages.insertAssumeCapacity(0, .{ .viewport_closed = e });
+        },
 
         inline .mouse_enter,
         .mouse_leave,
@@ -264,6 +268,12 @@ fn message_handle(client: *Client, comptime tag: Message.Tag, message: Message) 
             switch (vp) {
                 .gl => |gl| try gl.resize(msg.width, msg.height),
                 .cpu => |cpu| try cpu.resize(msg),
+            }
+        },
+        .viewport_closed => {
+            const vp = client.viewports.get(msg.viewport_id) orelse return;
+            switch (vp) {
+                inline else => |v| v.close(),
             }
         },
 
@@ -409,6 +419,7 @@ const Viewport = union(enum) {
 
 pub const Event = union(enum) {
     viewport_resized,
+    viewport_closed: server_to_client.MessagePayload.ViewportClosed,
     mouse_enter: server_to_client.MessagePayload.MouseEnter,
     mouse_leave: server_to_client.MessagePayload.MouseLeave,
     mouse_motion: server_to_client.MessagePayload.MouseMotion,
@@ -420,6 +431,7 @@ pub const Message = union(enum) {
     pub const Tag = std.meta.Tag(Message);
 
     viewport_resize: ptypes.ViewportResize,
+    viewport_closed: server_to_client.MessagePayload.ViewportClosed,
     buffer_released: server_to_client.MessagePayload.BufferReleased,
     buffer_destroyed: server_to_client.MessagePayload.BufferDestroyed,
     buffer_created: server_to_client.MessagePayload.BufferCreated,

@@ -82,6 +82,7 @@ pub const WindowSystemEvent = union(enum) {
 
     viewport_resize: ViewportResize,
 
+    windows_destroy,
     window_create: WindowCreate,
     window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
@@ -205,6 +206,7 @@ pub const ServerEvent = union(enum) {
     exit,
 
     viewport_resize: WithClientID(ptypes.ViewportResize),
+    viewport_closed: WithClientID(MessagePayload.ViewportClosed),
 
     frame_render: WithClientID(MessagePayload.FrameRender),
 

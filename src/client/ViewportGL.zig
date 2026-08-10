@@ -9,6 +9,7 @@ width: u32,
 height: u32,
 format: ptypes.BufferFormat,
 
+open: bool,
 vsync: bool,
 can_render: bool,
 
@@ -26,6 +27,7 @@ pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
         .height = height,
         .format = format,
 
+        .open = true,
         .vsync = vsync,
         .can_render = true,
 
@@ -35,6 +37,10 @@ pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
 
 pub fn deinit(vp: *ViewportGL) void {
     vp.buffers.deinit(vp.client.gpa);
+}
+
+pub fn close(vp: *ViewportGL) void {
+    vp.open = false;
 }
 
 pub fn buffer_new(vp: *ViewportGL, width: u32, height: u32, format: ptypes.BufferFormat) !void {
