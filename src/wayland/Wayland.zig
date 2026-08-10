@@ -371,7 +371,8 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.WindowCreate) 
     );
 
     wl.windows.putAssumeCapacityNoClobber(id, window);
-    window.ensure_configured(wl);
+    window.surface.commit();
+    _ = wl.display.flush();
 }
 
 pub fn window_resize_by_display_server(wl: *Wayland, args: Event.WindowResize) !void {
@@ -399,6 +400,21 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.WindowResize) !
             },
         },
     });
+}
+
+pub fn display_dispatch(wl: *Wayland) void {
+    if (wl.display.dispatch() != .SUCCESS) {
+        log.err("Dispatch failed {}", .{wl.display.getError()});
+        return;
+    }
+
+    for (wl.windows.values()) |win| {
+        if (!win.configured) {
+            win.surface.commit();
+        } else if (win.configured and !win.commited_once) {
+            win.commit();
+        }
+    }
 }
 
 pub fn mouse_enter(wl: *Wayland, args: Event.MouseEnter) !void {

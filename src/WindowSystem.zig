@@ -181,7 +181,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         .wayland_dispatch => |dis| {
             switch (ws.native) {
                 .wayland => |wl| {
-                    _ = wl.display.dispatch();
+                    wl.display_dispatch();
                     try dis.result_queue.queue.putOne(wl.io, .{ .wayland_dispatch = true });
                 },
                 else => {},

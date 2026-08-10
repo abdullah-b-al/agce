@@ -8,6 +8,7 @@ viewport_key: ViewportKey,
 xdg_surface: *xdg.Surface,
 xdg_toplevel: *xdg.Toplevel,
 
+commited_once: bool,
 configured: bool,
 running: bool,
 
@@ -49,6 +50,7 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
         .viewport_key = viewport_key,
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
+        .commited_once = false,
         .configured = false,
         .running = true,
         .buffer_fd = fd,
@@ -75,24 +77,10 @@ pub fn destroy(window: *Window, gpa: std.mem.Allocator) void {
 }
 
 pub fn commit(win: *Window) void {
+    win.commited_once = true;
     win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
     win.surface.attach(win.buffer.wl_buffer, 0, 0);
     win.surface.commit();
-}
-
-pub fn ensure_configured(win: *Window, wl: *Wayland) void {
-    if (!win.configured) {
-        win.surface.commit();
-        while (!win.configured) {
-            if (wl.display.dispatch() != .SUCCESS) {
-                // TODO: Should we break from here ?
-                log.err("Dispatch failed", .{});
-            }
-        }
-
-        win.surface.attach(win.buffer.wl_buffer, 0, 0);
-        win.surface.commit();
-    }
 }
 
 pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void {
