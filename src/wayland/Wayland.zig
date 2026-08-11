@@ -227,7 +227,7 @@ pub fn buffer_present(wl: *Wayland, args: Event.BufferPresent) !void {
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
     vp.surface.commit();
-    log.debug("buffer_present: commited viewport for {} {} {}", .{ args.client_id, args.viewport_id, args.buffer_id });
+    // log.debug("buffer_present: commited viewport for {} {} {}", .{ args.client_id, args.viewport_id, args.buffer_id });
 
     _ = wl.display.flush();
 }
@@ -262,13 +262,13 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Event.BufferPresentWithSync)
     }
     errdefer comptime unreachable;
 
-    log.debug("Set acquire point {} and release point {} for ClientID({}) ViewportID({}) BufferID({})", .{
-        args.acquire_point,
-        args.release_point,
-        @intFromEnum(args.client_id),
-        @intFromEnum(args.viewport_id),
-        @intFromEnum(args.buffer_id),
-    });
+    // log.debug("Set acquire point {} and release point {} for ClientID({}) ViewportID({}) BufferID({})", .{
+    //     args.acquire_point,
+    //     args.release_point,
+    //     @intFromEnum(args.client_id),
+    //     @intFromEnum(args.viewport_id),
+    //     @intFromEnum(args.buffer_id),
+    // });
 
     vp.set_source_min(window, buffer);
     vp.surface.damage(0, 0, buffer.width(), buffer.height());

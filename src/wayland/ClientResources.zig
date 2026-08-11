@@ -307,7 +307,6 @@ pub const BufferListener = struct {
                 };
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
 
-                log.debug("Received release event for wl_buffer {f} {f} {f}", .{ key.client_id, key.buffer_id, entry.value });
                 wl.dispatch.server_put(
                     @src(),
                     .{

@@ -28,12 +28,13 @@ pub fn destroy(dispatch: *Dispatch) void {
 }
 
 pub fn window_system_put(dispatch: *Dispatch, src: SourceLocation, event: WindowSystemEvent) error{Canceled}!void {
-    log.debug("[{s}] <- {s}.{s}({f})", .{
-        @src().fn_name,
-        std.fs.path.stem(src.file),
-        src.fn_name,
-        event,
-    });
+    _ = src;
+    // log.debug("[{s}] <- {s}.{s}({f})", .{
+    //     @src().fn_name,
+    //     std.fs.path.stem(src.file),
+    //     src.fn_name,
+    //     event,
+    // });
     dispatch.window_system.queue.putOne(dispatch.io, event) catch |err| switch (err) {
         error.Closed => unreachable,
         error.Canceled => |e| return e,
@@ -48,12 +49,13 @@ pub fn window_system_get(dispatch: *Dispatch) error{Canceled}!WindowSystemEvent 
 }
 
 pub fn server_put(dispatch: *Dispatch, src: SourceLocation, event: ServerEvent) error{Canceled}!void {
-    log.debug("[{s}] <- {s}.{s}({f})", .{
-        @src().fn_name,
-        std.fs.path.stem(src.file),
-        src.fn_name,
-        event,
-    });
+    _ = src;
+    // log.debug("[{s}] <- {s}.{s}({f})", .{
+    //     @src().fn_name,
+    //     std.fs.path.stem(src.file),
+    //     src.fn_name,
+    //     event,
+    // });
     dispatch.server.queue.putOne(dispatch.io, event) catch |err| switch (err) {
         error.Closed => unreachable,
         error.Canceled => |e| return e,
