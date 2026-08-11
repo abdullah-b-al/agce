@@ -29,8 +29,8 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
     const xdg_toplevel = try xdg_surface.getToplevel();
     xdg_toplevel.setAppId("agce-server");
 
-    const bytes_per_pixel = 4;
-    const size = width * height * bytes_per_pixel;
+    const format: ptypes.BufferFormat = .argb8888;
+    const size = width * height * format.bytes_per_pixel();
     const fd: ptypes.CpuBufferFd = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
     if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), size)) != .SUCCESS) return error.FtruncateFailed;
     const pixels = try std.posix.mmap(
@@ -42,7 +42,7 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
         0,
     );
 
-    const buffer = try ClientResources.buffer_create_cpu(wl.shm, fd, width, height, .argb8888);
+    const buffer = try ClientResources.buffer_create_cpu(wl.shm, fd, width, height, format);
 
     window.* = .{
         .id = window_id,
@@ -124,6 +124,14 @@ pub fn buffer_resize(win: *Window, wl: *Wayland, width: i32, height: i32) !void 
         win.buffer_pixels = pixels;
         win.buffer_fd = fd;
         win.buffer = new_buffer;
+
+        fill_transparent(win.buffer_pixels);
+    }
+}
+
+pub fn fill_transparent(buffer: []u8) void {
+    for (0..buffer.len) |i| {
+        buffer[i] = 0;
     }
 }
 

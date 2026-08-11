@@ -379,12 +379,6 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.WindowResize) !
     };
 
     try win.buffer_resize(wl, args.width, args.height);
-    fill_black(
-        win.buffer_pixels,
-        win.buffer.width,
-        win.buffer.height,
-        win.buffer.format.bytes_per_pixel(),
-    );
     win.commit();
     _ = wl.display.flush();
 
@@ -733,16 +727,6 @@ pub const CallbackID = enum(u32) {
         return @enumFromInt(cb.getId());
     }
 };
-
-pub fn fill_black(buffer: []u8, width: i32, height: i32, bpp: u8) void {
-    for (0..@intCast(width * height)) |i| {
-        const pi = i * bpp;
-        buffer[pi + 0] = 0x00; // B
-        buffer[pi + 1] = 0x00; // G
-        buffer[pi + 2] = 0x00; // R
-        buffer[pi + 3] = 0xFF; // A
-    }
-}
 
 const std = @import("std");
 const cwl = @import("wayland").client.wl;
