@@ -95,9 +95,6 @@ pub fn wWinMain(
 fn notify_when_wayland_event_arrives(fd: c_int) error{Canceled}!void {
     defer log.info("{s} exited", .{@src().fn_name});
 
-    var result = Dispatch.WindowSystemResultQueue.create(global_dispatch.gpa) catch unreachable;
-    defer result.destroy(global_dispatch.io, global_dispatch.gpa);
-
     var msg_buf: [1]net.IncomingMessage = undefined;
     var buf: [1]u8 = undefined;
 
@@ -118,13 +115,13 @@ fn notify_when_wayland_event_arrives(fd: c_int) error{Canceled}!void {
                 else => continue,
             }
         } else {
-            try global_dispatch.window_system_put(@src(), .{ .wayland_dispatch = .{ .result_queue = result } });
+            var signal: Io.Event = .unset;
+            try global_dispatch.window_system_put(@src(), .{
+                .wayland_dispatch = .{ .signal = &signal },
+            });
 
             // Wait for the main thread to finish processing the compositer's events
-            _ = result.queue.getOne(global_dispatch.io) catch |err| switch (err) {
-                error.Closed => unreachable,
-                error.Canceled => |e| return e,
-            };
+            try signal.wait(global_dispatch.io);
         }
     }
 }

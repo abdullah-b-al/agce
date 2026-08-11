@@ -88,7 +88,7 @@ pub const WindowSystemEvent = union(enum) {
     window_create: WindowCreate,
     window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
-        result_queue: *WindowSystemResultQueue,
+        signal: *Io.Event,
     },
 
     mouse_enter: MouseEnter,
