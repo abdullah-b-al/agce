@@ -183,8 +183,6 @@ pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Event.BufferCreateCpuWithFd
         args.format,
     );
 
-    _ = std.os.linux.close(@intFromEnum(args.fd));
-
     // TODO: Send failure in that case
     try wl.dispatch.server_put(
         @src(),

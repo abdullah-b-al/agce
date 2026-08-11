@@ -75,6 +75,7 @@ pub fn buffer_create_and_register_cpu(
     try wl.buffer_set_listener_prepare();
 
     const cpu = try buffer_create_cpu(wl.shm, fd, width, height, format);
+    std.debug.assert(std.os.linux.close(@intFromEnum(fd)) == 0);
     wl.buffer_set_listener(rs, cpu.wl_buffer, id);
 
     rs.buffers.putAssumeCapacityNoClobber(id, .{ .cpu = cpu });
@@ -90,10 +91,7 @@ pub fn buffer_create_cpu(
     const stride = width * format.bytes_per_pixel();
     const size = width * height * format.bytes_per_pixel();
     const pool = try shm.createPool(@intFromEnum(fd), size);
-    defer {
-        _ = std.os.linux.close(@intFromEnum(fd));
-        pool.destroy();
-    }
+    defer pool.destroy();
 
     const wl_format: cwl.Shm.Format = switch (format) {
         .argb8888 => .argb8888,
@@ -159,9 +157,9 @@ pub fn buffer_create_and_register_gpu_async(
     params.create(width, height, format, .{});
     params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
 
-    _ = std.os.linux.close(@intFromEnum(fds.buffer));
-    _ = std.os.linux.close(@intFromEnum(fds.acquire_timeline));
-    _ = std.os.linux.close(@intFromEnum(fds.release_timeline));
+    std.debug.assert(std.os.linux.close(@intFromEnum(fds.buffer)) == 0);
+    std.debug.assert(std.os.linux.close(@intFromEnum(fds.acquire_timeline)) == 0);
+    std.debug.assert(std.os.linux.close(@intFromEnum(fds.release_timeline)) == 0);
 
     log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
 }
