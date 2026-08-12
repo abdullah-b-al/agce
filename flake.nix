@@ -24,6 +24,7 @@
           libglvnd
           mesa
           libgbm
+          libxkbcommon
         ];
       };
       packages.${system}.default = pkgs.stdenv.mkDerivation {

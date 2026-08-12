@@ -22,7 +22,15 @@ resources: std.array_hash_map.Auto(ClientID, ClientResources),
 wl_buffers: std.array_hash_map.Auto(WlBufferID, BufferKey),
 frame_callbacks: std.array_hash_map.Auto(CallbackID, ViewportKey),
 
-viewport_of_mouse: ?ViewportKey,
+xkb_context: *c_linux.struct_xkb_context,
+xkb_keymap: ?*c_linux.struct_xkb_keymap,
+xkb_state: ?*c_linux.struct_xkb_state,
+
+input_focus_mouse: ?ViewportKey,
+input_focus_keyboard: ?WindowID,
+input_delay_ms: ?i32,
+input_rate_ms: ?i32,
+input_repeat_future: ?InputRepeatFuture,
 
 pub fn create(dispatch: *Dispatch) !*Wayland {
     const state = try dispatch.gpa.create(Wayland);
@@ -52,6 +60,9 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
     const viewporter = globals.viewporter orelse return error.NoWpViewporter;
     const sync_object_manager = globals.sync_object_manager orelse return error.NoWpSyncobjManager;
 
+    const xkb_context = c_linux.xkb_context_new(c_linux.XKB_CONTEXT_NO_FLAGS) orelse
+        return error.XkbContextNewFailed;
+
     state.* = .{
         .io = dispatch.io,
         .gpa = dispatch.gpa,
@@ -74,7 +85,15 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
         .wl_buffers = .empty,
         .frame_callbacks = .empty,
 
-        .viewport_of_mouse = null,
+        .xkb_context = xkb_context,
+        .xkb_keymap = null,
+        .xkb_state = null,
+
+        .input_focus_mouse = null,
+        .input_focus_keyboard = null,
+        .input_delay_ms = null,
+        .input_rate_ms = null,
+        .input_repeat_future = null,
     };
 
     return state;
@@ -409,26 +428,148 @@ pub fn display_dispatch(wl: *Wayland) void {
     }
 }
 
+pub fn keyboard_keymap(wl: *Wayland, fd: c_int, size: usize, format: cwl.Keyboard.KeymapFormat) !void {
+    std.debug.assert(format == .xkb_v1);
+    const buffer = try std.posix.mmap(
+        null,
+        size,
+        .{ .READ = true, .WRITE = false },
+        .{ .TYPE = .PRIVATE },
+        fd,
+        0,
+    );
+    defer {
+        std.posix.munmap(buffer);
+        std.debug.assert(std.os.linux.close(fd) == 0);
+    }
+
+    const new_keymap = c_linux.xkb_keymap_new_from_buffer(
+        wl.xkb_context,
+        buffer.ptr,
+        buffer.len,
+        c_linux.XKB_KEYMAP_FORMAT_TEXT_V1,
+        c_linux.XKB_KEYMAP_COMPILE_NO_FLAGS,
+    ) orelse return error.XkbKeymapNewFailed;
+    errdefer c_linux.xkb_keymap_unref(new_keymap);
+
+    const new_state = c_linux.xkb_state_new(new_keymap) orelse return error.XkbStateNewFailed;
+
+    errdefer comptime unreachable;
+
+    c_linux.xkb_keymap_unref(wl.xkb_keymap);
+    c_linux.xkb_state_unref(wl.xkb_state);
+
+    wl.xkb_keymap = new_keymap;
+    wl.xkb_state = new_state;
+
+    log.debug("New xkb keymap and state", .{});
+}
+
+pub fn keyboard_modifiers(
+    wl: *Wayland,
+    depressed: u32,
+    latched: u32,
+    locked: u32,
+) void {
+    const state = wl.xkb_state orelse return;
+
+    _ = c_linux.xkb_state_update_mask(
+        state,
+        depressed,
+        latched,
+        locked,
+        0,
+        0,
+        0,
+    );
+}
+
+pub fn keyboard_key(wl: *Wayland, args: Event.KeyboardKey) !void {
+    if (wl.input_repeat_future) |*future| {
+        future.cancel(wl.io);
+    }
+
+    const window_id = wl.input_focus_keyboard orelse return;
+    const win = wl.windows.get(window_id) orelse return;
+    const key = win.viewport_key;
+
+    const mods = c_linux.xkb_state_serialize_mods(wl.xkb_state, c_linux.XKB_STATE_MODS_EFFECTIVE);
+    const alt =
+        mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_ALT) != 0;
+    const shift =
+        mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_SHIFT) != 0;
+    const control =
+        mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
+
+    try wl.dispatch.server_put(@src(), .{
+        .keyboard_key = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+                .key = args.key,
+                .state = args.state,
+                .modifiers = .{
+                    .alt = alt,
+                    .shift = shift,
+                    .control = control,
+                },
+            },
+        },
+    });
+
+    const maybe_ms = switch (args.state) {
+        .pressed => wl.input_delay_ms,
+        .repeat => wl.input_rate_ms,
+        .released => null,
+    };
+
+    if (maybe_ms) |ms| {
+        wl.input_repeat_future = wl.io.concurrent(input_repeat, .{
+            wl.dispatch,
+            ms,
+            args.key,
+        }) catch |err| blk: {
+            log.err("Failed to start task input_repeat {}", .{err});
+            break :blk null;
+        };
+    }
+}
+
+pub fn keyboard_repeat_info(wl: *Wayland, rate: i32, delay: i32) void {
+    wl.input_rate_ms = @divFloor(1000, rate);
+    wl.input_delay_ms = delay;
+    log.debug("Repeat info: delay {}ms rate {}ms", .{
+        wl.input_rate_ms.?,
+        wl.input_delay_ms.?,
+    });
+}
+
+pub fn keyboard_enter(wl: *Wayland, args: Event.KeyboardEnter) !void {
+    wl.input_focus_keyboard = args.window_id;
+}
+
+pub fn keyboard_leave(wl: *Wayland, _: Event.KeyboardLeave) !void {
+    wl.input_focus_keyboard = null;
+}
+
 pub fn mouse_enter(wl: *Wayland, args: Event.MouseEnter) !void {
-    wl.viewport_of_mouse = .{
+    wl.input_focus_mouse = .{
         .client_id = args.client_id,
         .viewport_id = args.viewport_id,
     };
 
-    try wl.dispatch.server_put(
-        @src(),
-        .{
-            .mouse_enter = .{
-                .client_id = args.client_id,
-                .payload = .{
-                    .viewport_id = args.viewport_id,
-                },
+    try wl.dispatch.server_put(@src(), .{
+        .mouse_enter = .{
+            .client_id = args.client_id,
+            .payload = .{
+                .viewport_id = args.viewport_id,
             },
         },
-    );
+    });
 }
+
 pub fn mouse_leave(wl: *Wayland, args: Event.MouseLeave) !void {
-    wl.viewport_of_mouse = null;
+    wl.input_focus_mouse = null;
 
     try wl.dispatch.server_put(
         @src(),
@@ -443,7 +584,7 @@ pub fn mouse_leave(wl: *Wayland, args: Event.MouseLeave) !void {
     );
 }
 pub fn mouse_motion(wl: *Wayland, args: Event.MouseMotion) !void {
-    const key = wl.viewport_of_mouse orelse return;
+    const key = wl.input_focus_mouse orelse return;
 
     try wl.dispatch.server_put(@src(), .{
         .mouse_motion = .{
@@ -457,7 +598,7 @@ pub fn mouse_motion(wl: *Wayland, args: Event.MouseMotion) !void {
     });
 }
 pub fn mouse_button(wl: *Wayland, args: Event.MouseButton) !void {
-    const key = wl.viewport_of_mouse orelse return;
+    const key = wl.input_focus_mouse orelse return;
     try wl.dispatch.server_put(@src(), .{
         .mouse_button = .{
             .client_id = key.client_id,
@@ -470,7 +611,7 @@ pub fn mouse_button(wl: *Wayland, args: Event.MouseButton) !void {
     });
 }
 pub fn mouse_scroll(wl: *Wayland, args: Event.MouseScroll) !void {
-    const key = wl.viewport_of_mouse orelse return;
+    const key = wl.input_focus_mouse orelse return;
     try wl.dispatch.server_put(@src(), .{
         .mouse_scroll = .{
             .client_id = key.client_id,
@@ -494,22 +635,28 @@ pub fn set_listeners(wl: *Wayland, ws: *WindowSystem) !void {
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
     switch (event) {
         .global => |global| {
-            if (std.mem.orderZ(u8, global.interface, cwl.Compositor.interface.name) == .eq) {
-                globals.compositor = registry.bind(global.name, cwl.Compositor, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, cwl.Shm.interface.name) == .eq) {
-                globals.shm = registry.bind(global.name, cwl.Shm, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, xdg.WmBase.interface.name) == .eq) {
-                globals.wm_base = registry.bind(global.name, xdg.WmBase, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, cwl.Seat.interface.name) == .eq) {
-                globals.seat = registry.bind(global.name, cwl.Seat, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, cwl.Subcompositor.interface.name) == .eq) {
-                globals.subcompositor = registry.bind(global.name, cwl.Subcompositor, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
-                globals.dmabuf = registry.bind(global.name, zwp.LinuxDmabufV1, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, wp.Viewporter.interface.name) == .eq) {
-                globals.viewporter = registry.bind(global.name, wp.Viewporter, 1) catch return;
-            } else if (std.mem.orderZ(u8, global.interface, wp.LinuxDrmSyncobjManagerV1.interface.name) == .eq) {
-                globals.sync_object_manager = registry.bind(global.name, wp.LinuxDrmSyncobjManagerV1, 1) catch return;
+            // log.info("Compositor has {s}", .{global.interface});
+            const table = .{
+                // zig fmt: off
+                .{ .field = "compositor",          .T = cwl.Compositor,              .v = 1 },
+                .{ .field = "shm",                 .T = cwl.Shm,                     .v = 1 },
+                .{ .field = "wm_base",             .T = xdg.WmBase,                  .v = 1 },
+                .{ .field = "seat",                .T = cwl.Seat,                    .v = 4 },
+                .{ .field = "subcompositor",       .T = cwl.Subcompositor,           .v = 1 },
+                .{ .field = "dmabuf",              .T = zwp.LinuxDmabufV1,           .v = 1 },
+                .{ .field = "viewporter",          .T = wp.Viewporter,               .v = 1 },
+                .{ .field = "sync_object_manager", .T = wp.LinuxDrmSyncobjManagerV1, .v = 1 },
+                // zig fmt: on
+            };
+
+            inline for (table) |entry| {
+                if (std.mem.orderZ(u8, global.interface, entry.T.interface.name) == .eq) {
+                    @field(globals, entry.field) = registry.bind(
+                        global.name,
+                        entry.T,
+                        entry.v,
+                    ) catch return;
+                }
             }
         },
         .global_remove => {},
@@ -555,15 +702,67 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
     }
 }
 
-fn listener_keyboard(keyboard: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSystem) void {
-    _ = event;
-    _ = ws;
-    _ = keyboard;
+fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSystem) void {
+    const ws_event: Event = blk: switch (event) {
+        .keymap => |e| {
+            ws.native.wayland.keyboard_keymap(e.fd, e.size, e.format) catch |err| {
+                log.err("keyboard_keymap failed with{}", .{err});
+            };
+
+            return;
+        },
+        .modifiers => |e| {
+            ws.native.wayland.keyboard_modifiers(
+                e.mods_depressed,
+                e.mods_latched,
+                e.mods_locked,
+            );
+
+            return;
+        },
+        .repeat_info => |e| {
+            ws.native.wayland.keyboard_repeat_info(e.rate, e.delay);
+            return;
+        },
+
+        inline .leave, .enter => |e, tag| {
+            const surface = e.surface orelse {
+                log.warn("Dropping keyboard event .{t}: No surface", .{tag});
+                return;
+            };
+
+            const window_id = ws.native.wayland.window_id_from_surface(surface) orelse {
+                log.err("Dropping keyboard event .{t}: Surface without a window", .{tag});
+                return;
+            };
+
+            break :blk @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
+                .window_id = window_id,
+            });
+        },
+        .key => |e| {
+            const key = input.linux_key_to_protocol_key(e.key) orelse {
+                log.warn("Dropping keyboard event: Unknown key {}", .{e.key});
+                return;
+            };
+
+            const state: pinput.KeyState = switch (e.state) {
+                .released => .released,
+                .pressed => .pressed,
+                else => {
+                    log.warn("Dropping keyboard event: Unknown state {}", .{e.state});
+                    return;
+                },
+            };
+
+            break :blk .{ .keyboard_key = .{ .key = key, .state = state } };
+        },
+    };
+
+    ws.dispatch.window_system_put(@src(), ws_event) catch {};
 }
 
-fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
-    _ = pointer;
-
+fn listener_pointer(_: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
     const ws_event: Event = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse {
@@ -588,7 +787,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
             },
         },
         .button => |e| {
-            const button: ptypes.MouseButton =
+            const button: pinput.MouseButton =
                 if (e.button == c_linux.BTN_LEFT)
                     .left
                 else if (e.button == c_linux.BTN_RIGHT)
@@ -598,7 +797,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
                     return;
                 };
 
-            const state: ptypes.MouseButtonState = switch (e.state) {
+            const state: pinput.MouseState = switch (e.state) {
                 .released => .released,
                 .pressed => .pressed,
                 else => {
@@ -662,6 +861,16 @@ pub fn window_from_viewport_key(wl: *const Wayland, key: ViewportKey) ?*Window {
     return null;
 }
 
+pub fn window_id_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?WindowID {
+    for (wl.windows.values()) |win| {
+        if (win.surface == surface) {
+            return win.id;
+        }
+    }
+
+    return null;
+}
+
 pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?ViewportKey {
     for (wl.resources.values()) |rs| {
         for (rs.viewports.values()) |vp| {
@@ -701,6 +910,18 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, wl: *Wayland) void {
     ) catch {};
 }
 
+const InputRepeatFuture = Io.Future(@typeInfo(@TypeOf(input_repeat)).@"fn".return_type.?);
+fn input_repeat(dispatch: *Dispatch, ms: i32, key: pinput.Key) void {
+    dispatch.io.sleep(.fromMilliseconds(ms), .awake) catch return;
+
+    // FIXME: This might end up sending stale data.
+    // Add some checks to make sure that doesn't happen
+    dispatch.window_system_put(@src(), .{ .keyboard_key = .{
+        .key = key,
+        .state = .repeat,
+    } }) catch return;
+}
+
 pub const MaybeGlobals = struct {
     shm: ?*cwl.Shm,
     compositor: ?*cwl.Compositor,
@@ -729,6 +950,7 @@ pub const CallbackID = enum(u32) {
 };
 
 const std = @import("std");
+const Io = std.Io;
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
@@ -745,5 +967,7 @@ const Dispatch = @import("../Dispatch.zig");
 const BufferKey = WindowSystem.BufferKey;
 const ViewportKey = WindowSystem.ViewportKey;
 const ptypes = @import("protocol").types;
+const pinput = @import("protocol").input;
 const BufferID = ptypes.BufferID;
 const Event = Dispatch.WindowSystemEvent;
+const input = @import("input.zig");

@@ -29,6 +29,13 @@ pub const ViewportID = enum(u32) {
     }
 };
 
+pub const Rect = struct {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+};
+
 pub const BufferID = enum(u32) {
     pub const first: @This() = @enumFromInt(1);
 
@@ -143,16 +150,6 @@ pub const ViewportResize = struct {
 pub const ScrollAxis = enum(u8) {
     vertical,
     horizontal,
-};
-
-pub const MouseButton = enum(u8) {
-    left,
-    right,
-};
-
-pub const MouseButtonState = enum(u8) {
-    pressed,
-    released,
 };
 
 pub fn MessageHeaderGeneric(comptime MessageTag: type) type {

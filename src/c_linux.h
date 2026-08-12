@@ -7,3 +7,4 @@
 #include <xf86drm.h>
 #include <errno.h>
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon.h>

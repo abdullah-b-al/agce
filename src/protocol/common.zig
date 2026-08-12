@@ -67,13 +67,19 @@ pub fn TypeOfUnionField(comptime U: type, comptime tag: []const u8) type {
 
 pub fn contains_a_fd(comptime T: type) ?[:0]const u8 {
     const info = @typeInfo(T);
-    inline for (info.@"struct".fields) |field| {
-        const F = field.type;
-        switch (@typeInfo(F)) {
-            .@"enum" => if (enum_is_fd(F)) return field.name,
-            .@"struct" => if (contains_a_fd(F)) |_| return field.name,
-            else => {},
-        }
+    switch (info) {
+        .@"struct" => |s| {
+            inline for (s.fields) |field| {
+                const F = field.type;
+                switch (@typeInfo(F)) {
+                    .@"enum" => if (enum_is_fd(F)) return field.name,
+                    .@"struct" => if (contains_a_fd(F)) |_| return field.name,
+                    else => {},
+                }
+            }
+        },
+        .void => {},
+        else => @compileError("Unsupported type"),
     }
 
     return null;

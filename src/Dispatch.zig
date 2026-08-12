@@ -91,6 +91,10 @@ pub const WindowSystemEvent = union(enum) {
         signal: *Io.Event,
     },
 
+    keyboard_key: KeyboardKey,
+    keyboard_enter: KeyboardEnter,
+    keyboard_leave: KeyboardLeave,
+
     mouse_enter: MouseEnter,
     mouse_leave: MouseLeave,
     mouse_motion: MouseMotion,
@@ -173,6 +177,19 @@ pub const WindowSystemEvent = union(enum) {
         height: u32,
     };
 
+    pub const KeyboardKey = struct {
+        key: pinput.Key,
+        state: pinput.KeyState,
+    };
+
+    pub const KeyboardEnter = struct {
+        window_id: WindowID,
+    };
+
+    pub const KeyboardLeave = struct {
+        window_id: WindowID,
+    };
+
     pub const MouseEnter = struct {
         client_id: ClientID,
         viewport_id: ptypes.ViewportID,
@@ -189,8 +206,8 @@ pub const WindowSystemEvent = union(enum) {
     };
 
     pub const MouseButton = struct {
-        button: ptypes.MouseButton,
-        state: ptypes.MouseButtonState,
+        button: pinput.MouseButton,
+        state: pinput.MouseState,
     };
 
     pub const MouseScroll = struct {
@@ -216,6 +233,7 @@ pub const ServerEvent = union(enum) {
     buffer_destroyed: WithClientID(MessagePayload.BufferDestroyed),
     buffer_created: WithClientID(MessagePayload.BufferCreated),
 
+    keyboard_key: WithClientID(MessagePayload.KeyboardKey),
     mouse_enter: WithClientID(MessagePayload.MouseEnter),
     mouse_leave: WithClientID(MessagePayload.MouseLeave),
     mouse_motion: WithClientID(MessagePayload.MouseMotion),
@@ -263,6 +281,7 @@ pub fn IoQueue(comptime T: type) type {
 const std = @import("std");
 const Io = std.Io;
 const ptypes = @import("protocol").types;
+const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;
 const log = std.log.scoped(.Dispatch);
 const SourceLocation = std.builtin.SourceLocation;

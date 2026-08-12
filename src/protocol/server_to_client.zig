@@ -16,6 +16,7 @@ pub const MessagePayload = union(enum(u32)) {
 
     frame_render: FrameRender,
 
+    keyboard_key: KeyboardKey,
     mouse_enter: MouseEnter,
     mouse_leave: MouseLeave,
     mouse_motion: MouseMotion,
@@ -55,6 +56,13 @@ pub const MessagePayload = union(enum(u32)) {
         status: types.Status,
     };
 
+    pub const KeyboardKey = struct {
+        viewport_id: types.ViewportID,
+        key: input.Key,
+        state: input.KeyState,
+        modifiers: input.Modifiers,
+    };
+
     pub const MouseEnter = struct {
         viewport_id: types.ViewportID,
     };
@@ -71,8 +79,8 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const MouseButton = struct {
         viewport_id: types.ViewportID,
-        button: types.MouseButton,
-        state: types.MouseButtonState,
+        button: input.MouseButton,
+        state: input.MouseState,
     };
 
     pub const MouseScroll = struct {
@@ -148,3 +156,4 @@ const utils = @import("utils");
 const types = @import("types.zig");
 const common = @import("common.zig");
 const os_tag = @import("builtin").os.tag;
+const input = @import("input.zig");

@@ -242,6 +242,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         .mouse_motion,
         .mouse_button,
         .mouse_scroll,
+        .keyboard_key,
         => |e, tag| {
             const event = @unionInit(Event, @tagName(tag), e);
             client.events.insertAssumeCapacity(0, event);
@@ -420,6 +421,7 @@ const Viewport = union(enum) {
 pub const Event = union(enum) {
     viewport_resized,
     viewport_closed: server_to_client.MessagePayload.ViewportClosed,
+    keyboard_key: server_to_client.MessagePayload.KeyboardKey,
     mouse_enter: server_to_client.MessagePayload.MouseEnter,
     mouse_leave: server_to_client.MessagePayload.MouseLeave,
     mouse_motion: server_to_client.MessagePayload.MouseMotion,

@@ -148,6 +148,24 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .keyboard_key => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.keyboard_key(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .keyboard_enter => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.keyboard_enter(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .keyboard_leave => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.keyboard_leave(args),
+                .win32 => @panic("TODO"),
+            }
+        },
         .mouse_enter => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.mouse_enter(args),

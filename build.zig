@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) !void {
                 c.linkSystemLibrary("egl", .{});
                 c.linkSystemLibrary("gbm", .{});
                 c.linkSystemLibrary("drm", .{});
+                c.linkSystemLibrary("xkbcommon", .{});
                 break :blk c.createModule();
             },
             else => null,
@@ -124,7 +125,7 @@ pub fn build(b: *std.Build) !void {
             scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
             scanner.addSystemProtocol("staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml");
 
-            scanner.generate("wl_seat", 1);
+            scanner.generate("wl_seat", 4);
             scanner.generate("wl_compositor", 1);
             scanner.generate("wl_subcompositor", 1);
             scanner.generate("wl_shm", 1);
