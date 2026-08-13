@@ -62,6 +62,15 @@ pub fn Buffers(comptime Buffer: type) type {
             return null;
         }
 
+        pub fn available_index_from_id(b: *Self, id: BufferID) ?usize {
+            for (b.available.items, 0..) |buffer, i| {
+                if (buffer.id == id) {
+                    return i;
+                }
+            }
+            return null;
+        }
+
         pub fn buffer_created(b: *Self, id: BufferID) void {
             const index = b.pending_index_from_id(id) orelse return;
             const buffer = b.pending.orderedRemove(index);

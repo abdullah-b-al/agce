@@ -14,6 +14,7 @@ vsync: bool,
 can_render: bool,
 
 buffers: Buffers(Buffer),
+current_buffer: ?BufferID,
 
 pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
     const format: ptypes.BufferFormat = .argb8888;
@@ -32,6 +33,7 @@ pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
         .can_render = true,
 
         .buffers = .empty,
+        .current_buffer = null,
     };
 }
 
@@ -60,7 +62,7 @@ pub fn has_buffer(vp: *ViewportGL, id: BufferID) bool {
     return vp.buffers.has(id);
 }
 
-pub fn end_frame(vp: *ViewportGL, buffer: *Buffer) !void {
+pub fn frame_end(vp: *ViewportGL, buffer: *Buffer) void {
     const gbm = vp.client.gbm.?;
     const gl = vp.client.gl_context.?;
 
@@ -95,13 +97,12 @@ pub fn end_frame(vp: *ViewportGL, buffer: *Buffer) !void {
         0,
     );
     std.debug.assert(transfer_result == 0);
-
-    vp.frame_number += 1;
 }
 
 pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
     std.debug.assert(buffer.released);
     buffer.released = false;
+    vp.frame_number += 1;
 
     try client_to_server.message_send_json(
         vp.client.io,
@@ -128,8 +129,6 @@ pub fn frame_render(vp: *ViewportGL) void {
 }
 
 pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{ Timeout, NoAvaiableBuffer }!*Buffer {
-    std.debug.assert(vp.can_render);
-
     const dri = vp.client.gbm.?.dri;
 
     if (vp.buffers.available.items.len == 0)

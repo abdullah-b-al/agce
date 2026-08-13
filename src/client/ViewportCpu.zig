@@ -8,6 +8,7 @@ format: ptypes.BufferFormat,
 open: bool,
 
 buffers: Buffers(Buffer),
+current_buffer: ?BufferID,
 
 pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
     const format: ptypes.BufferFormat = .argb8888;
@@ -20,6 +21,7 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
         .open = true,
 
         .buffers = .empty,
+        .current_buffer = null,
     };
 }
 

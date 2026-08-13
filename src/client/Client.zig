@@ -92,87 +92,6 @@ pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
     client.gl_context = gl;
 }
 
-pub fn viewport_create_gl(client: *Client, width: u32, height: u32, vsync: bool) !*ViewportGL {
-    const format: ptypes.BufferFormat = .argb8888;
-    try client.viewports.ensureUnusedCapacity(client.gpa, 1);
-
-    const vp = try client.gpa.create(ViewportGL);
-    vp.* = try .init(client, width, height, vsync);
-
-    try vp.buffer_new(width, height, format);
-    try vp.buffer_new(width, height, format);
-
-    client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
-
-    try client.wait_for_count(.buffer_created, 2);
-    try client.update_by_tag(.buffer_created);
-
-    return vp;
-}
-
-pub fn viewport_create_cpu(client: *Client, width: u32, height: u32) !*ViewportCpu {
-    try client.viewports.ensureUnusedCapacity(client.gpa, 1);
-    const vp = try client.gpa.create(ViewportCpu);
-    vp.* = try .init(client, width, height);
-
-    try vp.buffer_new(width, height);
-    try vp.buffer_new(width, height);
-
-    client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
-
-    try client.wait_for_count(.buffer_created, 2);
-    try client.update_by_tag(.buffer_created);
-
-    return vp;
-}
-
-pub fn window_create(
-    client: *Client,
-    viewport_id: ViewportID,
-    width: u32,
-    height: u32,
-) !void {
-    const create_sync_timeline, const vsync = blk: {
-        const vp = client.viewports.get(viewport_id).?;
-        break :blk switch (vp) {
-            .gl => |gl| .{ true, gl.vsync },
-            .cpu => .{ false, false },
-        };
-    };
-
-    try client_to_server.message_send_json(client.io, client.gpa, client.connection, .{
-        .window_create = .{
-            .viewport_id = viewport_id,
-            .width = width,
-            .height = height,
-            .create_sync_timeline = create_sync_timeline,
-            .vsync = vsync,
-        },
-    });
-}
-
-pub fn poll(client: *Client, timeout: Io.Timeout) !void {
-    while (true) {
-        client.poll_once(timeout) catch |err| switch (err) {
-            error.Timeout => break,
-            else => |e| return e,
-        };
-    }
-}
-
-pub fn update(client: *Client) !void {
-    while (client.messages.pop()) |message| {
-        switch (message) {
-            inline else => |_, tag| {
-                client.message_handle(tag, message) catch |err| switch (err) {
-                    error.NoBuffers => {},
-                    else => |e| return e,
-                };
-            },
-        }
-    }
-}
-
 pub fn update_by_tag(client: *Client, comptime tag: Message.Tag) !void {
     var i = client.messages.items.len;
     while (i > 0) {
@@ -229,7 +148,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
 
     switch (message) {
         .viewport_resize => |e| {
-            client.events.insertAssumeCapacity(0, .viewport_resized);
+            client.events.insertAssumeCapacity(0, .{ .viewport_resize = e });
             client.messages.insertAssumeCapacity(0, .{ .viewport_resize = e });
         },
         .viewport_closed => |e| {
@@ -259,7 +178,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
     }
 }
 
-fn message_handle(client: *Client, comptime tag: Message.Tag, message: Message) !void {
+pub fn message_handle(client: *Client, comptime tag: Message.Tag, message: Message) !void {
     std.debug.assert(tag == message);
     const msg = @field(message, @tagName(tag));
 
@@ -419,7 +338,7 @@ const Viewport = union(enum) {
 };
 
 pub const Event = union(enum) {
-    viewport_resized,
+    viewport_resize: ptypes.ViewportResize,
     viewport_closed: server_to_client.MessagePayload.ViewportClosed,
     keyboard_key: server_to_client.MessagePayload.KeyboardKey,
     mouse_enter: server_to_client.MessagePayload.MouseEnter,
