@@ -257,16 +257,13 @@ pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBe
 
     std.debug.assert(gl.current_buffer == null);
 
-    var buffer: ?*ViewportGL.Buffer = null;
-    while (buffer == null) {
-        buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
-            error.Timeout => unreachable,
-        };
-    }
+    const buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
+        error.Timeout => unreachable,
+    };
 
-    gl.current_buffer = buffer.?.id;
+    gl.current_buffer = buffer.id;
     return .{
-        .fbo = buffer.?.fbo,
+        .fbo = buffer.fbo,
         .viewport_width = gl.width,
         .viewport_height = gl.height,
     };
