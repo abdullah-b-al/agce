@@ -253,6 +253,8 @@ pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBe
     std.debug.assert(vp == .gl);
     const gl = vp.gl;
 
+    if (!gl.open) return error.ViewportClosed;
+
     std.debug.assert(gl.current_buffer == null);
 
     var buffer: ?*ViewportGL.Buffer = null;
@@ -329,6 +331,8 @@ pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !Frame
     const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
     std.debug.assert(vp == .cpu);
     const cpu = vp.cpu;
+
+    if (!cpu.open) return error.ViewportClosed;
 
     std.debug.assert(cpu.current_buffer == null);
 
