@@ -7,7 +7,7 @@ height: u32,
 format: ptypes.BufferFormat,
 open: bool,
 
-buffers: Buffers(Buffer),
+buffers_collection: buffers.Collection(Buffer),
 current_buffer: ?BufferID,
 
 pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
@@ -20,48 +20,33 @@ pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
         .format = format,
         .open = true,
 
-        .buffers = .empty,
+        .buffers_collection = .empty,
         .current_buffer = null,
     };
 }
 
 pub fn deinit(vp: *ViewportCpu) void {
-    vp.buffers.deinit(vp.client.gpa);
+    vp.buffers_collection.deinit(vp.client.gpa);
 }
 
 pub fn close(vp: *ViewportCpu) void {
     vp.open = false;
 }
 
-pub fn buffer_new(vp: *ViewportCpu, width: u32, height: u32) !void {
-    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 1);
-
-    const id = vp.client.next_buffer_id.increment();
-    var buffer: Buffer = try .init(id, width, height, vp.format);
-    errdefer buffer.deinit();
-
-    try vp.client.send_buffer_create_cpu_with_fd(buffer);
-
-    vp.buffers.pending.appendAssumeCapacity(buffer);
-}
-
-pub fn resize(
-    vp: *ViewportCpu,
-    msg: ptypes.ViewportResize,
-) !void {
+pub fn resize(vp: *ViewportCpu, msg: ptypes.ViewportResize) !void {
     std.debug.assert(msg.viewport_id == vp.id);
+    std.debug.assert(vp.buffers_collection.available.count() > 0);
+    const new_width, const new_height = buffers.new_dimensions(msg.width, msg.height);
 
-    if (vp.width >= msg.width and vp.height >= msg.height) {
-        return;
-    }
-
-    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 2);
-    try vp.buffer_new(msg.width, msg.height);
-    try vp.buffer_new(msg.width, msg.height);
-
-    while (vp.buffers.available.pop()) |b| {
-        vp.buffers.old.appendAssumeCapacity(b);
-        try vp.client.send_buffer_destroy(b.id);
+    const buffer = vp.buffers_collection.available.values()[0];
+    if (buffer.width < new_width or buffer.height < new_height) {
+        try buffers.buffers_resize(
+            ViewportCpu.Buffer,
+            2,
+            vp.client,
+            &vp.buffers_collection,
+            .{ vp.client, new_width, new_height, vp.format },
+        );
     }
 
     try client_to_server.message_send_json(
@@ -77,14 +62,12 @@ pub fn resize(
         },
     );
 
-    errdefer comptime unreachable;
-
     vp.width = msg.width;
     vp.height = msg.height;
 }
 
 pub fn get_buffer(vp: *ViewportCpu) ?*Buffer {
-    for (vp.buffers.available.items) |*buffer| {
+    for (vp.buffers_collection.available.values()) |*buffer| {
         if (buffer.released) return buffer;
     }
 
@@ -92,7 +75,7 @@ pub fn get_buffer(vp: *ViewportCpu) ?*Buffer {
 }
 
 pub fn has_buffer(vp: *ViewportCpu, id: BufferID) bool {
-    return vp.buffers.has(id);
+    return vp.buffers_collection.has(id);
 }
 
 pub fn buffer_present(vp: *ViewportCpu, buffer: *Buffer) !void {
@@ -115,7 +98,8 @@ pub fn buffer_present(vp: *ViewportCpu, buffer: *Buffer) !void {
 pub fn frame_render(_: *ViewportCpu) void {}
 
 pub fn buffer_released(vp: *ViewportCpu, id: BufferID) void {
-    for (vp.buffers.available.items) |*buffer| {
+    std.debug.assert(vp.buffers_collection.available.count() > 0);
+    for (vp.buffers_collection.available.values()) |*buffer| {
         if (buffer.id == id) {
             buffer.released = true;
         }
@@ -123,10 +107,6 @@ pub fn buffer_released(vp: *ViewportCpu, id: BufferID) void {
 }
 
 pub fn buffer_destroyed(_: *ViewportCpu, _: BufferID) void {}
-
-pub fn buffer_created(vp: *ViewportCpu, id: BufferID) !void {
-    vp.buffers.buffer_created(id);
-}
 
 fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } {
     const fd = try std.posix.memfd_create("agce-buffer", 0);
@@ -152,12 +132,12 @@ pub const Buffer = struct {
     height: u32,
     format: ptypes.BufferFormat,
 
-    pub fn init(id: BufferID, width: u32, height: u32, format: ptypes.BufferFormat) !Buffer {
+    pub fn init(client: *Client, width: u32, height: u32, format: ptypes.BufferFormat) !Buffer {
         const s = width * height * format.bytes_per_pixel();
         const fd, const buffer = try create_fd(s);
 
         return .{
-            .id = id,
+            .id = client.next_buffer_id.increment(),
             .fd = @enumFromInt(fd),
             .data = buffer,
             .released = true,
@@ -165,6 +145,10 @@ pub const Buffer = struct {
             .height = height,
             .format = format,
         };
+    }
+
+    pub fn create_on_server(buffer: Buffer, client: *Client) !void {
+        try client.send_buffer_create_cpu_with_fd(buffer);
     }
 
     pub fn deinit(buffer: *Buffer) void {
@@ -183,4 +167,6 @@ const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
-const Buffers = @import("buffers.zig").Buffers;
+const buffers = @import("buffers.zig");
+const CreateStatus = @import("buffers.zig").CreateStatus;
+const log = std.log.scoped(.ViewportCpu);

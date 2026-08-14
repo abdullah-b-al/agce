@@ -13,7 +13,7 @@ open: bool,
 vsync: bool,
 can_render: bool,
 
-buffers: Buffers(Buffer),
+buffers_collection: buffers.Collection(Buffer),
 current_buffer: ?BufferID,
 
 pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
@@ -32,34 +32,21 @@ pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
         .vsync = vsync,
         .can_render = true,
 
-        .buffers = .empty,
+        .buffers_collection = .empty,
         .current_buffer = null,
     };
 }
 
 pub fn deinit(vp: *ViewportGL) void {
-    vp.buffers.deinit(vp.client.gpa);
+    vp.buffers_collection.deinit(vp.client.gpa);
 }
 
 pub fn close(vp: *ViewportGL) void {
     vp.open = false;
 }
 
-pub fn buffer_new(vp: *ViewportGL, width: u32, height: u32, format: ptypes.BufferFormat) !void {
-    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 1);
-
-    var buffer = try Buffer.init(vp.client, width, height, format);
-    const bytes = c_linux.gbm_bo_get_bpp(buffer.bo) / 8;
-    std.debug.assert(bytes == 4);
-    errdefer buffer.deinit();
-
-    try vp.client.send_buffer_create_gpu_with_fds(buffer);
-
-    vp.buffers.pending.appendAssumeCapacity(buffer);
-}
-
 pub fn has_buffer(vp: *ViewportGL, id: BufferID) bool {
-    return vp.buffers.has(id);
+    return vp.buffers_collection.has(id);
 }
 
 pub fn frame_end(vp: *ViewportGL, buffer: *Buffer) void {
@@ -128,25 +115,24 @@ pub fn frame_render(vp: *ViewportGL) void {
     vp.can_render = true;
 }
 
-pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{ Timeout, NoAvaiableBuffer }!*Buffer {
+pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{Timeout}!*Buffer {
     const dri = vp.client.gbm.?.dri;
 
-    if (vp.buffers.available.items.len == 0)
-        return error.NoAvaiableBuffer;
+    std.debug.assert(vp.buffers_collection.available.count() > 0);
 
-    for (vp.buffers.available.items) |*buffer| {
+    for (vp.buffers_collection.available.values()) |*buffer| {
         if (buffer.released) return buffer;
     }
 
     const buffer_len = 2;
-    std.debug.assert(buffer_len >= vp.buffers.available.items.len);
+    std.debug.assert(buffer_len >= vp.buffers_collection.available.count());
 
     var timelines_buffer: [buffer_len]u32 = undefined;
     var points_buffer: [buffer_len]u64 = undefined;
     var timelines: std.ArrayList(u32) = .initBuffer(&timelines_buffer);
     var points: std.ArrayList(u64) = .initBuffer(&points_buffer);
 
-    for (vp.buffers.available.items) |buffer| {
+    for (vp.buffers_collection.available.values()) |buffer| {
         timelines.appendBounded(@intFromEnum(buffer.release.handle)) catch unreachable;
         points.appendBounded(@intFromEnum(buffer.release.point)) catch unreachable;
     }
@@ -167,7 +153,7 @@ pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{ Timeout, NoAvaiableBu
     }
 
     std.debug.assert(signaled == 0);
-    const buffer = &vp.buffers.available.items[index];
+    const buffer = &vp.buffers_collection.available.values()[index];
 
     buffer.release.point.advance();
     buffer.released = true;
@@ -180,7 +166,19 @@ pub fn resize(
     requested_width: u32,
     requested_height: u32,
 ) !void {
-    try vp.resize_buffers(requested_width, requested_height);
+    std.debug.assert(vp.buffers_collection.available.count() > 0);
+    const new_width, const new_height = buffers.new_dimensions(requested_width, requested_height);
+
+    const buffer = vp.buffers_collection.available.values()[0];
+    if (buffer.width < new_width or buffer.height < new_height) {
+        try buffers.buffers_resize(
+            ViewportGL.Buffer,
+            2,
+            vp.client,
+            &vp.buffers_collection,
+            .{ vp.client, new_width, new_height, vp.format },
+        );
+    }
 
     vp.width = requested_width;
     vp.height = requested_height;
@@ -200,13 +198,13 @@ pub fn resize(
 }
 
 pub fn buffer_released(vp: *ViewportGL, id: BufferID) void {
-    for (vp.buffers.old.items) |*old| {
+    for (vp.buffers_collection.old.values()) |*old| {
         if (old.id == id) {
             old.released = true;
         }
     }
 
-    for (vp.buffers.available.items) |*buffer| {
+    for (vp.buffers_collection.available.values()) |*buffer| {
         if (buffer.id == id) {
             buffer.released = true;
         }
@@ -214,38 +212,14 @@ pub fn buffer_released(vp: *ViewportGL, id: BufferID) void {
 }
 
 pub fn buffer_destroyed(vp: *ViewportGL, id: BufferID) void {
-    var i = vp.buffers.old.items.len;
+    var i = vp.buffers_collection.old.count();
     while (i > 0) {
         i -= 1;
-        const old = &vp.buffers.old.items[i];
+        const old = &vp.buffers_collection.old.values()[i];
         if (old.id == id) {
             old.deinit();
-            _ = vp.buffers.old.orderedRemove(i);
+            _ = vp.buffers_collection.old.orderedRemove(old.id);
         }
-    }
-}
-
-pub fn buffer_created(vp: *ViewportGL, id: BufferID) !void {
-    vp.buffers.buffer_created(id);
-}
-
-fn resize_buffers(vp: *ViewportGL, requested_width: u32, requested_height: u32) !void {
-    const new_width, const new_height = new_dimensions(requested_width, requested_height);
-
-    const buffer = vp.buffers.available.getLastOrNull() orelse return error.NoBuffers;
-    const current_width = c_linux.gbm_bo_get_width(buffer.bo);
-    const current_height = c_linux.gbm_bo_get_height(buffer.bo);
-    if (current_width >= new_width and current_height >= new_height) {
-        return;
-    }
-
-    try vp.buffers.ensure_unused_capacity(vp.client.gpa, 2);
-    try vp.buffer_new(new_width, new_height, vp.format);
-    try vp.buffer_new(new_width, new_height, vp.format);
-
-    while (vp.buffers.available.pop()) |b| {
-        vp.buffers.old.appendAssumeCapacity(b);
-        try vp.client.send_buffer_destroy(b.id);
     }
 }
 
@@ -254,6 +228,9 @@ pub const Buffer = struct {
     gbm_texture: opengl.GbmBackedTexture,
     gl_context: opengl.ContextLinux,
     fbo: glad.GLuint,
+
+    width: u32,
+    height: u32,
 
     format: ptypes.BufferFormat,
     id: ptypes.BufferID,
@@ -267,6 +244,10 @@ pub const Buffer = struct {
         const gbm_texture = try opengl.egl_image_from_gbm_bo(client.gl_context.?, bo);
         const fbo = try opengl.fbo_gen(gbm_texture.texture);
 
+        const bits = c_linux.gbm_bo_get_bpp(bo);
+        const bytes = bits / 8;
+        std.debug.assert(bytes == format.bytes_per_pixel());
+
         const id = client.next_buffer_id.increment();
         return .{
             .bo = bo,
@@ -274,11 +255,17 @@ pub const Buffer = struct {
             .gl_context = client.gl_context.?,
             .fbo = fbo,
             .id = id,
+            .width = c_linux.gbm_bo_get_width(bo),
+            .height = c_linux.gbm_bo_get_height(bo),
             .format = format,
             .released = true,
             .acquire = .init(gbm),
             .release = .init(gbm),
         };
+    }
+
+    pub fn create_on_server(buffer: Buffer, client: *Client) !void {
+        try client.send_buffer_create_gpu_with_fds(buffer);
     }
 
     pub fn deinit(buffer: *Buffer) void {
@@ -324,23 +311,6 @@ pub const ReleaseTimeline = struct {
         );
     }
 };
-
-fn new_dimensions(width: u32, height: u32) struct { u32, u32 } {
-    return .{
-        dimension_multiple_of(width, 640),
-        dimension_multiple_of(height, 480),
-    };
-}
-
-fn dimension_multiple_of(requested: u32, multiple_of: u32) u32 {
-    var result: u32 = 0;
-
-    while (result < requested) {
-        result += multiple_of;
-    }
-
-    return result;
-}
 
 fn query_syncobj(
     buffer: *ViewportGL.Buffer,
@@ -405,4 +375,6 @@ const c_linux = @import("c_linux");
 const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
-const Buffers = @import("buffers.zig").Buffers;
+const buffers = @import("buffers.zig");
+const CreateStatus = @import("buffers.zig").CreateStatus;
+const log = std.log.scoped(.ViewportGL);

@@ -9,6 +9,8 @@ next_buffer_id: ptypes.BufferID,
 
 viewports: std.array_hash_map.Auto(ViewportID, Viewport),
 
+buffers_status: std.array_hash_map.Auto(BufferID, BufferStatus),
+
 messages_arena: std.heap.ArenaAllocator,
 messages: std.ArrayList(Message),
 events: std.ArrayList(Event),
@@ -37,6 +39,7 @@ pub fn init(
         .next_viewport_id = .first_for_client,
         .next_buffer_id = .first,
         .viewports = .empty,
+        .buffers_status = .empty,
         .gbm = null,
         .gl_context = null,
     };
@@ -52,6 +55,8 @@ pub fn deinit(client: *Client) void {
         }
     }
     client.viewports.deinit(client.gpa);
+
+    client.buffers_status.deinit(client.gpa);
 
     if (client.gbm) |gbm| {
         gbm.dri.close(client.io);
@@ -204,15 +209,15 @@ pub fn message_handle(client: *Client, comptime tag: Message.Tag, message: Messa
             }
         },
         .buffer_created => {
-            const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
-            switch (msg.status) {
-                .success => {
-                    switch (vp) {
-                        inline else => |v| try v.buffer_created(msg.buffer_id),
-                    }
-                },
-                .failure => @panic("TODO"),
-            }
+            // This handler only registers the status of the buffer.
+            // Buffer creation should be done synchronously
+
+            const ptr = client.buffers_status.getPtr(msg.buffer_id).?;
+            std.debug.assert(ptr.* == .pending);
+            ptr.* = switch (msg.status) {
+                .success => .created,
+                .failure => .failed,
+            };
         },
         .buffer_destroyed => {
             const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
@@ -256,6 +261,7 @@ pub fn send_buffer_create_gpu_with_fds(
     const buffer_fd: ptypes.GpuBufferFd = @enumFromInt(c_linux.gbm_bo_get_fd(buffer.bo));
     defer _ = std.os.linux.close(@intFromEnum(buffer_fd));
 
+    client.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
     try client_to_server.message_send_json(
         client.io,
         client.gpa,
@@ -278,6 +284,7 @@ pub fn send_buffer_create_gpu_with_fds(
 }
 
 pub fn send_buffer_create_cpu_with_fd(client: *Client, buffer: ViewportCpu.Buffer) !void {
+    client.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
     try client_to_server.message_send_json(
         client.io,
         client.gpa,
@@ -357,6 +364,12 @@ pub const Message = union(enum) {
     buffer_destroyed: server_to_client.MessagePayload.BufferDestroyed,
     buffer_created: server_to_client.MessagePayload.BufferCreated,
     frame_render: server_to_client.MessagePayload.FrameRender,
+};
+
+pub const BufferStatus = enum {
+    created,
+    pending,
+    failed,
 };
 
 const std = @import("std");

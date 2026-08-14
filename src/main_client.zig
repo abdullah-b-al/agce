@@ -85,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn render_cpu(handle: *ClientHandle, vp: CpuViewportID, random: std.Random) !void {
-    const buffer = api.cpu_frame_begin(handle, vp) orelse return;
+    const buffer = try api.cpu_frame_begin(handle, vp);
 
     const r: u8 = random.int(u8);
     const g: u8 = random.int(u8);

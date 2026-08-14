@@ -79,7 +79,6 @@ pub fn update(handle: *ClientHandle) !void {
         switch (message) {
             inline else => |_, tag| {
                 client.message_handle(tag, message) catch |err| switch (err) {
-                    error.NoBuffers => {},
                     else => |e| return e,
                 };
             },
@@ -188,14 +187,21 @@ pub fn gl_viewport_create(handle: *ClientHandle, width: u32, height: u32, vsync:
 
     const vp = try client.gpa.create(ViewportGL);
     vp.* = try .init(client, width, height, vsync);
-
-    try vp.buffer_new(width, height, format);
-    try vp.buffer_new(width, height, format);
-
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
 
-    try client.wait_for_count(.buffer_created, 2);
-    try client.update_by_tag(.buffer_created);
+    const array = try buffers.buffers_create(
+        ViewportGL.Buffer,
+        2,
+        client,
+        &vp.buffers_collection,
+        .{ client, width, height, format },
+    );
+
+    errdefer comptime unreachable;
+
+    for (array) |b| {
+        vp.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
+    }
 
     return .{ .generic = vp.id };
 }
@@ -213,14 +219,6 @@ pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBe
     while (buffer == null) {
         buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
             error.Timeout => unreachable,
-            error.NoAvaiableBuffer => {
-                std.debug.assert(gl.buffers.pending.items.len != 0);
-                try client.wait_for(.buffer_created);
-                try client.update_by_tag(.buffer_created);
-                // If the .buffer_created arrives it may be for a different viewport.
-                // loop until we get this viewport's buffer
-                continue;
-            },
         };
     }
 
@@ -238,10 +236,9 @@ pub fn gl_frame_end(handle: *ClientHandle, viewport_id: GlViewportID) void {
     std.debug.assert(vp == .gl);
     const gl = vp.gl;
 
-    const i = gl.buffers.available_index_from_id(gl.current_buffer.?) orelse
+    const buffer = gl.buffers_collection.available.getPtr(gl.current_buffer.?) orelse
         @panic("Buffer prematurely destroyed");
 
-    const buffer = &gl.buffers.available.items[i];
     gl.frame_end(buffer);
 }
 
@@ -254,8 +251,9 @@ pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void 
     const gl = vp.gl;
     defer gl.current_buffer = null;
 
-    const i = gl.buffers.available_index_from_id(gl.current_buffer.?).?;
-    const buffer = &gl.buffers.available.items[i];
+    const buffer = gl.buffers_collection.available.getPtr(gl.current_buffer.?) orelse
+        @panic("Buffer prematurely destroyed");
+
     try gl.buffer_present(buffer);
 }
 
@@ -266,30 +264,47 @@ pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuV
     const vp = try client.gpa.create(ViewportCpu);
     vp.* = try .init(client, width, height);
 
-    try vp.buffer_new(width, height);
-    try vp.buffer_new(width, height);
+    const array = try buffers.buffers_create(
+        ViewportCpu.Buffer,
+        2,
+        client,
+        &vp.buffers_collection,
+        .{ client, width, height, vp.format },
+    );
+
+    errdefer comptime unreachable;
+
+    for (array) |b| {
+        vp.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
+    }
 
     client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
 
-    try client.wait_for_count(.buffer_created, 2);
-    try client.update_by_tag(.buffer_created);
-
     return .{ .generic = vp.id };
 }
-pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) ?[]u8 {
+
+pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) ![]u8 {
     const client = handle.cast();
 
-    const vp = client.viewports.get(viewport_id.generic) orelse return null;
+    const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
     std.debug.assert(vp == .cpu);
     const cpu = vp.cpu;
 
     std.debug.assert(cpu.current_buffer == null);
 
-    const buffer = cpu.get_buffer() orelse return null;
+    var buffer: ?*ViewportCpu.Buffer = null;
+    while (buffer == null) {
+        buffer = cpu.get_buffer() orelse {
+            std.debug.assert(cpu.buffers_collection.available.count() > 0);
+            try client.wait_for(.buffer_released);
+            try client.update_by_tag(.buffer_released);
+            continue;
+        };
+    }
 
-    cpu.current_buffer = buffer.id;
+    cpu.current_buffer = buffer.?.id;
 
-    return buffer.data;
+    return buffer.?.data;
 }
 
 pub fn cpu_frame_end(_: *ClientHandle, _: CpuViewportID) void {}
@@ -302,8 +317,7 @@ pub fn cpu_frame_present(handle: *ClientHandle, viewport_id: CpuViewportID) !voi
     const cpu = vp.cpu;
     defer cpu.current_buffer = null;
 
-    const i = cpu.buffers.available_index_from_id(cpu.current_buffer.?).?;
-    const buffer = &cpu.buffers.available.items[i];
+    const buffer = cpu.buffers_collection.available.getPtr(cpu.current_buffer.?).?;
     try cpu.buffer_present(buffer);
 }
 
@@ -314,3 +328,4 @@ const server_to_client = @import("protocol").server_to_client;
 const Client = @import("Client.zig");
 const ViewportGL = @import("ViewportGL.zig");
 const ViewportCpu = @import("ViewportCpu.zig");
+const buffers = @import("buffers.zig");
