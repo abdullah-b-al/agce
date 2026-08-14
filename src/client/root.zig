@@ -106,6 +106,37 @@ pub fn event_pop(handle: *ClientHandle, viewport_id: ViewportID) ?Client.Event {
     return null;
 }
 
+pub fn viewport_resize(handle: *ClientHandle, id: ViewportID, requseted_width: u32, requseted_height: u32) !void {
+    const client = handle.cast();
+    const vp = client.viewports.get(id) orelse return;
+    const buffer_size = switch (vp) {
+        inline else => |v| v.buffer_size(),
+    };
+
+    const width = @min(buffer_size[0], requseted_width);
+    const height = @min(buffer_size[1], requseted_height);
+
+    try client_to_server.message_send_json(
+        client.io,
+        client.gpa,
+        client.connection,
+        .{
+            .viewport_resize = .{
+                .viewport_id = id,
+                .width = width,
+                .height = height
+            },
+        },
+    );
+
+    switch (vp) {
+        inline else => |v| {
+            v.width = width;
+            v.height = width;
+        },
+    }
+}
+
 pub fn viewport_size(handle: *ClientHandle, id: ViewportID) ?[2]u32 {
     const client = handle.cast();
     const vp = client.viewports.get(id) orelse return null;

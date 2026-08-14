@@ -48,22 +48,11 @@ pub fn resize(vp: *ViewportCpu, msg: ptypes.ViewportResize) !void {
             .{ vp.client, new_width, new_height, vp.format },
         );
     }
+}
 
-    try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
-        .{
-            .viewport_resize = .{
-                .viewport_id = vp.id,
-                .width = vp.width,
-                .height = vp.height,
-            },
-        },
-    );
-
-    vp.width = msg.width;
-    vp.height = msg.height;
+pub fn buffer_size(vp: *ViewportCpu) [2]u32 {
+    const buffer = vp.buffers_collection.available.values()[0];
+    return .{ buffer.width, buffer.height };
 }
 
 pub fn get_buffer(vp: *ViewportCpu) ?*Buffer {

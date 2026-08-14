@@ -115,6 +115,11 @@ pub fn frame_render(vp: *ViewportGL) void {
     vp.can_render = true;
 }
 
+pub fn buffer_size(vp: *ViewportGL) [2]u32 {
+    const buffer = vp.buffers_collection.available.values()[0];
+    return .{ buffer.width, buffer.height };
+}
+
 pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{Timeout}!*Buffer {
     const dri = vp.client.gbm.?.dri;
 
@@ -179,22 +184,6 @@ pub fn resize(
             .{ vp.client, new_width, new_height, vp.format },
         );
     }
-
-    vp.width = requested_width;
-    vp.height = requested_height;
-
-    try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
-        .{
-            .viewport_resize = .{
-                .viewport_id = vp.id,
-                .width = vp.width,
-                .height = vp.height,
-            },
-        },
-    );
 }
 
 pub fn buffer_released(vp: *ViewportGL, id: BufferID) void {
