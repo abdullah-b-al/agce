@@ -85,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn render_cpu(handle: *ClientHandle, vp: CpuViewportID, random: std.Random) !void {
-    const buffer = try api.cpu_frame_begin(handle, vp);
+    const frame = try api.cpu_frame_begin(handle, vp);
 
     const r: u8 = random.int(u8);
     const g: u8 = random.int(u8);
@@ -93,11 +93,11 @@ fn render_cpu(handle: *ClientHandle, vp: CpuViewportID, random: std.Random) !voi
     const a: u8 = 0xFF;
     std.log.info("Sent {x} {x} {x} {x}", .{ r, g, b, a });
     var i: usize = 0;
-    while (i < buffer.len) : (i += 4) {
-        buffer[i + 0] = @intCast(b); // B
-        buffer[i + 1] = @intCast(g); // G
-        buffer[i + 2] = @intCast(r); // R
-        buffer[i + 3] = @intCast(a); // A
+    while (i < frame.buffer.len) : (i += 4) {
+        frame.buffer[i + 0] = @intCast(b); // B
+        frame.buffer[i + 1] = @intCast(g); // G
+        frame.buffer[i + 2] = @intCast(r); // R
+        frame.buffer[i + 3] = @intCast(a); // A
     }
 
     api.cpu_frame_end(handle, vp);
@@ -120,7 +120,7 @@ fn render_gpu(handle: *ClientHandle, vp: GlViewportID, random: std.Random) !void
     });
 
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, frame.fbo);
-    glad.glViewport(0, 0, @intCast(frame.width), @intCast(frame.height));
+    glad.glViewport(0, 0, @intCast(frame.viewport_width), @intCast(frame.viewport_height));
     glad.glClearColor(fr, fg, fb, fa);
     glad.glClear(glad.GL_COLOR_BUFFER_BIT);
 

@@ -19,8 +19,17 @@ pub const CpuViewportID = struct { generic: ViewportID };
 
 pub const FrameBeginGl = struct {
     fbo: c_uint,
+    viewport_width: u32,
+    viewport_height: u32,
+};
+
+pub const FrameBeginCpu = struct {
+    buffer: []u8,
     width: u32,
     height: u32,
+    bytes_per_pixel: u8,
+    viewport_width: u32,
+    viewport_height: u32,
 };
 
 pub fn init(
@@ -124,7 +133,7 @@ pub fn viewport_resize(handle: *ClientHandle, id: ViewportID, requseted_width: u
             .viewport_resize = .{
                 .viewport_id = id,
                 .width = width,
-                .height = height
+                .height = height,
             },
         },
     );
@@ -256,8 +265,8 @@ pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBe
     gl.current_buffer = buffer.?.id;
     return .{
         .fbo = buffer.?.fbo,
-        .width = gl.width,
-        .height = gl.height,
+        .viewport_width = gl.width,
+        .viewport_height = gl.height,
     };
 }
 
@@ -314,7 +323,7 @@ pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuV
     return .{ .generic = vp.id };
 }
 
-pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) ![]u8 {
+pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !FrameBeginCpu {
     const client = handle.cast();
 
     const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
@@ -335,7 +344,14 @@ pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) ![]u8 
 
     cpu.current_buffer = buffer.?.id;
 
-    return buffer.?.data;
+    return .{
+        .buffer = buffer.?.data,
+        .width = buffer.?.width,
+        .height = buffer.?.height,
+        .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
+        .viewport_width = cpu.width,
+        .viewport_height = cpu.height,
+    };
 }
 
 pub fn cpu_frame_end(_: *ClientHandle, _: CpuViewportID) void {}
