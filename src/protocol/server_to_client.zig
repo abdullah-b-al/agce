@@ -133,7 +133,7 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
 fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader, receive_buf: []u8) !MessagePayload {
     switch (header.message_tag) {
         inline else => |tag| {
-            const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
+            const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(
                 MessageHeader,
                 T,

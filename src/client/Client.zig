@@ -268,7 +268,7 @@ pub fn send_buffer_create_gpu_with_fds(
         client.connection,
         .{
             .buffer_create_gpu_with_fds = .{
-                .id = buffer.id,
+                .buffer_id = buffer.id,
                 .width = c_linux.gbm_bo_get_width(buffer.bo),
                 .height = c_linux.gbm_bo_get_height(buffer.bo),
                 .format = buffer.format,
@@ -291,7 +291,7 @@ pub fn send_buffer_create_cpu_with_fd(client: *Client, buffer: ViewportCpu.Buffe
         client.connection,
         .{
             .buffer_create_cpu_with_fd = .{
-                .id = buffer.id,
+                .buffer_id = buffer.id,
                 .width = buffer.width,
                 .height = buffer.height,
                 .format = buffer.format,

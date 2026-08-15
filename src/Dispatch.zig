@@ -72,26 +72,28 @@ pub fn server_get(dispatch: *Dispatch) error{Canceled}!ServerEvent {
 pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystemEvent);
 pub const WindowSystemEvent = union(enum) {
+    const Payload = client_to_server.MessagePayload;
+
     exit,
     client_connected: ClientID,
     client_disconnected: ClientID,
 
-    buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
-    buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
-    buffer_present: BufferPresent,
-    buffer_present_with_sync: BufferPresentWithSync,
-    buffer_destroy: BufferDestroy,
+    buffer_create_cpu_with_fd: WithClientID(Payload.BufferCreateCpuWithFd),
+    buffer_create_gpu_with_fds: WithClientID(Payload.BufferCreateGpuWithFds),
+    buffer_present: WithClientID(Payload.BufferPresent),
+    buffer_present_with_sync: WithClientID(Payload.BufferPresentWithSync),
+    buffer_destroy: WithClientID(Payload.BufferDestroy),
 
-    viewport_resize: ViewportResize,
+    viewport_resize: WithClientID(ptypes.ViewportResize),
 
     windows_destroy,
-    window_create: WindowCreate,
+    window_create: WithClientID(ptypes.WindowCreate),
     window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
         signal: *Io.Event,
     },
 
-    cursor_shape_set: CursorShape,
+    cursor_shape_set: WithClientID(Payload.CursorShape),
 
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
@@ -120,70 +122,9 @@ pub const WindowSystemEvent = union(enum) {
         height: i32,
     };
 
-    pub const CursorShape = struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        shape: ptypes.CursorShape,
-    };
-
-    pub const WindowCreate = struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        width: u32,
-        height: u32,
-        create_sync_timeline: bool,
-        vsync: bool,
-    };
-
-    pub const BufferCreateCpuWithFd = struct {
-        client_id: ClientID,
-        buffer_id: BufferID,
-
-        fd: ptypes.CpuBufferFd,
-
-        width: u32,
-        height: u32,
-        format: BufferFormat,
-    };
-
-    pub const BufferCreateGpuWithFds = struct {
-        client_id: ClientID,
-        buffer_id: BufferID,
-
-        fds: ptypes.BufferAndTimelineFds,
-
-        width: u32,
-        height: u32,
-        format: BufferFormat,
-
-        gbm_bo_modifier: u64,
-    };
-
-    pub const BufferPresent = struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        buffer_id: BufferID,
-    };
-
-    pub const BufferPresentWithSync = struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        buffer_id: BufferID,
-        acquire_point: ptypes.AcquireTimelinePoint,
-        release_point: ptypes.ReleaseTimelinePoint,
-    };
-
-    pub const BufferDestroy = struct {
-        client_id: ClientID,
-        buffer_id: BufferID,
-    };
-
-    pub const ViewportResize = struct {
-        client_id: ClientID,
-        viewport_id: ViewportID,
-        width: u32,
-        height: u32,
-    };
+    pub fn TypeOf(comptime tag: std.meta.Tag(WindowSystemEvent)) type {
+        return utils.TypeOfField(WindowSystemEvent, @tagName(tag));
+    }
 
     pub const KeyboardKey = struct {
         key: pinput.Key,
@@ -230,35 +171,37 @@ pub const WindowSystemResult = union(enum) {
 
 pub const ServerQueue = IoQueue(ServerEvent);
 pub const ServerEvent = union(enum) {
+    const Payload = server_to_client.MessagePayload;
+
     exit,
 
     viewport_resize: WithClientID(ptypes.ViewportResize),
-    viewport_closed: WithClientID(MessagePayload.ViewportClosed),
+    viewport_closed: WithClientID(Payload.ViewportClosed),
 
-    frame_render: WithClientID(MessagePayload.FrameRender),
+    frame_render: WithClientID(Payload.FrameRender),
 
-    buffer_released: WithClientID(MessagePayload.BufferReleased),
-    buffer_destroyed: WithClientID(MessagePayload.BufferDestroyed),
-    buffer_created: WithClientID(MessagePayload.BufferCreated),
+    buffer_released: WithClientID(Payload.BufferReleased),
+    buffer_destroyed: WithClientID(Payload.BufferDestroyed),
+    buffer_created: WithClientID(Payload.BufferCreated),
 
-    keyboard_key: WithClientID(MessagePayload.KeyboardKey),
-    mouse_enter: WithClientID(MessagePayload.MouseEnter),
-    mouse_leave: WithClientID(MessagePayload.MouseLeave),
-    mouse_motion: WithClientID(MessagePayload.MouseMotion),
-    mouse_button: WithClientID(MessagePayload.MouseButton),
-    mouse_scroll: WithClientID(MessagePayload.MouseScroll),
+    keyboard_key: WithClientID(Payload.KeyboardKey),
+    mouse_enter: WithClientID(Payload.MouseEnter),
+    mouse_leave: WithClientID(Payload.MouseLeave),
+    mouse_motion: WithClientID(Payload.MouseMotion),
+    mouse_button: WithClientID(Payload.MouseButton),
+    mouse_scroll: WithClientID(Payload.MouseScroll),
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
     }
-
-    fn WithClientID(comptime T: type) type {
-        return struct {
-            client_id: ClientID,
-            payload: T,
-        };
-    }
 };
+
+pub fn WithClientID(comptime T: type) type {
+    return struct {
+        client_id: ClientID,
+        payload: T,
+    };
+}
 
 pub fn IoQueue(comptime T: type) type {
     return struct {
@@ -291,6 +234,7 @@ const Io = std.Io;
 const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;
+const client_to_server = @import("protocol").client_to_server;
 const log = std.log.scoped(.Dispatch);
 const SourceLocation = std.builtin.SourceLocation;
 const ViewportFds = ptypes.ViewportFds;
@@ -301,4 +245,3 @@ const ClientID = @import("server/Clients.zig").ClientID;
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
 const WindowID = @import("WindowSystem.zig").WindowID;
 const utils = @import("utils");
-const MessagePayload = server_to_client.MessagePayload;

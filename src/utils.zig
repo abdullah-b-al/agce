@@ -78,6 +78,28 @@ pub fn unix_address_path(environ: *const std.process.Environ.Map, buf: []u8) []c
     return buf[0..socket_name.len];
 }
 
+pub fn TypeOfField(comptime U: type, comptime name: []const u8) type {
+    switch (@typeInfo(U)) {
+        .@"union" => |info| {
+            inline for (info.fields) |f| {
+                if (std.mem.eql(u8, name, f.name)) {
+                    return f.type;
+                }
+            }
+        },
+        .@"struct" => |info| {
+            inline for (info.fields) |f| {
+                if (std.mem.eql(u8, name, f.name)) {
+                    return f.type;
+                }
+            }
+        },
+        else => @compileError("Unsupported primitive"),
+    }
+
+    unreachable;
+}
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;

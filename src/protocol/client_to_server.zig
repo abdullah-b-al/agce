@@ -22,7 +22,7 @@ pub const MessagePayload = union(enum(u32)) {
     cursor_shape_set: CursorShape,
 
     pub const BufferCreateCpuWithFd = struct {
-        id: types.BufferID,
+        buffer_id: types.BufferID,
 
         fd: types.CpuBufferFd,
 
@@ -32,7 +32,7 @@ pub const MessagePayload = union(enum(u32)) {
     };
 
     pub const BufferCreateGpuWithFds = struct {
-        id: types.BufferID,
+        buffer_id: types.BufferID,
 
         fds: types.BufferAndTimelineFds,
 
@@ -228,7 +228,7 @@ fn read_and_parse_data_json(
         .viewport_resize,
         .cursor_shape_set,
         => |tag| {
-            const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
+            const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(
                 MessageHeader,
                 T,
@@ -331,3 +331,4 @@ const c_linux = @import("c_linux");
 const os_tag = @import("builtin").os.tag;
 const types = @import("types.zig");
 const common = @import("common.zig");
+const utils = @import("utils");

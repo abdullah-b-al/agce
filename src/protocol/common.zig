@@ -55,16 +55,6 @@ pub fn parse_message_header(comptime Header: type, data: []const u8) !Header {
     return header;
 }
 
-pub fn TypeOfUnionField(comptime U: type, comptime tag: []const u8) type {
-    inline for (@typeInfo(U).@"union".fields) |f| {
-        if (std.mem.eql(u8, tag, f.name)) {
-            return f.type;
-        }
-    }
-
-    unreachable;
-}
-
 pub fn contains_a_fd(comptime T: type) ?[:0]const u8 {
     const info = @typeInfo(T);
     switch (info) {

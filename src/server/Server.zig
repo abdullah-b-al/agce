@@ -236,23 +236,28 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 return error.UnsupportedMessageOnOs;
             }
 
-            const expr = switch (tag) {
-                .buffer_create_cpu_with_fd => Dispatch.WindowSystemEvent.BufferCreateCpuWithFd{
+            const T = utils.TypeOfField(Dispatch.WindowSystemEvent, @tagName(tag));
+            const expr: T = switch (tag) {
+                .buffer_create_cpu_with_fd => .{
                     .client_id = client.id,
-                    .buffer_id = msg.id,
-                    .fd = msg.fd,
-                    .width = msg.width,
-                    .height = msg.height,
-                    .format = msg.format,
+                    .payload = .{
+                        .buffer_id = msg.buffer_id,
+                        .fd = msg.fd,
+                        .width = msg.width,
+                        .height = msg.height,
+                        .format = msg.format,
+                    },
                 },
-                .buffer_create_gpu_with_fds => Dispatch.WindowSystemEvent.BufferCreateGpuWithFds{
+                .buffer_create_gpu_with_fds => .{
                     .client_id = client.id,
-                    .buffer_id = msg.id,
-                    .fds = msg.fds,
-                    .width = msg.width,
-                    .height = msg.height,
-                    .format = msg.format,
-                    .gbm_bo_modifier = msg.gbm_bo_modifier,
+                    .payload = .{
+                        .buffer_id = msg.buffer_id,
+                        .fds = msg.fds,
+                        .width = msg.width,
+                        .height = msg.height,
+                        .format = msg.format,
+                        .gbm_bo_modifier = msg.gbm_bo_modifier,
+                    },
                 },
                 else => comptime unreachable,
             };
@@ -260,64 +265,18 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
             return @unionInit(Dispatch.WindowSystemEvent, @tagName(tag), expr);
         },
 
-        .buffer_present => |msg| {
-            return .{
-                .buffer_present = .{
-                    .client_id = client.id,
-                    .viewport_id = msg.viewport_id,
-                    .buffer_id = msg.buffer_id,
-                },
-            };
-        },
-        .buffer_present_with_sync => |msg| {
-            return .{
-                .buffer_present_with_sync = .{
-                    .client_id = client.id,
-                    .viewport_id = msg.viewport_id,
-                    .buffer_id = msg.buffer_id,
-                    .acquire_point = msg.acquire_point,
-                    .release_point = msg.release_point,
-                },
-            };
-        },
-        .buffer_destroy => |msg| {
-            return .{
-                .buffer_destroy = .{
-                    .client_id = client.id,
-                    .buffer_id = msg.buffer_id,
-                },
-            };
-        },
-        .window_create => |msg| {
-            return .{
-                .window_create = .{
-                    .client_id = client.id,
-                    .viewport_id = msg.viewport_id,
-                    .width = msg.width,
-                    .height = msg.height,
-                    .create_sync_timeline = msg.create_sync_timeline,
-                    .vsync = msg.vsync,
-                },
-            };
-        },
-        .viewport_resize => |msg| {
-            return .{
-                .viewport_resize = .{
-                    .client_id = client.id,
-                    .viewport_id = msg.viewport_id,
-                    .width = msg.width,
-                    .height = msg.height,
-                },
-            };
-        },
-        .cursor_shape_set => |msg| {
-            return .{
-                .cursor_shape_set = .{
-                    .client_id = client.id,
-                    .viewport_id = msg.viewport_id,
-                    .shape = msg.shape,
-                },
-            };
+        inline .buffer_present,
+        .buffer_present_with_sync,
+        .buffer_destroy,
+        .window_create,
+        .viewport_resize,
+        .cursor_shape_set,
+        => |msg, tag| {
+            return @unionInit(
+                Dispatch.WindowSystemEvent,
+                @tagName(tag),
+                .{ .client_id = client.id, .payload = msg },
+            );
         },
     }
 }
