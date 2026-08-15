@@ -12,6 +12,7 @@ seat: *cwl.Seat,
 dmabuf: *zwp.LinuxDmabufV1,
 viewporter: *wp.Viewporter,
 sync_object_manager: *wp.LinuxDrmSyncobjManagerV1,
+cursor_manager: *wp.CursorShapeManagerV1,
 
 display: *cwl.Display,
 registry: *cwl.Registry,
@@ -46,6 +47,7 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
         .dmabuf = null,
         .viewporter = null,
         .sync_object_manager = null,
+        .cursor_manager = null,
     };
 
     registry.setListener(*MaybeGlobals, registry_listener, &globals);
@@ -59,6 +61,7 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
     const dmabuf = globals.dmabuf orelse return error.NoZwpDmaBuf;
     const viewporter = globals.viewporter orelse return error.NoWpViewporter;
     const sync_object_manager = globals.sync_object_manager orelse return error.NoWpSyncobjManager;
+    const cursor_manager = globals.cursor_manager orelse return error.NoWpCursorManager;
 
     const xkb_context = c_linux.xkb_context_new(c_linux.XKB_CONTEXT_NO_FLAGS) orelse
         return error.XkbContextNewFailed;
@@ -76,6 +79,7 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
         .dmabuf = dmabuf,
         .viewporter = viewporter,
         .sync_object_manager = sync_object_manager,
+        .cursor_manager = cursor_manager,
 
         .registry = registry,
         .display = display,
@@ -146,7 +150,7 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
     try wl.windows_destroy();
 }
 
-pub fn resources_get(wl: *Wayland, id: ClientID) !*ClientResources {
+pub fn resources_get(wl: *Wayland, id: ClientID) error{ClientDoesNotExist}!*ClientResources {
     return wl.resources.getPtr(id) orelse return error.ClientDoesNotExist;
 }
 
@@ -484,6 +488,13 @@ pub fn keyboard_modifiers(
     );
 }
 
+pub fn cursor_shape_set(wl: *Wayland, args: Event.CursorShape) !void {
+    const rs = try wl.resources_get(args.client_id);
+    const vp = rs.viewports.getPtr(args.viewport_id) orelse return error.ViewportDoesNotExist;
+    const shape = from_protocol_cursor_shape(args.shape);
+    vp.pointer.set_shape(shape orelse return);
+}
+
 pub fn keyboard_key(wl: *Wayland, args: Event.KeyboardKey) !void {
     if (wl.input_repeat_future) |*future| {
         future.cancel(wl.io);
@@ -646,6 +657,7 @@ fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals
                 .{ .field = "dmabuf",              .T = zwp.LinuxDmabufV1,           .v = 1 },
                 .{ .field = "viewporter",          .T = wp.Viewporter,               .v = 1 },
                 .{ .field = "sync_object_manager", .T = wp.LinuxDrmSyncobjManagerV1, .v = 1 },
+                .{ .field = "cursor_manager",      .T = wp.CursorShapeManagerV1,     .v = 1 },
                 // zig fmt: on
             };
 
@@ -762,7 +774,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
     ws.dispatch.window_system_put(@src(), ws_event) catch {};
 }
 
-fn listener_pointer(_: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
+fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
     const ws_event: Event = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse {
@@ -774,6 +786,14 @@ fn listener_pointer(_: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem
                 log.warn("Dropping pointer event without a viewport {t}", .{tag});
                 return;
             };
+
+            if (tag == .enter) {
+                const rs = ws.native.wayland.resources_get(key.client_id) catch unreachable;
+                const viewport = rs.viewports.getPtr(key.viewport_id).?;
+
+                viewport.pointer.on_surface_enter(ws.native.wayland.cursor_manager, pointer, e.serial);
+                viewport.pointer.set_shape(.default);
+            }
 
             break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
                 .client_id = key.client_id,
@@ -910,6 +930,46 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, wl: *Wayland) void {
     ) catch {};
 }
 
+pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDeviceV1.Shape {
+    return switch (shape) {
+        .default => .default,
+        .none => null,
+        .context_menu => .context_menu,
+        .help => .help,
+        .pointer => .pointer,
+        .progress => .progress,
+        .wait => .wait,
+        .cell => .cell,
+        .crosshair => .crosshair,
+        .text => .text,
+        .vertical_text => .vertical_text,
+        .alias => .alias,
+        .copy => .copy,
+        .move => .move,
+        .no_drop => .no_drop,
+        .not_allowed => .not_allowed,
+        .grab => .grab,
+        .grabbing => .grabbing,
+        .e_resize => .e_resize,
+        .n_resize => .n_resize,
+        .ne_resize => .ne_resize,
+        .nw_resize => .nw_resize,
+        .s_resize => .s_resize,
+        .se_resize => .se_resize,
+        .sw_resize => .sw_resize,
+        .w_resize => .w_resize,
+        .ew_resize => .ew_resize,
+        .ns_resize => .ns_resize,
+        .nesw_resize => .nesw_resize,
+        .nwse_resize => .nwse_resize,
+        .col_resize => .col_resize,
+        .row_resize => .row_resize,
+        .all_scroll => .all_scroll,
+        .zoom_in => .zoom_in,
+        .zoom_out => .zoom_out,
+    };
+}
+
 const InputRepeatFuture = Io.Future(@typeInfo(@TypeOf(input_repeat)).@"fn".return_type.?);
 fn input_repeat(dispatch: *Dispatch, ms: i32, key: pinput.Key) void {
     dispatch.io.sleep(.fromMilliseconds(ms), .awake) catch return;
@@ -931,6 +991,7 @@ pub const MaybeGlobals = struct {
     dmabuf: ?*zwp.LinuxDmabufV1,
     viewporter: ?*wp.Viewporter,
     sync_object_manager: ?*wp.LinuxDrmSyncobjManagerV1,
+    cursor_manager: ?*wp.CursorShapeManagerV1,
 };
 
 pub const WlBufferID = enum(u32) {

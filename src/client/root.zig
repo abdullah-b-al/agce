@@ -3,6 +3,7 @@ pub const opengl = @import("opengl.zig");
 
 pub const ViewportID = ptypes.ViewportID;
 pub const BufferID = ptypes.BufferID;
+pub const CursorShape = ptypes.CursorShape;
 
 pub const Key = @import("protocol").input.Key;
 pub const KeyState = @import("protocol").input.KeyState;
@@ -367,6 +368,19 @@ pub fn cpu_frame_present(handle: *ClientHandle, viewport_id: CpuViewportID) !voi
 
     const buffer = cpu.buffers_collection.available.getPtr(cpu.current_buffer.?).?;
     try cpu.buffer_present(buffer);
+}
+
+pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
+    const client = handle.cast();
+
+    try client_to_server.message_send_json(
+        client.io,
+        client.gpa,
+        client.connection,
+        .{
+            .cursor_shape_set = .{ .viewport_id = viewport_id, .shape = shape },
+        },
+    );
 }
 
 const std = @import("std");

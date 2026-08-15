@@ -19,6 +19,8 @@ pub const MessagePayload = union(enum(u32)) {
 
     window_create: types.WindowCreate,
 
+    cursor_shape_set: CursorShape,
+
     pub const BufferCreateCpuWithFd = struct {
         id: types.BufferID,
 
@@ -55,6 +57,11 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const BufferDestroy = struct {
         buffer_id: types.BufferID,
+    };
+
+    pub const CursorShape = struct {
+        viewport_id: types.ViewportID,
+        shape: types.CursorShape,
     };
 };
 
@@ -95,6 +102,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
                 p.fds,
             );
         },
+        .cursor_shape_set,
         .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
@@ -189,6 +197,7 @@ fn read_and_parse_data_json_linux(
             return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
 
+        .cursor_shape_set,
         .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
@@ -217,6 +226,7 @@ fn read_and_parse_data_json(
         .buffer_destroy,
         .window_create,
         .viewport_resize,
+        .cursor_shape_set,
         => |tag| {
             const T = common.TypeOfUnionField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

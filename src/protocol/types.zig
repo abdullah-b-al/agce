@@ -152,6 +152,45 @@ pub const ScrollAxis = enum(u8) {
     horizontal,
 };
 
+// Taken from wayland's cursor shape type
+pub const CursorShape = enum {
+    default,
+    none,
+    context_menu,
+    help,
+    pointer,
+    progress,
+    wait,
+    cell,
+    crosshair,
+    text,
+    vertical_text,
+    alias,
+    copy,
+    move,
+    no_drop,
+    not_allowed,
+    grab,
+    grabbing,
+    e_resize,
+    n_resize,
+    ne_resize,
+    nw_resize,
+    s_resize,
+    se_resize,
+    sw_resize,
+    w_resize,
+    ew_resize,
+    ns_resize,
+    nesw_resize,
+    nwse_resize,
+    col_resize,
+    row_resize,
+    all_scroll,
+    zoom_in,
+    zoom_out,
+};
+
 pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
     return extern struct {
         const Header = @This();

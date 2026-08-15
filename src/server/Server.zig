@@ -310,6 +310,15 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
                 },
             };
         },
+        .cursor_shape_set => |msg| {
+            return .{
+                .cursor_shape_set = .{
+                    .client_id = client.id,
+                    .viewport_id = msg.viewport_id,
+                    .shape = msg.shape,
+                },
+            };
+        },
     }
 }
 

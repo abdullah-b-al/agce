@@ -148,6 +148,13 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .cursor_shape_set => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.cursor_shape_set(args),
+                .win32 => @panic("TODO"),
+            }
+            
+        },
         .keyboard_key => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.keyboard_key(args),

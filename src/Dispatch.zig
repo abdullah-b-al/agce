@@ -91,6 +91,8 @@ pub const WindowSystemEvent = union(enum) {
         signal: *Io.Event,
     },
 
+    cursor_shape_set: CursorShape,
+
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
     keyboard_leave: KeyboardLeave,
@@ -116,6 +118,12 @@ pub const WindowSystemEvent = union(enum) {
         id: WindowID,
         width: i32,
         height: i32,
+    };
+
+    pub const CursorShape = struct {
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        shape: ptypes.CursorShape,
     };
 
     pub const WindowCreate = struct {

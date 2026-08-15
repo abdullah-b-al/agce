@@ -2,6 +2,7 @@ const Viewport = @This();
 
 id: ViewportID,
 surface: *cwl.Surface,
+pointer: Pointer,
 subsurface: *cwl.Subsurface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
@@ -34,6 +35,7 @@ pub fn init(
     return .{
         .id = id,
         .surface = surface,
+        .pointer = .init,
         .subsurface = subsurface,
         .sync_surface = null,
         .viewport = viewport,
@@ -117,6 +119,45 @@ pub const ReleaseTimeline = struct {
         const lo: u32 = @truncate(int & 0xFF_FF_FF_FF);
         const hi: u32 = @truncate(int >> 32);
         sync_surface.setReleasePoint(t.release, hi, lo);
+    }
+};
+
+pub const Pointer = struct {
+    pointer: ?*cwl.Pointer,
+    shaper: ?*wp.CursorShapeDeviceV1,
+    enter_serial: ?u32,
+
+    pub const init: Pointer = .{ .pointer = null, .shaper = null, .enter_serial = null };
+
+    pub fn on_surface_enter(
+        p: *Pointer,
+        cursor_manager: *wp.CursorShapeManagerV1,
+        wl_pointer: *cwl.Pointer,
+        enter_serial: u32,
+    ) void {
+        if (p.pointer != wl_pointer) {
+            p.pointer = null;
+
+            if (p.shaper) |shaper| {
+                shaper.destroy();
+                p.shaper = null;
+            }
+        }
+
+        p.pointer = wl_pointer;
+
+        if (p.shaper == null) {
+            p.shaper = cursor_manager.getPointer(wl_pointer) catch null;
+        }
+
+        p.enter_serial = enter_serial;
+    }
+
+    pub fn set_shape(p: *Pointer, shape: wp.CursorShapeDeviceV1.Shape) void {
+        if (p.shaper) |shaper| {
+            const serial = p.enter_serial orelse @panic("Must be set on Pointer.enter event");
+            shaper.setShape(serial, shape);
+        }
     }
 };
 
