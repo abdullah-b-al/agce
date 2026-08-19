@@ -12,7 +12,7 @@ next_viewport_id: ptypes.ViewportID,
 next_buffer_id: ptypes.BufferID,
 next_sub_viewport_id: ptypes.SubViewportID,
 
-viewports: std.array_hash_map.Auto(ViewportID, Viewport),
+viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_from_server: std.array_hash_map.Auto(ViewportID, Size),
 sub_viewport_status: std.array_hash_map.Auto(SubViewportID, CreateStatus),
 
@@ -59,13 +59,10 @@ pub fn init(
 
 pub fn deinit(client: *Client) void {
     for (client.viewports.values()) |vp| {
-        switch (vp) {
-            inline else => |v| {
-                v.deinit();
-                client.gpa.destroy(v);
-            },
-        }
+        vp.deinit();
+        client.gpa.destroy(vp);
     }
+
     client.viewports.deinit(client.gpa);
     client.sub_viewport_status.deinit(client.gpa);
     client.viewports_from_server.deinit(client.gpa);
@@ -118,15 +115,14 @@ pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
 }
 
 pub fn update_by_tag(client: *Client, viewport_id: ViewportID, comptime tag: Message.Tag) !void {
-    const vp = client.viewports.getPtr(viewport_id) orelse return error.ViewportDoesNotExist;
-    const base = vp.base();
-    var i = base.messages.items.len;
+    const vp = client.viewports.get(viewport_id) orelse return error.ViewportDoesNotExist;
+    var i = vp.messages.items.len;
     while (i > 0) {
         i -= 1;
-        const message = base.messages.items[i];
+        const message = vp.messages.items[i];
         if (message == tag) {
-            try base.handle_message(tag, message);
-            _ = base.messages.orderedRemove(i);
+            try vp.handle_message(tag, message);
+            _ = vp.messages.orderedRemove(i);
         }
     }
 }
@@ -143,13 +139,12 @@ pub fn wait_for(client: *Client, viewport_id: ViewportID, tag: Message.Tag) !voi
 }
 
 pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag, min_count: usize) !void {
-    const vp = client.viewports.getPtr(viewport_id) orelse return error.ViewportDoesNotExist;
-    const base = vp.base();
+    const vp = client.viewports.get(viewport_id) orelse return error.ViewportDoesNotExist;
     while (true) {
         try client.poll_once(.none);
 
         var count: usize = 0;
-        for (base.messages.items) |message| {
+        for (vp.messages.items) |message| {
             if (message == tag)
                 count += 1;
         }
@@ -166,10 +161,9 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
 
     try client.other_clients.ensureUnusedCapacity(client.gpa, 1);
     try client.viewports_from_server.ensureUnusedCapacity(client.gpa, 1);
-    for (client.viewports.values()) |*vp| {
-        const base = vp.base();
-        try base.messages.ensureUnusedCapacity(client.gpa, 1);
-        try base.events.ensureUnusedCapacity(client.gpa, 1);
+    for (client.viewports.values()) |vp| {
+        try vp.messages.ensureUnusedCapacity(client.gpa, 1);
+        try vp.events.ensureUnusedCapacity(client.gpa, 1);
     }
 
     const message = try server_to_client.message_receive(
@@ -217,14 +211,14 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         },
 
         .viewport_resize => |e| {
-            const vp = client.viewports.getPtr(e.viewport_id) orelse return;
-            vp.base().push_event(.{ .viewport_resize = e });
-            vp.base().push_message(.{ .viewport_resize = e });
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.push_event(.{ .viewport_resize = e });
+            vp.push_message(.{ .viewport_resize = e });
         },
         .viewport_closed => |e| {
-            const vp = client.viewports.getPtr(e.viewport_id) orelse return;
-            vp.base().push_event(.{ .viewport_closed = e });
-            vp.base().push_message(.{ .viewport_closed = e });
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.push_event(.{ .viewport_closed = e });
+            vp.push_message(.{ .viewport_closed = e });
         },
 
         inline .mouse_enter,
@@ -234,117 +228,36 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         .mouse_scroll,
         .keyboard_key,
         => |e, tag| {
-            const vp = client.viewports.getPtr(e.viewport_id) orelse return;
+            const vp = client.viewports.get(e.viewport_id) orelse return;
             const event = @unionInit(Event, @tagName(tag), e);
-            vp.base().push_event(event);
+            vp.push_event(event);
         },
 
         inline .buffer_destroyed, .buffer_created => |e, tag| {
             const vp = client.viewport_from_buffer_id(e.buffer_id) orelse return;
             const msg = @unionInit(Message, @tagName(tag), .{
-                .viewport_id = vp.base().id,
+                .viewport_id = vp.id,
                 .message = e,
             });
-            vp.base().push_message(msg);
+            vp.push_message(msg);
         },
 
         inline .frame_render,
         .buffer_released,
         .viewport_created,
         => |e, tag| {
-            const vp = client.viewports.getPtr(e.viewport_id) orelse return;
+            const vp = client.viewports.get(e.viewport_id) orelse return;
             const msg = @unionInit(Message, @tagName(tag), e);
-            vp.base().push_message(msg);
-        },
-    }
-}
-
-pub fn message_handle(client: *Client, comptime tag: Message.Tag, message: Message) !void {
-    try client.viewports_from_server.ensureUnusedCapacity(client.gpa, 1);
-    try client.other_clients.ensureUnusedCapacity(client.gpa, 1);
-
-    std.debug.assert(tag == message);
-    const msg = @field(message, @tagName(tag));
-
-    switch (tag) {
-        .client_info => {
-            const gop = client.other_clients.getOrPutAssumeCapacity(msg.client_id);
-
-            if (gop.found_existing) {
-                gop.value_ptr.deinit(client.gpa);
-            }
-
-            gop.value_ptr.* = msg.info;
-        },
-        .viewport_create => {},
-        .viewport_created => {
-            // This handler only registers the status of the viewport.
-            // Viewport creation should be done synchronously
-
-            const status = client.viewport_status.getPtr(msg.viewport_id) orelse return;
-            switch (msg.status) {
-                .success => status.* = .created,
-                .failure => status.* = .failed,
-            }
-        },
-        .viewport_resize => {
-            const vp = client.viewports.get(msg.viewport_id) orelse return;
-            switch (vp) {
-                .gl => |gl| try gl.resize(msg.width, msg.height),
-                .cpu => |cpu| try cpu.resize(msg),
-            }
-        },
-        .viewport_closed => {
-            const vp = client.viewports.get(msg.viewport_id) orelse return;
-            switch (vp) {
-                inline else => |v| v.close(),
-            }
-        },
-        .sub_viewport_embeded => @panic("TODO"),
-
-        .buffer_released => {
-            const vp = client.viewports.get(msg.viewport_id) orelse return;
-            switch (vp) {
-                inline else => |v| v.buffer_released(msg.buffer_id),
-            }
-        },
-        .buffer_created => {
-            // This handler only registers the status of the buffer.
-            // Buffer creation should be done synchronously
-
-            const ptr = client.buffers_status.getPtr(msg.buffer_id).?;
-            std.debug.assert(ptr.* == .pending);
-            ptr.* = switch (msg.status) {
-                .success => .created,
-                .failure => .failed,
-            };
-        },
-        .buffer_destroyed => {
-            const vp = client.viewport_from_buffer_id(msg.buffer_id) orelse return;
-            switch (vp) {
-                inline else => |v| v.buffer_destroyed(msg.buffer_id),
-            }
-        },
-        .frame_render => {
-            const vp = client.viewports.get(msg.viewport_id).?;
-            switch (vp) {
-                inline else => |v| v.frame_render(),
-            }
+            vp.push_message(msg);
         },
     }
 }
 
 pub fn viewport_from_buffer_id(client: *Client, buffer_id: BufferID) ?*Viewport {
-    for (client.viewports.values()) |*vp| {
-        switch (vp.*) {
-            inline else => |v| {
-                if (v.has_buffer(buffer_id)) {
-                    return vp;
-                }
-            },
+    for (client.viewports.values()) |vp| {
+        if (vp.has_buffer(buffer_id)) {
+            return vp;
         }
-
-        if (vp.base().buffers_status.contains(buffer_id)) return vp;
     }
 
     return null;
@@ -352,14 +265,14 @@ pub fn viewport_from_buffer_id(client: *Client, buffer_id: BufferID) ?*Viewport 
 
 pub fn viewport_create(
     client: *Client,
-    comptime tag: Client.ViewportTag,
+    comptime tag: Viewport.Renderer.Tag,
     width: u32,
     height: u32,
     vsync: bool,
-) !*tag.TypeFromTag() {
+) !*Viewport {
     const id = client.next_viewport_id.increment_for_client();
 
-    const vp: *tag.TypeFromTag() = switch (tag) {
+    const vp = switch (tag) {
         .gl => try client.viewport_create_with_id(.gl, id, width, height, vsync),
         .cpu => try client.viewport_create_with_id(.cpu, id, width, height, vsync),
     };
@@ -369,16 +282,16 @@ pub fn viewport_create(
 
 pub fn viewport_create_from_pending(
     client: *Client,
-    comptime tag: Client.ViewportTag,
+    comptime tag: Viewport.Renderer.Tag,
     id: ViewportID,
     vsync: bool,
-) !*tag.TypeFromTag() {
+) !*Viewport {
     std.debug.assert(
         client.viewports_from_server.contains(id),
     );
     const size = client.viewports_from_server.get(id).?;
 
-    const vp: *tag.TypeFromTag() = switch (tag) {
+    const vp = switch (tag) {
         .gl => try client.viewport_create_with_id(.gl, id, size.width, size.height, vsync),
         .cpu => try client.viewport_create_with_id(.cpu, id, size.width, size.height, vsync),
     };
@@ -390,33 +303,48 @@ pub fn viewport_create_from_pending(
 
 pub fn viewport_create_with_id(
     client: *Client,
-    comptime tag: ViewportTag,
+    comptime tag: Viewport.Renderer.Tag,
     id: ViewportID,
     width: u32,
     height: u32,
     vsync: bool,
-) !*tag.TypeFromTag() {
-    const T = tag.TypeFromTag();
-
+) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
-    const vp = try client.gpa.create(T);
-    vp.* = try .init(id, client, width, height, vsync);
-    client.viewports.putAssumeCapacityNoClobber(
-        vp.base.id,
-        @unionInit(Viewport, @tagName(tag), vp),
-    );
 
-    const array = try buffers.buffers_create(
-        T.Buffer,
-        2,
-        &vp.base,
-        client,
-        &vp.buffers_collection,
-        .{ client, width, height, vp.base.format },
-    );
+    const vp = blk: {
+        const renderer: Viewport.Renderer = switch (tag) {
+            .gl => .{ .gl = .init(client.gbm.?, client.gl_context.?) },
+            .cpu => .{ .cpu = .init() },
+        };
+        const vp = try client.gpa.create(Viewport);
+        vp.* = .init(
+            id,
+            client,
+            width,
+            height,
+            .argb8888,
+            vsync,
+            renderer,
+        );
+        break :blk vp;
+    };
+    client.viewports.putAssumeCapacityNoClobber(vp.id, vp);
 
-    for (array) |b| {
-        vp.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
+    switch (vp.renderer) {
+        inline else => |*r, t| {
+            const array = try buffers.buffers_create(
+                Viewport.Renderer.RendererBuffer(t),
+                2,
+                vp,
+                client,
+                &r.buffers_collection,
+                .{ client, width, height, vp.format },
+            );
+
+            for (array) |b| {
+                r.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
+            }
+        },
     }
 
     try client.send_viewport_create(id, width, height, true);
@@ -425,7 +353,7 @@ pub fn viewport_create_with_id(
         try client.wait_for(id, .viewport_created);
         try client.update_by_tag(id, .viewport_created);
 
-        switch (vp.base.status) {
+        switch (vp.status) {
             .pending => continue,
             .created => break,
             .failed => return error.ViewportCreateFailed,
@@ -442,11 +370,12 @@ pub fn send_viewport_create(
     height: u32,
     create_window: bool,
 ) !void {
-    const create_sync_timeline, const vsync = blk: {
-        const vp = client.viewports.get(viewport_id).?;
-        break :blk switch (vp) {
-            .gl => |gl| .{ true, gl.base.vsync },
-            .cpu => |cpu| .{ false, cpu.base.vsync },
+    const vp = client.viewports.get(viewport_id).?;
+
+    const create_sync_timeline = blk: {
+        break :blk switch (vp.renderer) {
+            .gl => true,
+            .cpu => false,
         };
     };
 
@@ -454,7 +383,7 @@ pub fn send_viewport_create(
         .viewport_create = .{
             .viewport_id = viewport_id,
             .create_sync_timeline = create_sync_timeline,
-            .vsync = vsync,
+            .vsync = vp.vsync,
 
             .width = width,
             .height = height,
@@ -465,8 +394,8 @@ pub fn send_viewport_create(
 
 pub fn send_buffer_create_gpu_with_fds(
     client: *Client,
-    vp_base: *ViewportBase,
-    buffer: ViewportGL.Buffer,
+    vp: *Viewport,
+    buffer: RendererGL.Buffer,
 ) !void {
     const acquire = buffer.acquire.fd(client.gbm.?);
     defer _ = std.os.linux.close(@intFromEnum(acquire));
@@ -477,7 +406,7 @@ pub fn send_buffer_create_gpu_with_fds(
     const buffer_fd: ptypes.GpuBufferFd = @enumFromInt(c_linux.gbm_bo_get_fd(buffer.bo));
     defer _ = std.os.linux.close(@intFromEnum(buffer_fd));
 
-    vp_base.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
+    vp.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
     try client_to_server.message_send_json(
         client.io,
         client.gpa,
@@ -499,8 +428,12 @@ pub fn send_buffer_create_gpu_with_fds(
     );
 }
 
-pub fn send_buffer_create_cpu_with_fd(client: *Client, base: *ViewportBase, buffer: ViewportCpu.Buffer) !void {
-    base.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
+pub fn send_buffer_create_cpu_with_fd(
+    client: *Client,
+    vp: *Viewport,
+    buffer: RendererCpu.Buffer,
+) !void {
+    vp.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
     try client_to_server.message_send_json(
         client.io,
         client.gpa,
@@ -552,29 +485,6 @@ pub const Gbm = struct {
         const create_result = c_linux.drmSyncobjHandleToFD(gbm.dri.handle, syncobj, &fd);
         std.debug.assert(create_result == 0);
         return fd;
-    }
-};
-
-pub const ViewportTag = enum {
-    gl,
-    cpu,
-
-    pub fn TypeFromTag(tag: ViewportTag) type {
-        return switch (tag) {
-            .gl => ViewportGL,
-            .cpu => ViewportCpu,
-        };
-    }
-};
-
-pub const Viewport = union(ViewportTag) {
-    gl: *ViewportGL,
-    cpu: *ViewportCpu,
-
-    pub fn base(vp: *Viewport) *ViewportBase {
-        return switch (vp.*) {
-            inline else => |v| &v.base,
-        };
     }
 };
 
@@ -638,8 +548,8 @@ const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const SubViewportID = ptypes.SubViewportID;
 const BufferID = ptypes.BufferID;
-const ViewportGL = @import("ViewportGL.zig");
-const ViewportCpu = @import("ViewportCpu.zig");
 const log = std.log.scoped(.Client);
 const buffers = @import("buffers.zig");
-const ViewportBase = @import("ViewportBase.zig");
+const Viewport = @import("Viewport.zig");
+const RendererGL = @import("RendererGL.zig");
+const RendererCpu = @import("RendererCpu.zig");

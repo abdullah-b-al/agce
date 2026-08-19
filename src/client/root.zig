@@ -100,13 +100,11 @@ pub fn poll_for_events(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
 
 pub fn update(handle: *ClientHandle) !void {
     const client = handle.cast();
-    for (client.viewports.values()) |*vp| {
-        const base = vp.base();
-
-        while (base.messages.pop()) |message| {
+    for (client.viewports.values()) |vp| {
+        while (vp.messages.pop()) |message| {
             switch (message) {
                 inline else => |_, tag| {
-                    base.handle_message(tag, message) catch |err| switch (err) {
+                    vp.handle_message(tag, message) catch |err| switch (err) {
                         else => |e| return e,
                     };
                 },
@@ -146,8 +144,8 @@ pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportID {
 pub fn viewport_resize(handle: *ClientHandle, id: ViewportID, requseted_width: u32, requseted_height: u32) !void {
     const client = handle.cast();
     const vp = client.viewports.get(id) orelse return;
-    const buffer_size = switch (vp) {
-        inline else => |v| v.buffer_size(),
+    const buffer_size = switch (vp.renderer) {
+        inline else => |r| r.buffer_size(),
     };
 
     const width = @min(buffer_size[0], requseted_width);
@@ -166,56 +164,35 @@ pub fn viewport_resize(handle: *ClientHandle, id: ViewportID, requseted_width: u
         },
     );
 
-    switch (vp) {
-        inline else => |v| {
-            v.width = width;
-            v.height = width;
-        },
-    }
+    vp.width = width;
+    vp.height = width;
 }
 
 pub fn viewport_size(handle: *ClientHandle, id: ViewportID) ?[2]u32 {
     const client = handle.cast();
     const vp = client.viewports.get(id) orelse return null;
-    return switch (vp) {
-        inline else => |v| .{ v.base.width, v.base.height },
-    };
+    return .{ vp.width, vp.height };
 }
 
 pub fn viewport_open(handle: *ClientHandle, id: ViewportID) bool {
     const client = handle.cast();
     const vp = client.viewports.get(id) orelse return false;
-    return switch (vp) {
-        inline else => |v| v.base.open,
-    };
+    return vp.open;
 }
 
 pub fn frame_wait_for_vsync_if_enabled(handle: *ClientHandle, viewport_id: ViewportID) !void {
     const client = handle.cast();
     const vp = client.viewports.get(viewport_id) orelse return;
-    const vsync_enabled = switch (vp) {
-        .cpu => @panic("TODO"),
-        .gl => |gl| gl.vsync,
-    };
-    if (!vsync_enabled) return;
+    if (!vp.vsync) return;
     try frame_wait_for_vsync(handle, viewport_id);
 }
 
 pub fn frame_wait_for_vsync(handle: *ClientHandle, viewport_id: ViewportID) !void {
     const client = handle.cast();
     const vp = client.viewports.get(viewport_id) orelse return;
-    const vsync_enabled = switch (vp) {
-        .cpu => @panic("TODO"),
-        .gl => |gl| gl.vsync,
-    };
-    std.debug.assert(vsync_enabled);
+    std.debug.assert(vp.vsync);
 
-    const can_render: *bool = switch (vp) {
-        .cpu => @panic("TODO"),
-        .gl => |gl| &gl.can_render,
-    };
-
-    while (!can_render.*) {
+    while (!vp.can_render) {
         try client.wait_for(.frame_render);
         try client.update_by_tag(.frame_render);
     }
@@ -223,44 +200,44 @@ pub fn frame_wait_for_vsync(handle: *ClientHandle, viewport_id: ViewportID) !voi
 
 pub fn gl_viewport_create_from_pending(handle: *ClientHandle, vsync: bool, viewport_id: ViewportID) !GlViewportID {
     const vp = try handle.cast().viewport_create_from_pending(.gl, viewport_id, vsync);
-    return .{ .generic = vp.base.id };
+    return .{ .generic = vp.id };
 }
 
 pub fn gl_viewport_create(handle: *ClientHandle, width: u32, height: u32, vsync: bool) !GlViewportID {
     const vp = try handle.cast().viewport_create(.gl, width, height, vsync);
-    return .{ .generic = vp.base.id };
+    return .{ .generic = vp.id };
 }
 
 pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBeginGl {
     const client = handle.cast();
 
     const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
-    std.debug.assert(vp == .gl);
-    const gl = vp.gl;
+    std.debug.assert(vp.renderer == .gl);
+    const gl = &vp.renderer.gl;
 
-    if (!gl.base.open) return error.ViewportClosed;
+    if (!vp.open) return error.ViewportClosed;
 
-    std.debug.assert(gl.base.current_buffer == null);
+    std.debug.assert(vp.current_buffer == null);
 
     const buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
         error.Timeout => unreachable,
     };
 
-    gl.base.current_buffer = buffer.id;
+    vp.current_buffer = buffer.id;
     return .{
         .fbo = buffer.fbo,
-        .viewport_width = gl.base.width,
-        .viewport_height = gl.base.height,
+        .viewport_width = vp.width,
+        .viewport_height = vp.height,
     };
 }
 
 pub fn gl_frame_end(handle: *ClientHandle, viewport_id: GlViewportID) void {
     const client = handle.cast();
     const vp = client.viewports.get(viewport_id.generic) orelse @panic("Viewport destroyed or never existed");
-    std.debug.assert(vp == .gl);
-    const gl = vp.gl;
+    std.debug.assert(vp.renderer == .gl);
+    const gl = &vp.renderer.gl;
 
-    const buffer = gl.buffers_collection.available.getPtr(gl.base.current_buffer.?) orelse
+    const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
         @panic("Buffer prematurely destroyed");
 
     gl.frame_end(buffer);
@@ -271,38 +248,38 @@ pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void 
     const vp = client.viewports.get(viewport_id.generic) orelse
         @panic("Viewport destroyed or never existed");
 
-    std.debug.assert(vp == .gl);
-    const gl = vp.gl;
-    defer gl.base.current_buffer = null;
+    std.debug.assert(vp.renderer == .gl);
+    const gl = &vp.renderer.gl;
+    defer vp.current_buffer = null;
 
-    const buffer = gl.buffers_collection.available.getPtr(gl.base.current_buffer.?) orelse
+    const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
         @panic("Buffer prematurely destroyed");
 
-    try gl.buffer_present(buffer);
+    try gl.buffer_present(vp, buffer);
 }
 
 pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuViewportID {
     const vp = try handle.cast().viewport_create(.cpu, width, height, false);
-    return .{ .generic = vp.base.id };
+    return .{ .generic = vp.id };
 }
 
 pub fn cpu_viewport_create_from_pending(handle: *ClientHandle, viewport_id: ViewportID) !CpuViewportID {
     const vp = try handle.cast().viewport_create_from_pending(.cpu, viewport_id, false);
-    return .{ .generic = vp.base.id };
+    return .{ .generic = vp.id };
 }
 
 pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !FrameBeginCpu {
     const client = handle.cast();
 
     const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
-    std.debug.assert(vp == .cpu);
-    const cpu = vp.cpu;
+    std.debug.assert(vp.renderer == .cpu);
+    const cpu = &vp.renderer.cpu;
 
-    if (!cpu.base.open) return error.ViewportClosed;
+    if (!vp.open) return error.ViewportClosed;
 
-    std.debug.assert(cpu.base.current_buffer == null);
+    std.debug.assert(vp.current_buffer == null);
 
-    var buffer: ?*ViewportCpu.Buffer = null;
+    var buffer: ?*RendererCpu.Buffer = null;
     while (buffer == null) {
         buffer = cpu.get_buffer() orelse {
             std.debug.assert(cpu.buffers_collection.available.count() > 0);
@@ -312,15 +289,15 @@ pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !Frame
         };
     }
 
-    cpu.base.current_buffer = buffer.?.id;
+    vp.current_buffer = buffer.?.id;
 
     return .{
         .buffer = buffer.?.data,
         .width = buffer.?.width,
         .height = buffer.?.height,
         .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
-        .viewport_width = cpu.base.width,
-        .viewport_height = cpu.base.height,
+        .viewport_width = vp.width,
+        .viewport_height = vp.height,
     };
 }
 
@@ -330,12 +307,12 @@ pub fn cpu_frame_present(handle: *ClientHandle, viewport_id: CpuViewportID) !voi
     const client = handle.cast();
 
     const vp = client.viewports.get(viewport_id.generic) orelse return;
-    std.debug.assert(vp == .cpu);
-    const cpu = vp.cpu;
-    defer cpu.base.current_buffer = null;
+    std.debug.assert(vp.renderer == .cpu);
+    const cpu = &vp.renderer.cpu;
+    defer vp.current_buffer = null;
 
-    const buffer = cpu.buffers_collection.available.getPtr(cpu.base.current_buffer.?).?;
-    try cpu.buffer_present(buffer);
+    const buffer = cpu.buffers_collection.available.getPtr(vp.current_buffer.?).?;
+    try cpu.buffer_present(vp, buffer);
 }
 
 pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
@@ -441,6 +418,6 @@ const ptypes = @import("protocol").types;
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;
 const Client = @import("Client.zig");
-const ViewportGL = @import("ViewportGL.zig");
-const ViewportCpu = @import("ViewportCpu.zig");
+const RendererGL = @import("RendererGL.zig");
+const RendererCpu = @import("RendererCpu.zig");
 const buffers = @import("buffers.zig");

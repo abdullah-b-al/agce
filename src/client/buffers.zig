@@ -1,13 +1,13 @@
 pub fn buffers_create(
     comptime Buffer: type,
     comptime count: usize,
-    viewport_base: *ViewportBase,
+    viewport: *Viewport,
     client: *Client,
     collection: *Collection(Buffer),
     buffer_init_args: anytype,
 ) ![count]Buffer {
     try collection.ensure_unused_capacity(client.gpa, count);
-    try viewport_base.buffers_status.ensureUnusedCapacity(client.gpa, count);
+    try viewport.buffers_status.ensureUnusedCapacity(client.gpa, count);
 
     var array: [count]Buffer = undefined;
 
@@ -25,11 +25,11 @@ pub fn buffers_create(
     }
 
     for (array) |b| {
-        try b.create_on_server(viewport_base, client);
+        try b.create_on_server(viewport, client);
         while (true) {
-            try client.wait_for(viewport_base.id, .buffer_created);
-            try client.update_by_tag(viewport_base.id, .buffer_created);
-            switch (viewport_base.buffers_status.get(b.id).?) {
+            try client.wait_for(viewport.id, .buffer_created);
+            try client.update_by_tag(viewport.id, .buffer_created);
+            switch (viewport.buffers_status.get(b.id).?) {
                 .failed => return error.BufferCreateFailed,
                 .created => {
                     log.debug("Buffer created {f} {}x{}", .{ b.id, b.width, b.height });
@@ -46,12 +46,12 @@ pub fn buffers_create(
 pub fn buffers_resize(
     comptime Buffer: type,
     comptime count: usize,
-    vp_base: *ViewportBase,
+    vp: *Viewport,
     client: *Client,
     collection: *Collection(Buffer),
     buffer_init_args: anytype,
 ) !void {
-    const array = try buffers_create(Buffer, count, vp_base, client, collection, buffer_init_args);
+    const array = try buffers_create(Buffer, count, vp, client, collection, buffer_init_args);
 
     errdefer comptime unreachable;
 
@@ -156,4 +156,4 @@ const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
 const log = std.log.scoped(.buffers);
-const ViewportBase = @import("ViewportBase.zig");
+const Viewport = @import("Viewport.zig");
