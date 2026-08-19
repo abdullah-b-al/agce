@@ -100,13 +100,17 @@ pub fn poll_for_events(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
 
 pub fn update(handle: *ClientHandle) !void {
     const client = handle.cast();
-    while (client.messages.pop()) |message| {
-        switch (message) {
-            inline else => |_, tag| {
-                client.message_handle(tag, message) catch |err| switch (err) {
-                    else => |e| return e,
-                };
-            },
+    for (client.viewports.values()) |*vp| {
+        const base = vp.base();
+
+        while (base.messages.pop()) |message| {
+            switch (message) {
+                inline else => |_, tag| {
+                    base.handle_message(tag, message) catch |err| switch (err) {
+                        else => |e| return e,
+                    };
+                },
+            }
         }
     }
 }
@@ -302,8 +306,8 @@ pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !Frame
     while (buffer == null) {
         buffer = cpu.get_buffer() orelse {
             std.debug.assert(cpu.buffers_collection.available.count() > 0);
-            try client.wait_for(.buffer_released);
-            try client.update_by_tag(.buffer_released);
+            try client.wait_for(viewport_id.generic, .buffer_released);
+            try client.update_by_tag(viewport_id.generic, .buffer_released);
             continue;
         };
     }
@@ -355,7 +359,10 @@ pub fn sub_viewport_embed(
 ) !SubViewportID {
     const client = handle.cast();
 
+    try client.sub_viewport_status.ensureUnusedCapacity(client.gpa, 1);
+
     const id = client.next_sub_viewport_id.increment();
+    client.sub_viewport_status.putAssumeCapacityNoClobber(id, .pending);
 
     try client_to_server.message_send_json(
         client.io,

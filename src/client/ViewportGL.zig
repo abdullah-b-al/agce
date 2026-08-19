@@ -20,6 +20,7 @@ pub fn init(
 }
 
 pub fn deinit(vp: *ViewportGL) void {
+    vp.base.deinit();
     vp.buffers_collection.deinit(vp.base.client.gpa);
 }
 
@@ -161,6 +162,7 @@ pub fn resize(
         try buffers.buffers_resize(
             ViewportGL.Buffer,
             2,
+            &vp.base,
             vp.base.client,
             &vp.buffers_collection,
             .{ vp.base.client, new_width, new_height, vp.base.format },
@@ -235,8 +237,8 @@ pub const Buffer = struct {
         };
     }
 
-    pub fn create_on_server(buffer: Buffer, client: *Client) !void {
-        try client.send_buffer_create_gpu_with_fds(buffer);
+    pub fn create_on_server(buffer: Buffer, base: *ViewportBase, client: *Client) !void {
+        try client.send_buffer_create_gpu_with_fds(base, buffer);
     }
 
     pub fn deinit(buffer: *Buffer) void {
