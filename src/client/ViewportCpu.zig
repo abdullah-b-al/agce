@@ -5,13 +5,19 @@ id: ViewportID,
 width: u32,
 height: u32,
 format: ptypes.BufferFormat,
-create_status: CreateStatus,
 open: bool,
+vsync: bool,
 
 buffers_collection: buffers.Collection(Buffer),
 current_buffer: ?BufferID,
 
-pub fn init(id: ViewportID, client: *Client, width: u32, height: u32) !ViewportCpu {
+pub fn init(
+    id: ViewportID,
+    client: *Client,
+    width: u32,
+    height: u32,
+    vsync: bool,
+) !ViewportCpu {
     const format: ptypes.BufferFormat = .argb8888;
     return .{
         .client = client,
@@ -20,7 +26,7 @@ pub fn init(id: ViewportID, client: *Client, width: u32, height: u32) !ViewportC
         .height = height,
         .format = format,
         .open = true,
-        .create_status = .pending,
+        .vsync = vsync,
 
         .buffers_collection = .empty,
         .current_buffer = null,

@@ -218,49 +218,13 @@ pub fn frame_wait_for_vsync(handle: *ClientHandle, viewport_id: ViewportID) !voi
 }
 
 pub fn gl_viewport_create_from_pending(handle: *ClientHandle, vsync: bool, viewport_id: ViewportID) !GlViewportID {
-    const client = handle.cast();
-
-    std.debug.assert(
-        client.viewports_from_server.contains(viewport_id),
-    );
-    const size = client.viewports_from_server.get(viewport_id).?;
-
-    const vp = try client.gl_viewport_create_with_id(viewport_id, size.width, size.height, vsync);
-
-    _ = client.viewports_from_server.orderedRemove(viewport_id);
-
-    try client.send_viewport_create(viewport_id, size.width, size.height, false);
-    while (vp.create_status == .pending) {
-        try client.wait_for(.viewport_created);
-        try client.update_by_tag(.viewport_created);
-
-        switch (vp.create_status) {
-            .pending, .created => {},
-            .failed => return error.ViewportCreateFailed,
-        }
-    }
-
-    return .{ .generic = viewport_id };
+    const vp = try handle.cast().viewport_create_from_pending(.gl, viewport_id, vsync);
+    return .{ .generic = vp.id };
 }
 
 pub fn gl_viewport_create(handle: *ClientHandle, width: u32, height: u32, vsync: bool) !GlViewportID {
-    const client = handle.cast();
-
-    const id = client.next_viewport_id.increment_for_client();
-    const vp = try client.gl_viewport_create_with_id(id, width, height, vsync);
-
-    try client.send_viewport_create(id, width, height, true);
-    while (vp.create_status == .pending) {
-        try client.wait_for(.viewport_created);
-        try client.update_by_tag(.viewport_created);
-
-        switch (vp.create_status) {
-            .pending, .created => {},
-            .failed => return error.ViewportCreateFailed,
-        }
-    }
-
-    return .{ .generic = id };
+    const vp = try handle.cast().viewport_create(.gl, width, height, vsync);
+    return .{ .generic = vp.id };
 }
 
 pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBeginGl {
@@ -314,50 +278,15 @@ pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void 
 }
 
 pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuViewportID {
-    const client = handle.cast();
-
-    const id = client.next_viewport_id.increment_for_client();
-    const vp = try client.cpu_viewport_create_with_id(id, width, height);
-
-    try client.send_viewport_create(vp.id, width, height, true);
-    while (vp.create_status == .pending) {
-        try client.wait_for(.viewport_created);
-        try client.update_by_tag(.viewport_created);
-
-        switch (vp.create_status) {
-            .pending, .created => {},
-            .failed => return error.ViewportCreateFailed,
-        }
-    }
-
+    const vp = try handle.cast().viewport_create(.cpu, width, height, false);
     return .{ .generic = vp.id };
 }
 
 pub fn cpu_viewport_create_from_pending(handle: *ClientHandle, viewport_id: ViewportID) !CpuViewportID {
-    const client = handle.cast();
-
-    std.debug.assert(
-        client.viewports_from_server.contains(viewport_id),
-    );
-    const size = client.viewports_from_server.get(viewport_id).?;
-
-    const vp = try client.cpu_viewport_create_with_id(viewport_id, size.width, size.height);
-
-    _ = client.viewports_from_server.orderedRemove(viewport_id);
-
-    try client.send_viewport_create(viewport_id, size.width, size.height, false);
-    while (vp.create_status == .pending) {
-        try client.wait_for(.viewport_created);
-        try client.update_by_tag(.viewport_created);
-
-        switch (vp.create_status) {
-            .pending, .created => {},
-            .failed => return error.ViewportCreateFailed,
-        }
-    }
-
-    return .{ .generic = viewport_id };
+    const vp = try handle.cast().viewport_create_from_pending(.cpu, viewport_id, false);
+    return .{ .generic = vp.id };
 }
+
 pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !FrameBeginCpu {
     const client = handle.cast();
 

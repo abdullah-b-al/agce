@@ -593,6 +593,8 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
     window.surface.commit();
     _ = wl.display.flush();
 
+    log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_id });
+
     return .{ .client_id = rs.client_id, .viewport_id = args.payload.viewport_id };
 }
 
