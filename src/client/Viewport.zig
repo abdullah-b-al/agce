@@ -94,7 +94,7 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
             }
         },
         .viewport_closed => {
-            vp.open = true;
+            vp.open = false;
         },
 
         .buffer_released => {
