@@ -138,7 +138,7 @@ pub const Status = enum {
     old,
 };
 
-pub const CreateStatus = enum {
+pub const BufferStatus = enum {
     created,
     failed,
 };

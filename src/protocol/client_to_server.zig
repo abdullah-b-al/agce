@@ -15,11 +15,39 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_present: BufferPresent,
     buffer_present_with_sync: BufferPresentWithSync,
 
+    viewport_create: ViewportCreate,
     viewport_resize: types.ViewportResize,
-
-    window_create: types.WindowCreate,
+    sub_viewport_embed: SubViewportEmbed,
+    sub_viewport_rect_set: SubViewportRectSet,
 
     cursor_shape_set: CursorShape,
+
+    client_info_set: types.ClientInfoClone,
+
+    pub const ViewportCreate = struct {
+        viewport_id: types.ViewportID,
+        create_sync_timeline: bool,
+        vsync: bool,
+
+        /// Ignored if the viewport is a sub-viewport
+        width: u32,
+        /// Ignored if the viewport is a sub-viewport
+        height: u32,
+        /// Ignored if the viewport is a sub-viewport
+        create_window: bool,
+    };
+
+    pub const SubViewportEmbed = struct {
+        client_id_to_embed: types.ClientID,
+        sub_viewport_id: types.SubViewportID,
+        rect: types.Rect,
+        embeder_viewport_id: types.ViewportID,
+    };
+
+    pub const SubViewportRectSet = struct {
+        sub_viewport_id: types.SubViewportID,
+        rect: types.Rect,
+    };
 
     pub const BufferCreateCpuWithFd = struct {
         buffer_id: types.BufferID,
@@ -102,11 +130,15 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
                 p.fds,
             );
         },
+
+        .sub_viewport_embed,
+        .sub_viewport_rect_set,
+        .client_info_set,
         .cursor_shape_set,
         .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
-        .window_create,
+        .viewport_create,
         .viewport_resize,
         => {
             var buf: [4096]u8 = undefined;
@@ -197,11 +229,14 @@ fn read_and_parse_data_json_linux(
             return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
 
+        .sub_viewport_embed,
+        .sub_viewport_rect_set,
+        .client_info_set,
         .cursor_shape_set,
         .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
-        .window_create,
+        .viewport_create,
         .viewport_resize,
         => {
             return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
@@ -224,9 +259,12 @@ fn read_and_parse_data_json(
         inline .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
-        .window_create,
         .viewport_resize,
         .cursor_shape_set,
+        .client_info_set,
+        .sub_viewport_embed,
+        .sub_viewport_rect_set,
+        .viewport_create,
         => |tag| {
             const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

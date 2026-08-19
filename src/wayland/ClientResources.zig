@@ -1,25 +1,37 @@
 const ClientResources = @This();
 
 client_id: ClientID,
+info: ?ptypes.ClientInfoClone,
 wl_buffers_pending: std.array_hash_map.Auto(BufferID, void),
 
 buffers_commited: std.array_hash_map.Auto(BufferID, ViewportID),
 
 buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
+next_viewport_id: ViewportID,
 viewports: std.array_hash_map.Auto(ViewportID, Viewport),
+viewports_pending: std.array_hash_map.Auto(ViewportID, void),
+sub_viewports_pending: std.array_hash_map.Auto(SubViewportID, SubViewportPending),
 
 pub fn init(id: ClientID) ClientResources {
     return .{
         .client_id = id,
+        .info = null,
         .wl_buffers_pending = .empty,
         .buffers_commited = .empty,
         .buffers = .empty,
+        .next_viewport_id = .first_for_server,
         .viewports = .empty,
+        .viewports_pending = .empty,
+        .sub_viewports_pending = .empty,
     };
 }
 
 pub fn deinit(rs: *ClientResources, wl: *Wayland) void {
+    if (rs.info) |*info| {
+        info.deinit(wl.gpa);
+    }
+
     for (rs.buffers.values()) |*buffer| {
         _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wl_buffer()));
         buffer.destroy();
@@ -29,8 +41,11 @@ pub fn deinit(rs: *ClientResources, wl: *Wayland) void {
     rs.wl_buffers_pending.deinit(wl.gpa);
     rs.buffers_commited.deinit(wl.gpa);
 
-    for (rs.viewports.values()) |*vp| vp.deinit();
+    for (rs.viewports.values()) |*vp| vp.deinit(wl.gpa);
     rs.viewports.deinit(wl.gpa);
+
+    rs.viewports_pending.deinit(wl.gpa);
+    rs.sub_viewports_pending.deinit(wl.gpa);
 }
 
 pub fn viewport_create(
@@ -38,8 +53,7 @@ pub fn viewport_create(
     wl: *Wayland,
     parent_surface: *cwl.Surface,
     viewport_id: ViewportID,
-    width: i32,
-    height: i32,
+    rect: ptypes.Rect,
     create_sync_timeline: bool,
     vsync: bool,
 ) !void {
@@ -48,8 +62,7 @@ pub fn viewport_create(
         wl,
         parent_surface,
         viewport_id,
-        width,
-        height,
+        rect,
         vsync,
     );
 
@@ -179,6 +192,40 @@ pub fn viewport_mark_commit(rs: *ClientResources, gpa: std.mem.Allocator, buffer
 
     const commited = rs.buffers_commited.getOrPutAssumeCapacity(buffer_id);
     commited.value_ptr.* = viewport_id;
+}
+
+pub fn sub_viewports_pending_fetch_remove_by_embeded_key(rs: *ClientResources, key: ViewportKey) ?SubViewportPending {
+    const id = blk: {
+        for (rs.sub_viewports_pending.values()) |sub| {
+            if (std.meta.eql(sub.to_embed, key)) {
+                break :blk sub.sub_viewport_id;
+            }
+        }
+
+        return null;
+    };
+
+    return rs.sub_viewports_pending.fetchOrderedRemove(id).?.value;
+}
+
+pub fn contains_viewport_as_subviewport(rs: *const ClientResources, key: ViewportKey) bool {
+    for (rs.viewports.values()) |vp| {
+        for (vp.sub_viewports.values()) |k| {
+            if (std.meta.eql(k, key)) return true;
+        }
+    }
+
+    return false;
+}
+
+pub fn viewport_key_from_sub_viewport_id(rs: *const ClientResources, id: SubViewportID) ?ViewportKey {
+    for (rs.viewports.values()) |vp| {
+        for (vp.sub_viewports.keys(), vp.sub_viewports.values()) |k, v| {
+            if (k == id) return v;
+        }
+    }
+
+    return null;
 }
 
 pub const Buffer = union(enum) {
@@ -323,6 +370,14 @@ pub const BufferListener = struct {
         }
     }
 };
+
+pub const SubViewportPending = struct {
+    sub_viewport_id: SubViewportID,
+    rect: ptypes.Rect,
+    to_embed: ViewportKey,
+    embed_in: ViewportID,
+};
+
 const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -339,7 +394,8 @@ const BufferKey = @import("../WindowSystem.zig").BufferKey;
 const WindowSystem = @import("../WindowSystem.zig");
 const BufferID = ptypes.BufferID;
 const ViewportID = ptypes.ViewportID;
+const SubViewportID = ptypes.SubViewportID;
 const CpuBufferFd = ptypes.CpuBufferFd;
-const ClientID = @import("../server/Clients.zig").ClientID;
+const ClientID = ptypes.ClientID;
 const Dispatch = @import("../Dispatch.zig");
 const Viewport = @import("Viewport.zig");

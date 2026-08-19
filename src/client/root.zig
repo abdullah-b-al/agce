@@ -2,8 +2,12 @@ pub const Event = Client.Event;
 pub const opengl = @import("opengl.zig");
 
 pub const ViewportID = ptypes.ViewportID;
+pub const SubViewportID = ptypes.SubViewportID;
 pub const BufferID = ptypes.BufferID;
 pub const CursorShape = ptypes.CursorShape;
+pub const ClientInfo = ptypes.ClientInfo;
+pub const ClientID = ptypes.ClientID;
+pub const Rect = ptypes.Rect;
 
 pub const Key = @import("protocol").input.Key;
 pub const KeyState = @import("protocol").input.KeyState;
@@ -37,11 +41,22 @@ pub fn init(
     io: std.Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
+    info: ?ClientInfo,
 ) !*ClientHandle {
     const client = try gpa.create(Client);
     errdefer gpa.destroy(client);
 
-    client.* = try .init(io, gpa, environ_map);
+    client.* = try .init(io, gpa, environ_map, info);
+    errdefer client.deinit();
+
+    if (client.info) |i| {
+        try client_to_server.message_send_json(
+            io,
+            gpa,
+            client.connection,
+            .{ .client_info_set = i },
+        );
+    }
 
     return @ptrCast(client);
 }
@@ -114,6 +129,14 @@ pub fn event_pop(handle: *ClientHandle, viewport_id: ViewportID) ?Client.Event {
     }
 
     return null;
+}
+
+pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportID {
+    const client = handle.cast();
+    if (client.viewports_from_server.count() == 0)
+        return null;
+
+    return client.viewports_from_server.keys()[0];
 }
 
 pub fn viewport_resize(handle: *ClientHandle, id: ViewportID, requseted_width: u32, requseted_height: u32) !void {
@@ -194,57 +217,50 @@ pub fn frame_wait_for_vsync(handle: *ClientHandle, viewport_id: ViewportID) !voi
     }
 }
 
-pub fn window_create(
-    handle: *ClientHandle,
-    viewport_id: ViewportID,
-    width: u32,
-    height: u32,
-) !void {
+pub fn gl_viewport_create_from_pending(handle: *ClientHandle, vsync: bool, viewport_id: ViewportID) !GlViewportID {
     const client = handle.cast();
 
-    const create_sync_timeline, const vsync = blk: {
-        const vp = client.viewports.get(viewport_id).?;
-        break :blk switch (vp) {
-            .gl => |gl| .{ true, gl.vsync },
-            .cpu => .{ false, false },
-        };
-    };
+    std.debug.assert(
+        client.viewports_from_server.contains(viewport_id),
+    );
+    const size = client.viewports_from_server.get(viewport_id).?;
 
-    try client_to_server.message_send_json(client.io, client.gpa, client.connection, .{
-        .window_create = .{
-            .viewport_id = viewport_id,
-            .width = width,
-            .height = height,
-            .create_sync_timeline = create_sync_timeline,
-            .vsync = vsync,
-        },
-    });
+    const vp = try client.gl_viewport_create_with_id(viewport_id, size.width, size.height, vsync);
+
+    _ = client.viewports_from_server.orderedRemove(viewport_id);
+
+    try client.send_viewport_create(viewport_id, size.width, size.height, false);
+    while (vp.create_status == .pending) {
+        try client.wait_for(.viewport_created);
+        try client.update_by_tag(.viewport_created);
+
+        switch (vp.create_status) {
+            .pending, .created => {},
+            .failed => return error.ViewportCreateFailed,
+        }
+    }
+
+    return .{ .generic = viewport_id };
 }
 
 pub fn gl_viewport_create(handle: *ClientHandle, width: u32, height: u32, vsync: bool) !GlViewportID {
     const client = handle.cast();
-    const format: ptypes.BufferFormat = .argb8888;
-    try client.viewports.ensureUnusedCapacity(client.gpa, 1);
 
-    const vp = try client.gpa.create(ViewportGL);
-    vp.* = try .init(client, width, height, vsync);
-    client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .gl = vp });
+    const id = client.next_viewport_id.increment_for_client();
+    const vp = try client.gl_viewport_create_with_id(id, width, height, vsync);
 
-    const array = try buffers.buffers_create(
-        ViewportGL.Buffer,
-        2,
-        client,
-        &vp.buffers_collection,
-        .{ client, width, height, format },
-    );
+    try client.send_viewport_create(id, width, height, true);
+    while (vp.create_status == .pending) {
+        try client.wait_for(.viewport_created);
+        try client.update_by_tag(.viewport_created);
 
-    errdefer comptime unreachable;
-
-    for (array) |b| {
-        vp.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
+        switch (vp.create_status) {
+            .pending, .created => {},
+            .failed => return error.ViewportCreateFailed,
+        }
     }
 
-    return .{ .generic = vp.id };
+    return .{ .generic = id };
 }
 
 pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBeginGl {
@@ -300,29 +316,48 @@ pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void 
 pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuViewportID {
     const client = handle.cast();
 
-    try client.viewports.ensureUnusedCapacity(client.gpa, 1);
-    const vp = try client.gpa.create(ViewportCpu);
-    vp.* = try .init(client, width, height);
+    const id = client.next_viewport_id.increment_for_client();
+    const vp = try client.cpu_viewport_create_with_id(id, width, height);
 
-    const array = try buffers.buffers_create(
-        ViewportCpu.Buffer,
-        2,
-        client,
-        &vp.buffers_collection,
-        .{ client, width, height, vp.format },
-    );
+    try client.send_viewport_create(vp.id, width, height, true);
+    while (vp.create_status == .pending) {
+        try client.wait_for(.viewport_created);
+        try client.update_by_tag(.viewport_created);
 
-    errdefer comptime unreachable;
-
-    for (array) |b| {
-        vp.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
+        switch (vp.create_status) {
+            .pending, .created => {},
+            .failed => return error.ViewportCreateFailed,
+        }
     }
-
-    client.viewports.putAssumeCapacityNoClobber(vp.id, .{ .cpu = vp });
 
     return .{ .generic = vp.id };
 }
 
+pub fn cpu_viewport_create_from_pending(handle: *ClientHandle, viewport_id: ViewportID) !CpuViewportID {
+    const client = handle.cast();
+
+    std.debug.assert(
+        client.viewports_from_server.contains(viewport_id),
+    );
+    const size = client.viewports_from_server.get(viewport_id).?;
+
+    const vp = try client.cpu_viewport_create_with_id(viewport_id, size.width, size.height);
+
+    _ = client.viewports_from_server.orderedRemove(viewport_id);
+
+    try client.send_viewport_create(viewport_id, size.width, size.height, false);
+    while (vp.create_status == .pending) {
+        try client.wait_for(.viewport_created);
+        try client.update_by_tag(.viewport_created);
+
+        switch (vp.create_status) {
+            .pending, .created => {},
+            .failed => return error.ViewportCreateFailed,
+        }
+    }
+
+    return .{ .generic = viewport_id };
+}
 pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !FrameBeginCpu {
     const client = handle.cast();
 
@@ -382,6 +417,88 @@ pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: C
         },
     );
 }
+
+pub fn sub_viewport_embed(
+    handle: *ClientHandle,
+    viewport_id: ViewportID,
+    client_id_to_embed: ClientID,
+    rect: Rect,
+) !SubViewportID {
+    const client = handle.cast();
+
+    const id = client.next_sub_viewport_id.increment();
+
+    try client_to_server.message_send_json(
+        client.io,
+        client.gpa,
+        client.connection,
+        .{
+            .sub_viewport_embed = .{
+                .client_id_to_embed = client_id_to_embed,
+                .embeder_viewport_id = viewport_id,
+                .rect = rect,
+                .sub_viewport_id = id,
+            },
+        },
+    );
+
+    return id;
+}
+
+pub fn sub_viewport_rect_set(
+    handle: *ClientHandle,
+    sub_viewport_id: SubViewportID,
+    rect: Rect,
+) !void {
+    const client = handle.cast();
+
+    try client_to_server.message_send_json(
+        client.io,
+        client.gpa,
+        client.connection,
+        .{
+            .sub_viewport_rect_set = .{
+                .rect = rect,
+                .sub_viewport_id = sub_viewport_id,
+            },
+        },
+    );
+}
+
+pub fn client_info_iterator(handle: *ClientHandle) ClientInfoIterator {
+    return .{
+        .handle = handle,
+        .i = 0,
+    };
+}
+
+pub const ClientInfoIterator = struct {
+    handle: *ClientHandle,
+    i: usize,
+
+    pub fn next(iter: *ClientInfoIterator) ?Result {
+        const client = iter.handle.cast();
+        if (iter.i >= client.other_clients.count()) return null;
+        defer iter.i += 1;
+
+        const id, const clone = .{
+            client.other_clients.keys()[iter.i],
+            client.other_clients.values()[iter.i],
+        };
+
+        return .{
+            .client_id = id,
+            .info = .{
+                .name = clone.strings[clone.name.offset..][0..clone.name.len],
+            },
+        };
+    }
+
+    pub const Result = struct {
+        client_id: ptypes.ClientID,
+        info: ptypes.ClientInfo,
+    };
+};
 
 const std = @import("std");
 const ptypes = @import("protocol").types;

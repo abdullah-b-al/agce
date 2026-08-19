@@ -77,6 +77,7 @@ pub const WindowSystemEvent = union(enum) {
     exit,
     client_connected: ClientID,
     client_disconnected: ClientID,
+    client_info_set: WithClientID(ptypes.ClientInfoCloneManaged),
 
     buffer_create_cpu_with_fd: WithClientID(Payload.BufferCreateCpuWithFd),
     buffer_create_gpu_with_fds: WithClientID(Payload.BufferCreateGpuWithFds),
@@ -84,10 +85,12 @@ pub const WindowSystemEvent = union(enum) {
     buffer_present_with_sync: WithClientID(Payload.BufferPresentWithSync),
     buffer_destroy: WithClientID(Payload.BufferDestroy),
 
+    viewport_create: WithClientID(Payload.ViewportCreate),
     viewport_resize: WithClientID(ptypes.ViewportResize),
+    sub_viewport_embed: WithClientID(Payload.SubViewportEmbed),
+    sub_viewport_rect_set: WithClientID(Payload.SubViewportRectSet),
 
     windows_destroy,
-    window_create: WithClientID(ptypes.WindowCreate),
     window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
         signal: *Io.Event,
@@ -175,8 +178,14 @@ pub const ServerEvent = union(enum) {
 
     exit,
 
+    client_info: ClientInfo,
+
+    viewport_create: WithClientID(Payload.ViewportCreate),
+    viewport_created: WithClientID(Payload.ViewportCreated),
     viewport_resize: WithClientID(ptypes.ViewportResize),
     viewport_closed: WithClientID(Payload.ViewportClosed),
+
+    sub_viewport_embeded: WithClientID(Payload.SubviewportCreated),
 
     frame_render: WithClientID(Payload.FrameRender),
 
@@ -194,6 +203,11 @@ pub const ServerEvent = union(enum) {
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
     }
+
+    pub const ClientInfo = struct {
+        client_id: ptypes.ClientID,
+        managed: ptypes.ClientInfoCloneManaged,
+    };
 };
 
 pub fn WithClientID(comptime T: type) type {
@@ -241,7 +255,7 @@ const ViewportFds = ptypes.ViewportFds;
 const ViewportID = ptypes.ViewportID;
 const BufferFormat = ptypes.BufferFormat;
 const BufferID = ptypes.BufferID;
-const ClientID = @import("server/Clients.zig").ClientID;
+const ClientID = ptypes.ClientID;
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
 const WindowID = @import("WindowSystem.zig").WindowID;
 const utils = @import("utils");

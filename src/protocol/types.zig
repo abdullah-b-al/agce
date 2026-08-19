@@ -9,7 +9,7 @@ pub const ViewportID = enum(u32) {
     _,
 
     pub fn increment_for_client(id: *ViewportID) ViewportID {
-        std.debug.assert(@intFromEnum(id.*) < @intFromEnum(ViewportID.first_for_server));
+        std.debug.assert(!id.is_server_id());
 
         const int = @intFromEnum(id.*);
         id.* = @enumFromInt(int + 1);
@@ -17,15 +17,35 @@ pub const ViewportID = enum(u32) {
     }
 
     pub fn increment_for_server(id: *ViewportID) ViewportID {
-        std.debug.assert(@intFromEnum(id.*) >= @intFromEnum(ViewportID.first_for_server));
+        std.debug.assert(id.is_server_id());
 
         const int = @intFromEnum(id.*);
         id.* = @enumFromInt(int + 1);
         return @enumFromInt(int);
     }
 
+    pub fn is_server_id(id: ViewportID) bool {
+        return @intFromEnum(id) >= @intFromEnum(ViewportID.first_for_server);
+    }
+
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ViewportID({})", .{@intFromEnum(self)});
+    }
+};
+
+pub const SubViewportID = enum(u32) {
+    pub const first: @This() = @enumFromInt(1);
+
+    _,
+
+    pub fn increment(id: *SubViewportID) SubViewportID {
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("SubViewportID({})", .{@intFromEnum(self)});
     }
 };
 
@@ -189,6 +209,81 @@ pub const CursorShape = enum {
     all_scroll,
     zoom_in,
     zoom_out,
+};
+
+pub const ClientID = enum(u32) {
+    pub const first: ClientID = @enumFromInt(1);
+    _,
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ClientID({})", .{@intFromEnum(self)});
+    }
+};
+
+pub const ClientInfo = struct {
+    name: []const u8,
+};
+
+pub const ClientInfoCloneManaged = struct {
+    gpa: std.mem.Allocator,
+    unmanaged: ClientInfoClone,
+
+    pub fn clone(gpa: std.mem.Allocator, info: ClientInfo) !ClientInfoCloneManaged {
+        return .{ .gpa = gpa, .unmanaged = try .clone(gpa, info) };
+    }
+
+    pub fn deinit(managed: *ClientInfoCloneManaged) void {
+        managed.unmanaged.deinit(managed.gpa);
+    }
+};
+
+pub const ClientInfoClone = struct {
+    strings: []const u8,
+
+    name: String,
+
+    pub fn clone(gpa: std.mem.Allocator, info: ClientInfo) !ClientInfoClone {
+        const len = info.name.len;
+        const strings = try gpa.alloc(u8, len);
+        errdefer comptime unreachable;
+
+        var builder: StringsBuilder = .{ .buffer = strings, .i = 0 };
+
+        const result: ClientInfoClone = .{
+            .strings = strings,
+            .name = builder.copy(info.name),
+        };
+
+        std.debug.assert(builder.i == strings.len);
+
+        return result;
+    }
+
+    pub fn dupe(gpa: std.mem.Allocator, info: ClientInfoClone) !ClientInfoClone {
+        return .{
+            .strings = try gpa.dupe(u8, info.strings),
+            .name = info.name,
+        };
+    }
+
+    pub fn deinit(info: *ClientInfoClone, gpa: std.mem.Allocator) void {
+        gpa.free(info.strings);
+        info.strings = undefined;
+    }
+
+    pub const String = struct { offset: u32, len: u32 };
+
+    const StringsBuilder = struct {
+        buffer: []u8,
+        i: u32,
+
+        pub fn copy(builder: *StringsBuilder, string: []const u8) String {
+            const result: String = .{ .offset = builder.i, .len = @intCast(string.len) };
+            std.mem.copyForwards(u8, builder.buffer[builder.i..], string);
+            builder.i += @intCast(string.len);
+            return result;
+        }
+    };
 };
 
 pub fn MessageHeaderGeneric(comptime MessageTag: type) type {

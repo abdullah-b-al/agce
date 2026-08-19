@@ -92,6 +92,20 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .client_info_set => {
+            var args = event.client_info_set;
+            defer args.payload.deinit();
+
+            switch (ws.native) {
+                .wayland => |wl| try wl.client_info_set(args),
+                .win32 => @panic("TODO"),
+            }
+
+            switch (ws.native) {
+                .wayland => |wl| try wl.clients_info_broadcast(),
+                .win32 => @panic("TODO"),
+            }
+        },
         .buffer_create_gpu_with_fds => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.buffer_create_gpu_with_fds(ws.dispatch, args),
@@ -124,21 +138,68 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .viewport_create => |args| {
+            const result = switch (ws.native) {
+                .wayland => |wl| try wl.viewport_create(ws, args),
+                .win32 => @panic("TODO"),
+            };
+
+            switch (result) {
+                .create_with_window => |key| {
+                    try ws.dispatch.server_put(@src(), .{
+                        .viewport_created = .{
+                            .client_id = key.client_id,
+                            .payload = .{
+                                .viewport_id = key.viewport_id,
+                                .status = .success,
+                            },
+                        },
+                    });
+                },
+                .create_with_sub_viewport => |v| {
+                    try ws.dispatch.server_put(@src(), .{
+                        .viewport_created = .{
+                            .client_id = v.embeded.client_id,
+                            .payload = .{
+                                .viewport_id = v.embeded.viewport_id,
+                                .status = .success,
+                            },
+                        },
+                    });
+
+                    try ws.dispatch.server_put(@src(), .{
+                        .sub_viewport_embeded = .{
+                            .client_id = v.embeder.client_id,
+                            .payload = .{
+                                .sub_viewport_id = v.embeder.sub_viewport_id,
+                                .status = .success,
+                            },
+                        },
+                    });
+                },
+            }
+        },
         .viewport_resize => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.viewport_resize(args),
                 .win32 => @panic("TODO"),
             }
         },
-        .windows_destroy => {
+        .sub_viewport_embed => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.windows_destroy(),
+                .wayland => |wl| try wl.sub_viewport_embed(args),
                 .win32 => @panic("TODO"),
             }
         },
-        .window_create => |args| {
+        .sub_viewport_rect_set => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.window_create(ws, args),
+                .wayland => |wl| try wl.sub_viewport_rect_set(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .windows_destroy => {
+            switch (ws.native) {
+                .wayland => |wl| try wl.windows_destroy(),
                 .win32 => @panic("TODO"),
             }
         },
@@ -153,7 +214,6 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .wayland => |wl| try wl.cursor_shape_set(args),
                 .win32 => @panic("TODO"),
             }
-            
         },
         .keyboard_key => |args| {
             switch (ws.native) {
@@ -220,6 +280,11 @@ pub const ViewportKey = struct {
     viewport_id: ViewportID,
 };
 
+pub const SubViewportKey = struct {
+    client_id: ClientID,
+    sub_viewport_id: ptypes.SubViewportID,
+};
+
 pub const BufferKey = struct {
     client_id: ClientID,
     buffer_id: BufferID,
@@ -241,6 +306,14 @@ pub const WindowID = enum(u32) {
     }
 };
 
+pub const ViewportCreateResult = union(enum) {
+    create_with_window: ViewportKey,
+    create_with_sub_viewport: struct {
+        embeder: SubViewportKey,
+        embeded: ViewportKey,
+    },
+};
+
 pub const NativeWindowSystem = union(enum) {
     wayland: *Wayland,
     win32: *Win32,
@@ -248,7 +321,7 @@ pub const NativeWindowSystem = union(enum) {
 
 const std = @import("std");
 const Io = std.Io;
-const ClientID = @import("server/Clients.zig").ClientID;
+const ClientID = ptypes.ClientID;
 const ptypes = @import("protocol").types;
 const ViewportID = ptypes.ViewportID;
 const Wayland = @import("wayland/Wayland.zig");

@@ -5,20 +5,22 @@ id: ViewportID,
 width: u32,
 height: u32,
 format: ptypes.BufferFormat,
+create_status: CreateStatus,
 open: bool,
 
 buffers_collection: buffers.Collection(Buffer),
 current_buffer: ?BufferID,
 
-pub fn init(client: *Client, width: u32, height: u32) !ViewportCpu {
+pub fn init(id: ViewportID, client: *Client, width: u32, height: u32) !ViewportCpu {
     const format: ptypes.BufferFormat = .argb8888;
     return .{
         .client = client,
-        .id = client.next_viewport_id.increment_for_client(),
+        .id = id,
         .width = width,
         .height = height,
         .format = format,
         .open = true,
+        .create_status = .pending,
 
         .buffers_collection = .empty,
         .current_buffer = null,
@@ -157,5 +159,6 @@ const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
 const buffers = @import("buffers.zig");
-const CreateStatus = @import("buffers.zig").CreateStatus;
+const BufferStatus = @import("buffers.zig").BufferStatus;
+const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.ViewportCpu);

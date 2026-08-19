@@ -21,7 +21,9 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     }
 
-    const client = try api.init(init.io, init.gpa, init.environ_map);
+    const client = try api.init(init.io, init.gpa, init.environ_map, .{
+        .name = "main_client",
+    });
     defer api.deinit(client);
 
     if (use_gl) {
@@ -30,15 +32,6 @@ pub fn main(init: std.process.Init) !void {
 
     const viewport_gl = if (use_gl) try api.gl_viewport_create(client, 1280, 720, vsync) else null;
     const viewport_cpu = if (use_cpu) try api.cpu_viewport_create(client, 1280, 720) else null;
-
-    if (viewport_cpu) |cpu| {
-        const size = api.viewport_size(client, cpu.generic).?;
-        try api.window_create(client, cpu.generic, size[0], size[1]);
-    }
-    if (viewport_gl) |gl| {
-        const size = api.viewport_size(client, gl.generic).?;
-        try api.window_create(client, gl.generic, size[0], size[1]);
-    }
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();

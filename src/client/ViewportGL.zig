@@ -9,6 +9,7 @@ width: u32,
 height: u32,
 format: ptypes.BufferFormat,
 
+create_status: CreateStatus,
 open: bool,
 vsync: bool,
 can_render: bool,
@@ -16,10 +17,9 @@ can_render: bool,
 buffers_collection: buffers.Collection(Buffer),
 current_buffer: ?BufferID,
 
-pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
+pub fn init(client: *Client, id: ViewportID, width: u32, height: u32, vsync: bool) !ViewportGL {
     const format: ptypes.BufferFormat = .argb8888;
 
-    const id = client.next_viewport_id.increment_for_client();
     return .{
         .client = client,
         .id = id,
@@ -28,6 +28,7 @@ pub fn init(client: *Client, width: u32, height: u32, vsync: bool) !ViewportGL {
         .height = height,
         .format = format,
 
+        .create_status = .pending,
         .open = true,
         .vsync = vsync,
         .can_render = true,
@@ -365,5 +366,6 @@ const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
 const buffers = @import("buffers.zig");
-const CreateStatus = @import("buffers.zig").CreateStatus;
+const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.ViewportGL);
+const CreateStatus = Client.CreateStatus;

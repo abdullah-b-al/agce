@@ -115,6 +115,7 @@ pub fn client_connected(server: *Server, stream: net.Stream) !void {
 
     const id = server.clients.new_id();
     const client: *Client = try .create(server.gpa, id, stream);
+    log.info("Client connected {}", .{id});
 
     server.clients.map.putAssumeCapacity(id, client);
     server.dispatch.window_system_put(@src(), .{ .client_connected = id }) catch |err| switch (err) {
@@ -209,6 +210,26 @@ pub fn handle_event(
         .exit => {
             return error.Exit;
         },
+        .client_info => {
+            var msg = event.client_info;
+            defer msg.managed.deinit();
+
+            for (server.clients.map.values()) |client| {
+                if (@intFromEnum(client.id) == @intFromEnum(msg.client_id)) continue;
+
+                try server_to_client.message_send_json(
+                    server.io,
+                    server.gpa,
+                    client.stream,
+                    .{
+                        .client_info = .{
+                            .client_id = msg.client_id,
+                            .info = msg.managed.unmanaged,
+                        },
+                    },
+                );
+            }
+        },
         inline else => |e, tag| {
             const client = server.clients.map.get(e.client_id) orelse return;
 
@@ -227,7 +248,7 @@ pub fn handle_event(
     }
 }
 
-pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) !Dispatch.WindowSystemEvent {
+pub fn window_system_event_from_message(server: *Server, client: *Client, payload: MessagePayload) !Dispatch.WindowSystemEvent {
     switch (payload) {
         inline .buffer_create_cpu_with_fd,
         .buffer_create_gpu_with_fds,
@@ -265,12 +286,26 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
             return @unionInit(Dispatch.WindowSystemEvent, @tagName(tag), expr);
         },
 
+        .client_info_set => |msg| {
+            return .{
+                .client_info_set = .{
+                    .client_id = client.id,
+                    .payload = .{
+                        .gpa = server.gpa,
+                        .unmanaged = try .dupe(server.gpa, msg),
+                    },
+                },
+            };
+        },
+
         inline .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
-        .window_create,
+        .viewport_create,
         .viewport_resize,
         .cursor_shape_set,
+        .sub_viewport_embed,
+        .sub_viewport_rect_set,
         => |msg, tag| {
             return @unionInit(
                 Dispatch.WindowSystemEvent,
@@ -540,5 +575,6 @@ const MessagePayload = client_to_server.MessagePayload;
 const Dispatch = @import("../Dispatch.zig");
 const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;
-const ClientID = Clients.ClientID;
+const ptypes = @import("protocol").types;
+const ClientID = ptypes.ClientID;
 const Client = Clients.Client;

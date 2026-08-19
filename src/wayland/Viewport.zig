@@ -8,15 +8,18 @@ viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 vsync: bool,
 
+x: i32,
+y: i32,
 width: i32,
 height: i32,
+
+sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
 pub fn init(
     wl: *Wayland,
     parent_surface: *cwl.Surface,
     id: ViewportID,
-    width: i32,
-    height: i32,
+    rect: ptypes.Rect,
     vsync: bool,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
@@ -28,8 +31,12 @@ pub fn init(
     viewport.setSource(
         .fromInt(0),
         .fromInt(0),
-        .fromInt(@intCast(width)),
-        .fromInt(@intCast(height)),
+        .fromInt(@intCast(rect.width)),
+        .fromInt(@intCast(rect.height)),
+    );
+    subsurface.setPosition(
+        @intCast(rect.x),
+        @intCast(rect.y),
     );
 
     return .{
@@ -41,12 +48,19 @@ pub fn init(
         .viewport = viewport,
         .vsync = vsync,
 
-        .width = width,
-        .height = height,
+        .x = @intCast(rect.x),
+        .y = @intCast(rect.y),
+        .width = @intCast(rect.width),
+        .height = @intCast(rect.height),
+
+        .sub_viewports = .empty,
     };
 }
 
-pub fn deinit(vp: *Viewport) void {
+pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
+    // TODO: Deinit the viewport of the sub-viewports
+    vp.sub_viewports.deinit(gpa);
+
     if (vp.sync_surface) |sync| {
         sync.destroy();
     }
@@ -177,3 +191,4 @@ const c_linux = @import("c_linux");
 const Wayland = @import("Wayland.zig");
 const Window = @import("Window.zig");
 const Buffer = @import("ClientResources.zig").Buffer;
+const SubViewport = @import("SubViewport.zig");

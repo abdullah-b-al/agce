@@ -150,8 +150,54 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
     try wl.windows_destroy();
 }
 
+pub fn client_info_set(wl: *Wayland, args: Event.TypeOf(.client_info_set)) !void {
+    var clone: ptypes.ClientInfoClone = try .dupe(wl.gpa, args.payload.unmanaged);
+    errdefer clone.deinit(wl.gpa);
+
+    const rs = try wl.resources_get(args.client_id);
+
+    if (rs.info) |*info| {
+        info.deinit(wl.gpa);
+    }
+
+    rs.info = clone;
+}
+
+pub fn clients_info_broadcast(wl: *Wayland) !void {
+    for (wl.resources.values()) |rs| {
+        const clone = rs.info orelse continue;
+
+        var unmanaged: ptypes.ClientInfoClone = try .dupe(wl.gpa, clone);
+        errdefer unmanaged.deinit(wl.gpa);
+
+        try wl.dispatch.server_put(@src(), .{
+            .client_info = .{
+                .client_id = rs.client_id,
+                .managed = .{
+                    .gpa = wl.gpa,
+                    .unmanaged = unmanaged,
+                },
+            },
+        });
+    }
+}
+
 pub fn resources_get(wl: *Wayland, id: ClientID) error{ClientDoesNotExist}!*ClientResources {
     return wl.resources.getPtr(id) orelse return error.ClientDoesNotExist;
+}
+
+pub fn resources_of_embeder_get(wl: *Wayland, to_embed: ViewportKey) error{EmbederClientDoesNotExist}!*ClientResources {
+    for (wl.resources.values()) |*rs| {
+        if (rs.client_id == to_embed.client_id) continue;
+
+        for (rs.sub_viewports_pending.values()) |sub| {
+            if (std.meta.eql(to_embed, sub.to_embed)) {
+                return rs;
+            }
+        }
+    }
+
+    return error.EmbederClientDoesNotExist;
 }
 
 pub fn buffer_set_listener_prepare(wl: *Wayland) !void {
@@ -206,7 +252,6 @@ pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Event.TypeOf(.buffer_create
         args.payload.format,
     );
 
-    // TODO: Send failure in that case
     try wl.dispatch.server_put(
         @src(),
         .{
@@ -253,7 +298,7 @@ pub fn buffer_present(wl: *Wayland, args: Event.TypeOf(.buffer_present)) !void {
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
     vp.surface.commit();
-    // log.debug("buffer_present: commited viewport for {} {} {}", .{ args.client_id, args.viewport_id, args.buffer_id });
+    // log.debug("buffer_present: commited viewport for {f} {f} {f}", .{ args.client_id, args.payload.viewport_id, args.payload.buffer_id });
 
     _ = wl.display.flush();
 }
@@ -333,11 +378,91 @@ pub fn buffer_destroy(wl: *Wayland, args: Event.TypeOf(.buffer_destroy)) !void {
     );
 }
 
+pub fn viewport_create(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !WindowSystem.ViewportCreateResult {
+    if (args.payload.viewport_id.is_server_id()) {
+        return try wl.viewport_create_with_sub_viewport(ws, args);
+    } else {
+        const key = try wl.viewport_create_with_window(ws, args);
+        return .{ .create_with_window = key };
+    }
+}
 pub fn viewport_resize(wl: *Wayland, args: Event.TypeOf(.viewport_resize)) !void {
     const rs = try wl.resources_get(args.client_id);
     const vp = rs.viewports.getPtr(args.payload.viewport_id) orelse return error.ViewportDoesNotExist;
 
     vp.set_source(@intCast(args.payload.width), @intCast(args.payload.height));
+}
+
+pub fn sub_viewport_embed(wl: *Wayland, args: Event.TypeOf(.sub_viewport_embed)) !void {
+    const to_embed = try wl.resources_get(args.payload.client_id_to_embed);
+    const embeder = try wl.resources_get(args.client_id);
+
+    try embeder.sub_viewports_pending.ensureUnusedCapacity(wl.gpa, 1);
+    try to_embed.viewports_pending.ensureUnusedCapacity(wl.gpa, 1);
+
+    const viewport_id = to_embed.next_viewport_id.increment_for_server();
+    to_embed.viewports_pending.putAssumeCapacityNoClobber(viewport_id, {});
+
+    embeder.sub_viewports_pending.putAssumeCapacityNoClobber(
+        args.payload.sub_viewport_id,
+        .{
+            .to_embed = .{
+                .client_id = args.payload.client_id_to_embed,
+                .viewport_id = viewport_id,
+            },
+            .rect = args.payload.rect,
+            .embed_in = args.payload.embeder_viewport_id,
+            .sub_viewport_id = args.payload.sub_viewport_id,
+        },
+    );
+
+    try wl.dispatch.server_put(@src(), .{
+        .viewport_create = .{
+            .client_id = args.payload.client_id_to_embed,
+            .payload = .{
+                .viewport_id = viewport_id,
+                .width = args.payload.rect.width,
+                .height = args.payload.rect.height,
+            },
+        },
+    });
+}
+
+pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect_set)) !void {
+    const key = blk: {
+        const rs = try wl.resources_get(args.client_id);
+        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
+            return error.SubViewportDoesNotExist;
+    };
+
+    std.debug.assert(key.viewport_id.is_server_id());
+
+    const rs = try wl.resources_get(key.client_id);
+    const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
+
+    const set_position = args.payload.rect.x != vp.x or args.payload.rect.y != vp.y;
+    const set_size = args.payload.rect.width != vp.width or args.payload.rect.height != vp.height;
+
+    // TODO: Bound the rect to the parent's
+    vp.x = @intCast(args.payload.rect.x);
+    vp.y = @intCast(args.payload.rect.y);
+    vp.width = @intCast(args.payload.rect.width);
+    vp.height = @intCast(args.payload.rect.height);
+
+    if (set_position) {
+        vp.subsurface.setPosition(vp.x, vp.y);
+    }
+
+    if (set_size) {
+        vp.viewport.setSource(
+            .fromInt(0),
+            .fromInt(0),
+            .fromInt(@intCast(vp.width)),
+            .fromInt(@intCast(vp.height)),
+        );
+    }
+
+    _ = wl.display.flush();
 }
 
 pub fn windows_destroy(wl: *Wayland) !void {
@@ -367,7 +492,70 @@ pub fn windows_destroy(wl: *Wayland) !void {
         _ = wl.display.flush();
     }
 }
-pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.window_create)) !void {
+
+fn viewport_create_with_sub_viewport(
+    wl: *Wayland,
+    _: *WindowSystem,
+    args: Event.TypeOf(.viewport_create),
+) !WindowSystem.ViewportCreateResult {
+    const embeded_key: ViewportKey = .{
+        .client_id = args.client_id,
+        .viewport_id = args.payload.viewport_id,
+    };
+
+    std.debug.assert(embeded_key.viewport_id.is_server_id());
+
+    const embeded = try wl.resources_get(embeded_key.client_id);
+    std.debug.assert(
+        embeded.viewports_pending.orderedRemove(embeded_key.viewport_id),
+    );
+
+    const embeder = try wl.resources_of_embeder_get(embeded_key);
+    const sub_viewport_data =
+        embeder.sub_viewports_pending_fetch_remove_by_embeded_key(embeded_key) orelse
+        return error.SubViewportDoesNotExist;
+
+    const embeder_viewport = embeder.viewports.getPtr(sub_viewport_data.embed_in) orelse
+        return error.ViewportDoesNotExist;
+
+    try embeder_viewport.sub_viewports.ensureUnusedCapacity(wl.gpa, 1);
+
+    try embeded.viewport_create(
+        wl,
+        embeder_viewport.surface,
+        embeded_key.viewport_id,
+        sub_viewport_data.rect,
+        args.payload.create_sync_timeline,
+        args.payload.vsync,
+    );
+
+    embeder_viewport.sub_viewports.putAssumeCapacityNoClobber(
+        sub_viewport_data.sub_viewport_id,
+        embeded_key,
+    );
+
+    log.info("{f} of {f} {f} created with {f} {f}", .{
+        sub_viewport_data.sub_viewport_id,
+        embeder.client_id,
+        sub_viewport_data.embed_in,
+        embeded_key.client_id,
+        embeded_key.viewport_id,
+    });
+    return .{
+        .create_with_sub_viewport = .{
+            .embeder = .{
+                .client_id = embeder.client_id,
+                .sub_viewport_id = sub_viewport_data.sub_viewport_id,
+            },
+
+            .embeded = embeded_key,
+        },
+    };
+}
+
+fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !ViewportKey {
+    std.debug.assert(!args.payload.viewport_id.is_server_id());
+
     try wl.windows.ensureUnusedCapacity(wl.gpa, 1);
 
     const rs = try wl.resources_get(args.client_id);
@@ -391,8 +579,12 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.window
         wl,
         window.surface,
         args.payload.viewport_id,
-        @intCast(args.payload.width),
-        @intCast(args.payload.height),
+        .{
+            .x = 0,
+            .y = 0,
+            .width = args.payload.width,
+            .height = args.payload.height,
+        },
         args.payload.create_sync_timeline,
         args.payload.vsync,
     );
@@ -400,6 +592,8 @@ pub fn window_create(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.window
     wl.windows.putAssumeCapacityNoClobber(id, window);
     window.surface.commit();
     _ = wl.display.flush();
+
+    return .{ .client_id = rs.client_id, .viewport_id = args.payload.viewport_id };
 }
 
 pub fn window_resize_by_display_server(wl: *Wayland, args: Event.TypeOf(.window_resize_by_display_server)) !void {
@@ -884,6 +1078,14 @@ pub fn window_from_viewport_key(wl: *const Wayland, key: ViewportKey) ?*Window {
         }
     }
 
+    // Assume key is for a sub-viewport
+    for (wl.windows.values()) |win| {
+        const rs = wl.resources.get(win.viewport_key.client_id) orelse continue;
+        if (rs.contains_viewport_as_subviewport(key)) {
+            return win;
+        }
+    }
+
     return null;
 }
 
@@ -1022,7 +1224,7 @@ const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
-const ClientID = @import("../server/Clients.zig").ClientID;
+const ClientID = ptypes.ClientID;
 const WindowSystem = @import("../WindowSystem.zig");
 const WindowID = WindowSystem.WindowID;
 const log = std.log.scoped(.Wayland);
@@ -1035,6 +1237,8 @@ const BufferKey = WindowSystem.BufferKey;
 const ViewportKey = WindowSystem.ViewportKey;
 const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
+const server_to_client = @import("protocol").server_to_client;
 const BufferID = ptypes.BufferID;
 const Event = Dispatch.WindowSystemEvent;
 const input = @import("input.zig");
+const SubViewport = @import("SubViewport.zig");

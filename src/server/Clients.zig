@@ -1,7 +1,7 @@
 const Clients = @This();
 
 map: Map,
-next_id: ClientID,
+next_id: ptypes.ClientID,
 
 pub const init: Clients = .{
     .next_id = .first,
@@ -18,7 +18,7 @@ pub fn map_clone(cs: *Clients, gpa: std.mem.Allocator) !MapClone {
     };
 }
 
-pub fn new_id(cs: *Clients) ClientID {
+pub fn new_id(cs: *Clients) ptypes.ClientID {
     const id = cs.next_id;
 
     cs.next_id = @enumFromInt(@intFromEnum(cs.next_id) + 1);
@@ -26,7 +26,7 @@ pub fn new_id(cs: *Clients) ClientID {
     return id;
 }
 
-pub const Map = std.array_hash_map.Auto(ClientID, *Client);
+pub const Map = std.array_hash_map.Auto(ptypes.ClientID, *Client);
 
 pub const MapClone = struct {
     gpa: std.mem.Allocator,
@@ -38,23 +38,14 @@ pub const MapClone = struct {
     }
 };
 
-pub const ClientID = enum(u32) {
-    pub const first: ClientID = @enumFromInt(1);
-    _,
-
-    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ClientID({})", .{@intFromEnum(self)});
-    }
-};
-
 pub const Client = struct {
-    id: Clients.ClientID,
+    id: ptypes.ClientID,
     stream: net.Stream,
     closed: bool,
 
     pub fn create(
         gpa: std.mem.Allocator,
-        id: Clients.ClientID,
+        id: ptypes.ClientID,
         stream: net.Stream,
     ) !*Client {
         const client = try gpa.create(Client);
@@ -80,3 +71,4 @@ pub const Client = struct {
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
+const ptypes = @import("protocol").types;
