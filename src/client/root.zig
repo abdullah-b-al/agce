@@ -174,7 +174,7 @@ pub fn viewport_size(handle: *ClientHandle, id: ViewportID) ?[2]u32 {
     const client = handle.cast();
     const vp = client.viewports.get(id) orelse return null;
     return switch (vp) {
-        inline else => |v| .{ v.width, v.height },
+        inline else => |v| .{ v.base.width, v.base.height },
     };
 }
 
@@ -182,7 +182,7 @@ pub fn viewport_open(handle: *ClientHandle, id: ViewportID) bool {
     const client = handle.cast();
     const vp = client.viewports.get(id) orelse return false;
     return switch (vp) {
-        inline else => |v| v.open,
+        inline else => |v| v.base.open,
     };
 }
 
@@ -219,12 +219,12 @@ pub fn frame_wait_for_vsync(handle: *ClientHandle, viewport_id: ViewportID) !voi
 
 pub fn gl_viewport_create_from_pending(handle: *ClientHandle, vsync: bool, viewport_id: ViewportID) !GlViewportID {
     const vp = try handle.cast().viewport_create_from_pending(.gl, viewport_id, vsync);
-    return .{ .generic = vp.id };
+    return .{ .generic = vp.base.id };
 }
 
 pub fn gl_viewport_create(handle: *ClientHandle, width: u32, height: u32, vsync: bool) !GlViewportID {
     const vp = try handle.cast().viewport_create(.gl, width, height, vsync);
-    return .{ .generic = vp.id };
+    return .{ .generic = vp.base.id };
 }
 
 pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBeginGl {
@@ -234,19 +234,19 @@ pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBe
     std.debug.assert(vp == .gl);
     const gl = vp.gl;
 
-    if (!gl.open) return error.ViewportClosed;
+    if (!gl.base.open) return error.ViewportClosed;
 
-    std.debug.assert(gl.current_buffer == null);
+    std.debug.assert(gl.base.current_buffer == null);
 
     const buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
         error.Timeout => unreachable,
     };
 
-    gl.current_buffer = buffer.id;
+    gl.base.current_buffer = buffer.id;
     return .{
         .fbo = buffer.fbo,
-        .viewport_width = gl.width,
-        .viewport_height = gl.height,
+        .viewport_width = gl.base.width,
+        .viewport_height = gl.base.height,
     };
 }
 
@@ -256,7 +256,7 @@ pub fn gl_frame_end(handle: *ClientHandle, viewport_id: GlViewportID) void {
     std.debug.assert(vp == .gl);
     const gl = vp.gl;
 
-    const buffer = gl.buffers_collection.available.getPtr(gl.current_buffer.?) orelse
+    const buffer = gl.buffers_collection.available.getPtr(gl.base.current_buffer.?) orelse
         @panic("Buffer prematurely destroyed");
 
     gl.frame_end(buffer);
@@ -269,9 +269,9 @@ pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void 
 
     std.debug.assert(vp == .gl);
     const gl = vp.gl;
-    defer gl.current_buffer = null;
+    defer gl.base.current_buffer = null;
 
-    const buffer = gl.buffers_collection.available.getPtr(gl.current_buffer.?) orelse
+    const buffer = gl.buffers_collection.available.getPtr(gl.base.current_buffer.?) orelse
         @panic("Buffer prematurely destroyed");
 
     try gl.buffer_present(buffer);
@@ -279,12 +279,12 @@ pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void 
 
 pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuViewportID {
     const vp = try handle.cast().viewport_create(.cpu, width, height, false);
-    return .{ .generic = vp.id };
+    return .{ .generic = vp.base.id };
 }
 
 pub fn cpu_viewport_create_from_pending(handle: *ClientHandle, viewport_id: ViewportID) !CpuViewportID {
     const vp = try handle.cast().viewport_create_from_pending(.cpu, viewport_id, false);
-    return .{ .generic = vp.id };
+    return .{ .generic = vp.base.id };
 }
 
 pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !FrameBeginCpu {
@@ -294,9 +294,9 @@ pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !Frame
     std.debug.assert(vp == .cpu);
     const cpu = vp.cpu;
 
-    if (!cpu.open) return error.ViewportClosed;
+    if (!cpu.base.open) return error.ViewportClosed;
 
-    std.debug.assert(cpu.current_buffer == null);
+    std.debug.assert(cpu.base.current_buffer == null);
 
     var buffer: ?*ViewportCpu.Buffer = null;
     while (buffer == null) {
@@ -308,15 +308,15 @@ pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !Frame
         };
     }
 
-    cpu.current_buffer = buffer.?.id;
+    cpu.base.current_buffer = buffer.?.id;
 
     return .{
         .buffer = buffer.?.data,
         .width = buffer.?.width,
         .height = buffer.?.height,
         .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
-        .viewport_width = cpu.width,
-        .viewport_height = cpu.height,
+        .viewport_width = cpu.base.width,
+        .viewport_height = cpu.base.height,
     };
 }
 
@@ -328,9 +328,9 @@ pub fn cpu_frame_present(handle: *ClientHandle, viewport_id: CpuViewportID) !voi
     const vp = client.viewports.get(viewport_id.generic) orelse return;
     std.debug.assert(vp == .cpu);
     const cpu = vp.cpu;
-    defer cpu.current_buffer = null;
+    defer cpu.base.current_buffer = null;
 
-    const buffer = cpu.buffers_collection.available.getPtr(cpu.current_buffer.?).?;
+    const buffer = cpu.buffers_collection.available.getPtr(cpu.base.current_buffer.?).?;
     try cpu.buffer_present(buffer);
 }
 

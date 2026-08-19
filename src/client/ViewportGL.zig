@@ -1,20 +1,8 @@
 const ViewportGL = @This();
 
-client: *Client,
-
-id: ViewportID,
-frame_number: usize,
-
-width: u32,
-height: u32,
-format: ptypes.BufferFormat,
-
-open: bool,
-vsync: bool,
-can_render: bool,
+base: ViewportBase,
 
 buffers_collection: buffers.Collection(Buffer),
-current_buffer: ?BufferID,
 
 pub fn init(
     id: ViewportID,
@@ -26,28 +14,17 @@ pub fn init(
     const format: ptypes.BufferFormat = .argb8888;
 
     return .{
-        .client = client,
-        .id = id,
-        .frame_number = 0,
-        .width = width,
-        .height = height,
-        .format = format,
-
-        .open = true,
-        .vsync = vsync,
-        .can_render = true,
-
+        .base = .init(client, id, width, height, format, vsync),
         .buffers_collection = .empty,
-        .current_buffer = null,
     };
 }
 
 pub fn deinit(vp: *ViewportGL) void {
-    vp.buffers_collection.deinit(vp.client.gpa);
+    vp.buffers_collection.deinit(vp.base.client.gpa);
 }
 
 pub fn close(vp: *ViewportGL) void {
-    vp.open = false;
+    vp.base.open = false;
 }
 
 pub fn has_buffer(vp: *ViewportGL, id: BufferID) bool {
@@ -55,8 +32,8 @@ pub fn has_buffer(vp: *ViewportGL, id: BufferID) bool {
 }
 
 pub fn frame_end(vp: *ViewportGL, buffer: *Buffer) void {
-    const gbm = vp.client.gbm.?;
-    const gl = vp.client.gl_context.?;
+    const gbm = vp.base.client.gbm.?;
+    const gl = vp.base.client.gl_context.?;
 
     const sync = glad.eglCreateSync(gl.egl_display, glad.EGL_SYNC_NATIVE_FENCE_ANDROID, null);
     defer _ = glad.eglDestroySync(gl.egl_display, sync);
@@ -67,7 +44,7 @@ pub fn frame_end(vp: *ViewportGL, buffer: *Buffer) void {
 
     const egl_sync_fd =
         glad.eglDupNativeFenceFDANDROID(
-            vp.client.gl_context.?.egl_display,
+            vp.base.client.gl_context.?.egl_display,
             sync,
         );
     std.debug.assert(egl_sync_fd > 0);
@@ -94,15 +71,15 @@ pub fn frame_end(vp: *ViewportGL, buffer: *Buffer) void {
 pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
     std.debug.assert(buffer.released);
     buffer.released = false;
-    vp.frame_number += 1;
+    vp.base.frame_number += 1;
 
     try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
+        vp.base.client.io,
+        vp.base.client.gpa,
+        vp.base.client.connection,
         .{
             .buffer_present_with_sync = .{
-                .viewport_id = vp.id,
+                .viewport_id = vp.base.id,
                 .buffer_id = buffer.id,
                 .acquire_point = buffer.acquire.point,
                 .release_point = buffer.release.point,
@@ -111,13 +88,13 @@ pub fn buffer_present(vp: *ViewportGL, buffer: *Buffer) !void {
     );
 
     buffer.acquire.point.advance();
-    if (vp.vsync) {
-        vp.can_render = false;
+    if (vp.base.vsync) {
+        vp.base.can_render = false;
     }
 }
 
 pub fn frame_render(vp: *ViewportGL) void {
-    vp.can_render = true;
+    vp.base.can_render = true;
 }
 
 pub fn buffer_size(vp: *ViewportGL) [2]u32 {
@@ -126,7 +103,7 @@ pub fn buffer_size(vp: *ViewportGL) [2]u32 {
 }
 
 pub fn get_buffer(vp: *ViewportGL, timeout_ns: i64) error{Timeout}!*Buffer {
-    const dri = vp.client.gbm.?.dri;
+    const dri = vp.base.client.gbm.?.dri;
 
     std.debug.assert(vp.buffers_collection.available.count() > 0);
 
@@ -184,9 +161,9 @@ pub fn resize(
         try buffers.buffers_resize(
             ViewportGL.Buffer,
             2,
-            vp.client,
+            vp.base.client,
             &vp.buffers_collection,
-            .{ vp.client, new_width, new_height, vp.format },
+            .{ vp.base.client, new_width, new_height, vp.base.format },
         );
     }
 }
@@ -373,3 +350,4 @@ const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.ViewportGL);
 const CreateStatus = Client.CreateStatus;
+const ViewportBase = @import("ViewportBase.zig");

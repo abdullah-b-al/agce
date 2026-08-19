@@ -1,15 +1,8 @@
 const ViewportCpu = @This();
 
-client: *Client,
-id: ViewportID,
-width: u32,
-height: u32,
-format: ptypes.BufferFormat,
-open: bool,
-vsync: bool,
+base: ViewportBase,
 
 buffers_collection: buffers.Collection(Buffer),
-current_buffer: ?BufferID,
 
 pub fn init(
     id: ViewportID,
@@ -20,29 +13,21 @@ pub fn init(
 ) !ViewportCpu {
     const format: ptypes.BufferFormat = .argb8888;
     return .{
-        .client = client,
-        .id = id,
-        .width = width,
-        .height = height,
-        .format = format,
-        .open = true,
-        .vsync = vsync,
-
+        .base = .init(client, id, width, height, format, vsync),
         .buffers_collection = .empty,
-        .current_buffer = null,
     };
 }
 
 pub fn deinit(vp: *ViewportCpu) void {
-    vp.buffers_collection.deinit(vp.client.gpa);
+    vp.buffers_collection.deinit(vp.base.client.gpa);
 }
 
 pub fn close(vp: *ViewportCpu) void {
-    vp.open = false;
+    vp.base.open = false;
 }
 
 pub fn resize(vp: *ViewportCpu, msg: ptypes.ViewportResize) !void {
-    std.debug.assert(msg.viewport_id == vp.id);
+    std.debug.assert(msg.viewport_id == vp.base.id);
     std.debug.assert(vp.buffers_collection.available.count() > 0);
     const new_width, const new_height = buffers.new_dimensions(msg.width, msg.height);
 
@@ -51,9 +36,9 @@ pub fn resize(vp: *ViewportCpu, msg: ptypes.ViewportResize) !void {
         try buffers.buffers_resize(
             ViewportCpu.Buffer,
             2,
-            vp.client,
+            vp.base.client,
             &vp.buffers_collection,
-            .{ vp.client, new_width, new_height, vp.format },
+            .{ vp.base.client, new_width, new_height, vp.base.format },
         );
     }
 }
@@ -80,12 +65,12 @@ pub fn buffer_present(vp: *ViewportCpu, buffer: *Buffer) !void {
     buffer.released = false;
 
     try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
+        vp.base.client.io,
+        vp.base.client.gpa,
+        vp.base.client.connection,
         .{
             .buffer_present = .{
-                .viewport_id = vp.id,
+                .viewport_id = vp.base.id,
                 .buffer_id = buffer.id,
             },
         },
@@ -168,3 +153,4 @@ const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.ViewportCpu);
+const ViewportBase = @import("ViewportBase.zig");

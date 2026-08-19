@@ -388,7 +388,7 @@ pub fn viewport_create_with_id(
     const vp = try client.gpa.create(T);
     vp.* = try .init(id, client, width, height, vsync);
     client.viewports.putAssumeCapacityNoClobber(
-        vp.id,
+        vp.base.id,
         @unionInit(Viewport, @tagName(tag), vp),
     );
 
@@ -397,7 +397,7 @@ pub fn viewport_create_with_id(
         2,
         client,
         &vp.buffers_collection,
-        .{ client, width, height, vp.format },
+        .{ client, width, height, vp.base.format },
     );
 
     for (array) |b| {
@@ -430,8 +430,8 @@ pub fn send_viewport_create(
     const create_sync_timeline, const vsync = blk: {
         const vp = client.viewports.get(viewport_id).?;
         break :blk switch (vp) {
-            .gl => |gl| .{ true, gl.vsync },
-            .cpu => .{ false, false },
+            .gl => |gl| .{ true, gl.base.vsync },
+            .cpu => |cpu| .{ false, cpu.base.vsync },
         };
     };
 
