@@ -178,18 +178,36 @@ fn main_win32(ws: *WindowSystem) !void {
 
 fn main_server(server: *Server) error{Canceled}!void {
     defer log.info("{s} exited", .{@src().fn_name});
-    const tm = server.task_master;
 
-    tm.start(server, .client_connected);
-    tm.start(server, .server_has_event);
+    const T = Server.Task;
+    var select_buffer: [2]T = undefined;
+    var select: Io.Select(T) = .init(server.io, &select_buffer);
+    defer {
+        while (select.cancel()) |canceled| {
+            canceled.handle(server) catch {};
+        }
+    }
+
+    select.concurrent(.check_clients, T.fn_check_clients, .{server}) catch
+        @panic("ConcurrencyUnavailable");
+    select.concurrent(.check_events, T.fn_check_events, .{server.dispatch}) catch
+        @panic("ConcurrencyUnavailable");
 
     while (true) {
-        const selected = try tm.await();
-        tm.handle(server, selected) catch |err| switch (err) {
-            error.Canceled => |e| return e,
-            error.Exit => return,
-        };
-        tm.start(server, selected); // restart
+        const selected = try select.await();
+        try selected.handle(server);
+
+        // Restart
+        switch (selected) {
+            .check_clients => {
+                select.concurrent(.check_clients, T.fn_check_clients, .{server}) catch
+                    @panic("ConcurrencyUnavailable");
+            },
+            .check_events => {
+                select.concurrent(.check_events, T.fn_check_events, .{server.dispatch}) catch
+                    @panic("ConcurrencyUnavailable");
+            },
+        }
     }
 }
 

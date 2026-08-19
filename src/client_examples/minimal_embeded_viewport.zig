@@ -18,7 +18,7 @@ pub fn main(init: std.process.Init) !void {
 
     var rand: std.Random.DefaultPrng = .init(0);
     while (true) {
-        try handle.poll(.{ .deadline = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
+        try handle.poll(.{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
         try handle.update();
 
         try utils.render(viewport, rand.random().int(u24));

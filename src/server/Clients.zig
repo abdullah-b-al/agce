@@ -8,16 +8,6 @@ pub const init: Clients = .{
     .map = .empty,
 };
 
-pub fn map_clone(cs: *Clients, gpa: std.mem.Allocator) !MapClone {
-    const map = try gpa.create(Map);
-    errdefer gpa.destroy(map);
-    map.* = try cs.map.clone(gpa);
-    return .{
-        .gpa = gpa,
-        .map = map,
-    };
-}
-
 pub fn new_id(cs: *Clients) ptypes.ClientID {
     const id = cs.next_id;
 
@@ -27,16 +17,6 @@ pub fn new_id(cs: *Clients) ptypes.ClientID {
 }
 
 pub const Map = std.array_hash_map.Auto(ptypes.ClientID, *Client);
-
-pub const MapClone = struct {
-    gpa: std.mem.Allocator,
-    map: *Map,
-
-    pub fn deinit(clone: *const MapClone) void {
-        clone.map.deinit(clone.gpa);
-        clone.gpa.destroy(clone.map);
-    }
-};
 
 pub const Client = struct {
     id: ptypes.ClientID,

@@ -9,8 +9,6 @@ server: net.Server,
 clients: Clients,
 arena_pool: std.ArrayList(*std.heap.ArenaAllocator),
 
-task_master: *TaskMaster,
-
 pub fn create(
     io: Io,
     environ: *const std.process.Environ.Map,
@@ -42,7 +40,6 @@ pub fn create(
         arena_pool.appendAssumeCapacity(arena);
     }
 
-    const task_master: *TaskMaster = try .create(io, gpa);
     server.* = .{
         .io = io,
         .gpa = gpa,
@@ -52,14 +49,11 @@ pub fn create(
         .server = net_server,
         .clients = .init,
         .arena_pool = arena_pool,
-        .task_master = task_master,
     };
     return server;
 }
 
 pub fn destroy(server: *Server) void {
-    server.task_master.destroy(server);
-
     for (server.clients.map.values()) |client| {
         client.close(server.io);
         server.gpa.destroy(client);
@@ -108,8 +102,6 @@ pub fn remove_closed_clients(server: *Server) void {
 }
 
 pub fn client_connected(server: *Server, stream: net.Stream) !void {
-    std.debug.assert(!server.task_master.running(.client_connected));
-
     try server.clients.map.ensureUnusedCapacity(server.gpa, 1);
     errdefer stream.close(server.io);
 
@@ -124,8 +116,6 @@ pub fn client_connected(server: *Server, stream: net.Stream) !void {
 }
 
 pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_message: ClientMessage) error{Canceled}!void {
-    std.debug.assert(!server.task_master.running(.client_has_message));
-
     server.client_message_handle_inner(arena, client_message) catch |err| switch (err) {
         error.Canceled => |e| return e,
 
@@ -204,8 +194,6 @@ pub fn handle_event(
     server: *Server,
     event: Dispatch.ServerEvent,
 ) error{ Canceled, WriteFailed, OutOfMemory, Exit }!void {
-    std.debug.assert(!server.task_master.running(.server_has_event));
-
     switch (event) {
         .exit => {
             return error.Exit;
@@ -325,96 +313,17 @@ fn ReturnType(comptime func: anytype) type {
     return @typeInfo(@TypeOf(func)).@"fn".return_type.?;
 }
 
-pub const TaskMaster = struct {
-    running_tasks: std.EnumSet(Task.Tag),
-    select_buffer: []Task,
-    select: Io.Select(Task),
+pub const CheckClientTask = union(enum) {
+    pub const task_count = @typeInfo(CheckClientTask).@"union".fields.len;
 
-    pub fn create(io: Io, gpa: std.mem.Allocator) !*TaskMaster {
-        const tm = try gpa.create(TaskMaster);
+    client_connected: ReturnType(fn_client_connected),
+    client_has_message: ReturnType(fn_client_has_message),
 
-        const len = @typeInfo(Task).@"union".fields.len;
-        const buffer = try gpa.alloc(Task, len);
-        tm.* = .{
-            .running_tasks = .empty,
-            .select = .init(io, buffer),
-            .select_buffer = buffer,
-        };
-        return tm;
-    }
-
-    pub fn destroy(tm: *TaskMaster, server: *Server) void {
-        while (tm.select.cancel()) |task| {
-            switch (task) {
-                .client_connected => |result| {
-                    const stream = result catch continue;
-                    stream.close(server.io);
-                },
-                .client_has_message => |result| {
-                    server.arena_release(result.arena);
-                },
-                .server_has_event => {
-                    // TODO: Figure out if there is a need to do anything here
-                },
-            }
-        }
-
-        server.gpa.free(tm.select_buffer);
-        server.gpa.destroy(tm);
-    }
-
-    pub fn await(tm: *TaskMaster) !Task {
-        const selected = try tm.select.await();
-        tm.running_tasks.remove(selected);
-        return selected;
-    }
-
-    pub fn start(tm: *TaskMaster, server: *Server, tag: Task.Tag) void {
-        branch: switch (tag) {
-            .client_connected => |t| {
-                tm.running_set(t);
-                tm.select.concurrent(
-                    .client_connected,
-                    Task.fn_client_connected,
-                    .{ server.io, &server.server },
-                ) catch @panic("ConcurrencyUnavailable");
-
-                continue :branch .client_has_message;
-            },
-
-            .client_has_message => |t| {
-                if (!tm.running(t) and server.clients.map.count() > 0) {
-                    const map_clone = server.clients.map_clone(server.gpa) catch |err| switch (err) {
-                        error.OutOfMemory => @panic("OOM"),
-                    };
-
-                    tm.running_set(t);
-                    tm.select.concurrent(
-                        .client_has_message,
-                        Task.fn_client_has_message,
-                        .{ server.io, server.arena_acquire(), map_clone },
-                    ) catch @panic("ConcurrencyUnavailable");
-                }
-            },
-
-            .server_has_event => |t| {
-                tm.running_set(t);
-                tm.select.concurrent(
-                    .server_has_event,
-                    Task.fn_server_has_event,
-                    .{server.dispatch},
-                ) catch @panic("ConcurrencyUnavailable");
-            },
-        }
-    }
-
-    pub fn handle(tm: *TaskMaster, server: *Server, task: Task) error{ Canceled, Exit }!void {
-        std.debug.assert(!tm.running(task));
-
+    pub fn handle(task: CheckClientTask, server: *Server) !void {
         switch (task) {
             .client_connected => |result| {
                 const stream = result catch |err| switch (err) {
-                    error.Canceled => |e| return e,
+                    error.Canceled => return,
                     else => |e| {
                         log.err("Server: {}", .{e});
                         return;
@@ -422,58 +331,31 @@ pub const TaskMaster = struct {
                 };
 
                 server.client_connected(stream) catch |err| switch (err) {
-                    error.Canceled => |e| return e,
+                    error.Canceled => return,
                     error.OutOfMemory => |e| {
-                        log.err("Server: {}", .{e});
+                        log.err("{}", .{e});
                         return;
                     },
                 };
             },
-
             .client_has_message => |result| {
-                if (result.err) |e| switch (e) {
-                    error.Canceled => |canceled| return canceled,
-                    error.OutOfMemory => return,
-                    error.ConcurrencyUnavailable => @panic("ConcurrencyUnavailable"),
-                };
                 defer server.arena_release(result.arena);
 
+                if (result.err) |e| switch (e) {
+                    error.Canceled, error.OutOfMemory => return,
+                };
+
                 for (result.messages) |message| {
-                    try server.client_message_handle(result.arena.allocator(), message);
+                    server.client_message_handle(result.arena.allocator(), message) catch return;
                 }
 
                 server.remove_closed_clients();
             },
-
-            .server_has_event => |result| {
-                const event = try result;
-                server.handle_event(event) catch |err| switch (err) {
-                    error.Exit => |e| return e,
-                    else => |e| log.err("Server: {}", .{e}),
-                };
-            },
         }
     }
 
-    fn running(tm: *TaskMaster, tag: Task.Tag) bool {
-        return tm.running_tasks.contains(tag);
-    }
-
-    fn running_set(tm: *TaskMaster, tag: Task.Tag) void {
-        std.debug.assert(!tm.running(tag));
-        tm.running_tasks.insert(tag);
-    }
-};
-
-pub const Task = union(enum) {
-    const Tag = std.meta.Tag(Task);
-
-    client_connected: ReturnType(fn_client_connected),
-    client_has_message: ReturnType(fn_client_has_message),
-    server_has_event: ReturnType(fn_server_has_event),
-
     const ClientHasMessage = struct {
-        const Error = error{ Canceled, ConcurrencyUnavailable, OutOfMemory };
+        const Error = error{ Canceled, OutOfMemory };
 
         arena: *std.heap.ArenaAllocator,
         messages: []const Server.ClientMessage,
@@ -490,13 +372,12 @@ pub const Task = union(enum) {
     fn fn_client_has_message(
         io: Io,
         arena_instance: *std.heap.ArenaAllocator,
-        clone: Clients.MapClone,
+        clients: *const Clients,
     ) ClientHasMessage {
-        std.debug.assert(clone.map.count() > 0);
-        defer clone.deinit();
+        std.debug.assert(clients.map.count() > 0);
 
         const arena = arena_instance.allocator();
-        const count = clone.map.count();
+        const count = clients.map.count();
 
         const storage = arena.alloc(Io.Operation.Storage, count) catch |err|
             return .@"error"(arena_instance, err);
@@ -504,13 +385,12 @@ pub const Task = union(enum) {
             return .@"error"(arena_instance, err);
 
         for (buffers) |*buf| {
-            // TODO: calculate the maximum size
-            buf.* = arena.alloc(u8, 4096) catch |err|
+            buf.* = arena.alloc(u8, 1) catch |err|
                 return .@"error"(arena_instance, err);
         }
 
         var batch = Io.Batch.init(storage);
-        for (clone.map.values(), 0..) |client, i| {
+        for (clients.map.values(), 0..) |client, i| {
             std.debug.assert(!client.closed);
 
             // len must be 1 for recv_fd to work
@@ -528,9 +408,8 @@ pub const Task = union(enum) {
             _ = batch.add(op);
         }
 
-        batch.awaitConcurrent(io, .none) catch |err| switch (err) {
-            error.Timeout => unreachable,
-            else => |e| return .@"error"(arena_instance, e),
+        batch.awaitAsync(io) catch |err| switch (err) {
+            error.Canceled => |e| return .@"error"(arena_instance, e),
         };
 
         var list = std.ArrayList(Server.ClientMessage).initCapacity(arena, count) catch |err|
@@ -538,7 +417,7 @@ pub const Task = union(enum) {
 
         while (batch.next()) |completed| {
             const err, _ = completed.result.net_receive;
-            const id = clone.map.values()[completed.index].id;
+            const id = clients.map.values()[completed.index].id;
             list.appendAssumeCapacity(.{
                 .client_id = id,
                 .err = if (err) |e| switch (e) {
@@ -558,9 +437,76 @@ pub const Task = union(enum) {
     fn fn_client_connected(io: Io, server: *net.Server) net.Server.AcceptError!net.Stream {
         return server.accept(io);
     }
+};
 
-    fn fn_server_has_event(dispatch: *Dispatch) error{Canceled}!Dispatch.ServerEvent {
+pub const Task = union(enum) {
+    const Tag = std.meta.Tag(Task);
+
+    check_clients: ReturnType(fn_check_clients),
+    check_events: ReturnType(fn_check_events),
+
+    pub fn handle(task: Task, server: *Server) !void {
+        switch (task) {
+            .check_clients => |err_results| {
+                const results = try err_results;
+                for (results) |maybe_result| {
+                    const result = maybe_result orelse continue;
+                    try result.handle(server);
+                }
+            },
+            .check_events => |err_event| {
+                const event = try err_event;
+                server.handle_event(event) catch |err| switch (err) {
+                    error.Exit => return,
+                    error.Canceled => |e| return e,
+                    else => |e| log.err("Server: {}", .{e}),
+                };
+            },
+        }
+    }
+
+    pub fn fn_check_events(dispatch: *Dispatch) error{Canceled}!Dispatch.ServerEvent {
         return try dispatch.server_get();
+    }
+
+    pub fn fn_check_clients(server: *Server) error{Canceled}![CheckClientTask.task_count]?CheckClientTask {
+        var select_buffer: [CheckClientTask.task_count]CheckClientTask = undefined;
+        var select: Io.Select(CheckClientTask) = .init(server.io, &select_buffer);
+
+        select.concurrent(
+            .client_connected,
+            CheckClientTask.fn_client_connected,
+            .{ server.io, &server.server },
+        ) catch @panic("ConcurrencyUnavailable");
+
+        if (server.clients.map.count() > 0) {
+            select.concurrent(
+                .client_has_message,
+                CheckClientTask.fn_client_has_message,
+                .{ server.io, server.arena_acquire(), &server.clients },
+            ) catch @panic("ConcurrencyUnavailable");
+        }
+
+        var result_buffer: [CheckClientTask.task_count]?CheckClientTask = @splat(null);
+        var result: std.ArrayList(?CheckClientTask) = .initBuffer(&result_buffer);
+
+        errdefer {
+            while (select.cancel()) |canceled| {
+                canceled.handle(server) catch {};
+            }
+        }
+
+        const selected = try select.await();
+
+        errdefer comptime unreachable;
+
+        result.appendBounded(selected) catch unreachable;
+        if (select.cancel()) |task| {
+            result.appendBounded(task) catch unreachable;
+        }
+        std.debug.assert(select.cancel() == null);
+
+        return result_buffer;
     }
 };
 

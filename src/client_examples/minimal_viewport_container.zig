@@ -20,11 +20,8 @@ pub fn main(init: std.process.Init) !void {
     defer child.kill(init.io);
 
     const client_to_embed, const name = blk: while (true) {
-        try handle.poll(.{ .deadline = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
+        try handle.poll(.{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
         try handle.update();
-
-        // Rendering one frame is enough. Needed on wayland to display the window
-        try utils.render(viewport, 0);
 
         var iter = handle.client_info_iterator();
         while (iter.next()) |result| {
