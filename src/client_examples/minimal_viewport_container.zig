@@ -5,9 +5,9 @@ pub fn main(init: std.process.Init) !void {
         init.environ_map,
         null,
     );
-    defer agce.deinit(handle);
+    defer handle.deinit();
 
-    const viewport = try agce.cpu_viewport_create(handle, 720, 720);
+    const viewport: *agce.ViewportHandle = try .create(handle, .cpu, 720, 720, false);
 
     var args_iter = try init.minimal.args.iterateAllocator(init.gpa);
     defer args_iter.deinit();
@@ -20,13 +20,13 @@ pub fn main(init: std.process.Init) !void {
     defer child.kill(init.io);
 
     const client_to_embed, const name = blk: while (true) {
-        try agce.poll(handle, .{ .deadline = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
-        try agce.update(handle);
+        try handle.poll(.{ .deadline = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
+        try handle.update();
 
         // Rendering one frame is enough. Needed on wayland to display the window
-        try utils.render(handle, viewport, 0);
+        try utils.render(viewport, 0);
 
-        var iter = agce.client_info_iterator(handle);
+        var iter = handle.client_info_iterator();
         while (iter.next()) |result| {
             if (std.mem.eql(u8, result.info.name, "minimal_embeded_viewport")) {
                 break :blk .{ result.client_id, result.info.name };
@@ -35,7 +35,7 @@ pub fn main(init: std.process.Init) !void {
     };
     std.log.info("Will embed {s} {f}", .{ name, client_to_embed });
 
-    const sub_viewport = try agce.sub_viewport_embed(handle, viewport.generic, client_to_embed, .{
+    const sub_viewport = try viewport.sub_viewport_embed(client_to_embed, .{
         .x = 100,
         .y = 100,
         .width = 100,
@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
 
     const begin: std.Io.Timestamp = .now(init.io, .awake);
     const fade_period: i64 = std.time.ms_per_s * 7.5;
-    const vp_size = agce.viewport_size(handle, viewport.generic).?;
+    const vp_size = viewport.size();
     while (true) {
         const color = utils.fade_color(
             begin.untilNow(init.io, .awake),
@@ -66,7 +66,7 @@ pub fn main(init: std.process.Init) !void {
             255,
         );
 
-        try utils.render(handle, viewport, color);
+        try utils.render(viewport, color);
         try init.io.sleep(.fromMilliseconds(16), .awake);
 
         x += velocity_x;
@@ -86,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
         if (y + height >= vp_size[1])
             velocity_y = -velocity_y_new;
 
-        try agce.sub_viewport_rect_set(handle, sub_viewport, .{
+        try handle.sub_viewport_rect_set(sub_viewport, .{
             .x = @intCast(@max(0, x)),
             .y = @intCast(@max(0, y)),
             .width = width,

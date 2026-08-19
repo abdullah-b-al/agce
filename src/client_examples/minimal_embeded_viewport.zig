@@ -5,23 +5,23 @@ pub fn main(init: std.process.Init) !void {
         init.environ_map,
         .{ .name = "minimal_embeded_viewport" },
     );
-    defer agce.deinit(handle);
+    defer handle.deinit();
 
     const viewport = blk: while (true) {
-        try agce.poll_once(handle, .none);
-        try agce.update(handle);
+        try handle.poll_once(.none);
+        try handle.update();
 
-        if (agce.viewport_pending_peek(handle)) |id| {
-            break :blk try agce.cpu_viewport_create_from_pending(handle, id);
+        if (handle.viewport_pending_peek()) |id| {
+            break :blk try agce.ViewportHandle.create_from_pending(handle, .cpu, false, id);
         }
     };
 
     var rand: std.Random.DefaultPrng = .init(0);
     while (true) {
-        try agce.poll(handle, .{ .deadline = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
-        try agce.update(handle);
+        try handle.poll(.{ .deadline = .{ .raw = .fromNanoseconds(1), .clock = .awake } });
+        try handle.update();
 
-        try utils.render(handle, viewport, rand.random().int(u24));
+        try utils.render(viewport, rand.random().int(u24));
         try init.io.sleep(.fromMilliseconds(1000), .awake);
     }
 }

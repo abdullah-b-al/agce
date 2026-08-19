@@ -1,4 +1,5 @@
 pub const Event = Client.Event;
+pub const Renderer = Viewport.Renderer.Tag;
 pub const opengl = @import("opengl.zig");
 
 pub const ViewportID = ptypes.ViewportID;
@@ -12,30 +13,6 @@ pub const Rect = ptypes.Rect;
 pub const Key = @import("protocol").input.Key;
 pub const KeyState = @import("protocol").input.KeyState;
 pub const MouseButton = @import("protocol").input.MouseButton;
-
-pub const ClientHandle = opaque {
-    fn cast(handle: *ClientHandle) *Client {
-        return @ptrCast(@alignCast(handle));
-    }
-};
-
-pub const GlViewportID = struct { generic: ViewportID };
-pub const CpuViewportID = struct { generic: ViewportID };
-
-pub const FrameBeginGl = struct {
-    fbo: c_uint,
-    viewport_width: u32,
-    viewport_height: u32,
-};
-
-pub const FrameBeginCpu = struct {
-    buffer: []u8,
-    width: u32,
-    height: u32,
-    bytes_per_pixel: u8,
-    viewport_width: u32,
-    viewport_height: u32,
-};
 
 pub fn init(
     io: std.Io,
@@ -61,355 +38,311 @@ pub fn init(
     return @ptrCast(client);
 }
 
-pub fn deinit(handle: *ClientHandle) void {
-    const client = handle.cast();
-    const gpa = client.gpa;
-
-    client.deinit();
-    gpa.destroy(client);
-}
-
-pub fn init_opengl(handle: *ClientHandle, major: c_int, minor: c_int) !void {
-    const client = handle.cast();
-    try client.init_gbm();
-    try client.init_gl(major, minor);
-}
-
-pub fn poll(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
-    const client = handle.cast();
-    while (true) {
-        client.poll_once(timeout) catch |err| switch (err) {
-            error.Timeout => break,
-            else => |e| return e,
-        };
+pub const ClientHandle = opaque {
+    fn cast(handle: *ClientHandle) *Client {
+        return @ptrCast(@alignCast(handle));
     }
-}
 
-pub fn poll_once(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
-    const client = handle.cast();
-    try client.poll_once(timeout);
-}
+    pub fn deinit(handle: *ClientHandle) void {
+        const client = handle.cast();
+        const gpa = client.gpa;
 
-pub fn poll_for_events(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
-    const client = handle.cast();
-    // In a loop to ignore messages that are not events
-    while (client.events.items.len == 0) {
+        client.deinit();
+        gpa.destroy(client);
+    }
+
+    pub fn init_opengl(handle: *ClientHandle, major: c_int, minor: c_int) !void {
+        const client = handle.cast();
+        try client.init_gbm();
+        try client.init_gl(major, minor);
+    }
+
+    pub fn poll(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
+        const client = handle.cast();
+        while (true) {
+            client.poll_once(timeout) catch |err| switch (err) {
+                error.Timeout => break,
+                else => |e| return e,
+            };
+        }
+    }
+
+    pub fn poll_once(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
+        const client = handle.cast();
         try client.poll_once(timeout);
     }
-}
 
-pub fn update(handle: *ClientHandle) !void {
-    const client = handle.cast();
-    for (client.viewports.values()) |vp| {
-        while (vp.messages.pop()) |message| {
-            switch (message) {
-                inline else => |_, tag| {
-                    vp.handle_message(tag, message) catch |err| switch (err) {
-                        else => |e| return e,
-                    };
-                },
+    pub fn poll_for_events(handle: *ClientHandle, id: ViewportID, timeout: std.Io.Timeout) !void {
+        const client = handle.cast();
+        // In a loop to ignore messages that are not events
+        const vp = client.viewports.get(id) orelse return;
+        while (vp.events.items.len == 0) {
+            try client.poll_once(timeout);
+        }
+    }
+
+    pub fn update(handle: *ClientHandle) !void {
+        const client = handle.cast();
+        for (client.viewports.values()) |vp| {
+            while (vp.messages.pop()) |message| {
+                switch (message) {
+                    inline else => |_, tag| {
+                        vp.message_handle(tag, message) catch |err| switch (err) {
+                            else => |e| return e,
+                        };
+                    },
+                }
             }
         }
     }
-}
 
-pub fn event_pop(handle: *ClientHandle, viewport_id: ViewportID) ?Client.Event {
-    const client = handle.cast();
+    pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportID {
+        const client = handle.cast();
+        if (client.viewports_from_server.count() == 0)
+            return null;
 
-    var i = client.events.items.len;
-    while (i > 0) {
-        i -= 1;
-        const event = client.events.items[i];
+        return client.viewports_from_server.keys()[0];
+    }
 
-        const event_viewport_id = switch (event) {
-            inline else => |v| v.viewport_id,
+    pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
+        const client = handle.cast();
+
+        try client_to_server.message_send_json(
+            client.io,
+            client.gpa,
+            client.connection,
+            .{
+                .cursor_shape_set = .{ .viewport_id = viewport_id, .shape = shape },
+            },
+        );
+    }
+
+    pub fn sub_viewport_rect_set(
+        handle: *ClientHandle,
+        sub_viewport_id: SubViewportID,
+        rect: Rect,
+    ) !void {
+        const client = handle.cast();
+
+        try client_to_server.message_send_json(
+            client.io,
+            client.gpa,
+            client.connection,
+            .{
+                .sub_viewport_rect_set = .{
+                    .rect = rect,
+                    .sub_viewport_id = sub_viewport_id,
+                },
+            },
+        );
+    }
+
+    pub fn client_info_iterator(handle: *ClientHandle) ClientInfoIterator {
+        return .{
+            .handle = handle,
+            .i = 0,
         };
+    }
 
-        if (event_viewport_id == viewport_id) {
-            return client.events.orderedRemove(i);
+    pub const ClientInfoIterator = struct {
+        handle: *ClientHandle,
+        i: usize,
+
+        pub fn next(iter: *ClientInfoIterator) ?Result {
+            const client = iter.handle.cast();
+            if (iter.i >= client.other_clients.count()) return null;
+            defer iter.i += 1;
+
+            const id, const clone = .{
+                client.other_clients.keys()[iter.i],
+                client.other_clients.values()[iter.i],
+            };
+
+            return .{
+                .client_id = id,
+                .info = .{
+                    .name = clone.strings[clone.name.offset..][0..clone.name.len],
+                },
+            };
         }
+
+        pub const Result = struct {
+            client_id: ptypes.ClientID,
+            info: ptypes.ClientInfo,
+        };
+    };
+};
+
+pub const ViewportHandle = opaque {
+    fn cast(handle: *ViewportHandle) *Viewport {
+        return @ptrCast(@alignCast(handle));
     }
 
-    return null;
-}
-
-pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportID {
-    const client = handle.cast();
-    if (client.viewports_from_server.count() == 0)
-        return null;
-
-    return client.viewports_from_server.keys()[0];
-}
-
-pub fn viewport_resize(handle: *ClientHandle, id: ViewportID, requseted_width: u32, requseted_height: u32) !void {
-    const client = handle.cast();
-    const vp = client.viewports.get(id) orelse return;
-    const buffer_size = switch (vp.renderer) {
-        inline else => |r| r.buffer_size(),
-    };
-
-    const width = @min(buffer_size[0], requseted_width);
-    const height = @min(buffer_size[1], requseted_height);
-
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .viewport_resize = .{
-                .viewport_id = id,
-                .width = width,
-                .height = height,
-            },
-        },
-    );
-
-    vp.width = width;
-    vp.height = width;
-}
-
-pub fn viewport_size(handle: *ClientHandle, id: ViewportID) ?[2]u32 {
-    const client = handle.cast();
-    const vp = client.viewports.get(id) orelse return null;
-    return .{ vp.width, vp.height };
-}
-
-pub fn viewport_open(handle: *ClientHandle, id: ViewportID) bool {
-    const client = handle.cast();
-    const vp = client.viewports.get(id) orelse return false;
-    return vp.open;
-}
-
-pub fn frame_wait_for_vsync_if_enabled(handle: *ClientHandle, viewport_id: ViewportID) !void {
-    const client = handle.cast();
-    const vp = client.viewports.get(viewport_id) orelse return;
-    if (!vp.vsync) return;
-    try frame_wait_for_vsync(handle, viewport_id);
-}
-
-pub fn frame_wait_for_vsync(handle: *ClientHandle, viewport_id: ViewportID) !void {
-    const client = handle.cast();
-    const vp = client.viewports.get(viewport_id) orelse return;
-    std.debug.assert(vp.vsync);
-
-    while (!vp.can_render) {
-        try client.wait_for(.frame_render);
-        try client.update_by_tag(.frame_render);
+    pub fn create(
+        handle: *ClientHandle,
+        renderer: Renderer,
+        width: u32,
+        height: u32,
+        vsync: bool,
+    ) !*ViewportHandle {
+        const vp = try handle.cast().viewport_create(renderer, width, height, vsync);
+        return @ptrCast(vp);
     }
-}
 
-pub fn gl_viewport_create_from_pending(handle: *ClientHandle, vsync: bool, viewport_id: ViewportID) !GlViewportID {
-    const vp = try handle.cast().viewport_create_from_pending(.gl, viewport_id, vsync);
-    return .{ .generic = vp.id };
-}
+    pub fn create_from_pending(
+        handle: *ClientHandle,
+        renderer: Renderer,
+        vsync: bool,
+        viewport_id: ViewportID,
+    ) !*ViewportHandle {
+        const vp = try handle.cast().viewport_create_from_pending(
+            renderer,
+            viewport_id,
+            vsync,
+        );
+        return @ptrCast(vp);
+    }
 
-pub fn gl_viewport_create(handle: *ClientHandle, width: u32, height: u32, vsync: bool) !GlViewportID {
-    const vp = try handle.cast().viewport_create(.gl, width, height, vsync);
-    return .{ .generic = vp.id };
-}
+    pub fn id(handle: *ViewportHandle) ViewportID {
+        return handle.cast().id;
+    }
 
-pub fn gl_frame_begin(handle: *ClientHandle, viewport_id: GlViewportID) !FrameBeginGl {
-    const client = handle.cast();
+    pub fn is_open(handle: *ViewportHandle) bool {
+        return handle.cast().open;
+    }
 
-    const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
-    std.debug.assert(vp.renderer == .gl);
-    const gl = &vp.renderer.gl;
+    pub fn size(handle: *ViewportHandle) [2]u32 {
+        const vp = handle.cast();
+        return .{ vp.width, vp.height };
+    }
 
-    if (!vp.open) return error.ViewportClosed;
+    pub fn event_pop(handle: *ViewportHandle) ?Client.Event {
+        return handle.cast().event_pop();
+    }
 
-    std.debug.assert(vp.current_buffer == null);
+    pub fn frame_wait_for_vsync_if_enabled(handle: *ViewportHandle) !void {
+        const vp = handle.cast();
+        try vp.client.frame_wait_for_vsync_if_enabled(vp);
+    }
 
-    const buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
-        error.Timeout => unreachable,
-    };
+    pub fn frame_wait_for_vsync(handle: *ViewportHandle) !void {
+        const vp = handle.cast();
+        try vp.client.frame_wait_for_vsync(vp);
+    }
 
-    vp.current_buffer = buffer.id;
-    return .{
-        .fbo = buffer.fbo,
-        .viewport_width = vp.width,
-        .viewport_height = vp.height,
-    };
-}
+    pub fn sub_viewport_embed(handle: *ViewportHandle, client_id_to_embed: ClientID, rect: Rect) !SubViewportID {
+        const vp = handle.cast();
+        return vp.client.sub_viewport_embed(vp.id, client_id_to_embed, rect);
+    }
 
-pub fn gl_frame_end(handle: *ClientHandle, viewport_id: GlViewportID) void {
-    const client = handle.cast();
-    const vp = client.viewports.get(viewport_id.generic) orelse @panic("Viewport destroyed or never existed");
-    std.debug.assert(vp.renderer == .gl);
-    const gl = &vp.renderer.gl;
+    pub fn resize(handle: *ViewportHandle, requseted_width: u32, requseted_height: u32) !void {
+        const vp = handle.cast();
+        try vp.client.viewport_resize(vp, requseted_width, requseted_height);
+    }
 
-    const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
-        @panic("Buffer prematurely destroyed");
+    pub fn gl_frame_begin(handle: *ViewportHandle) !GlFrameBegin {
+        const vp = handle.cast();
 
-    gl.frame_end(buffer);
-}
+        std.debug.assert(vp.renderer == .gl);
+        const gl = &vp.renderer.gl;
 
-pub fn gl_frame_present(handle: *ClientHandle, viewport_id: GlViewportID) !void {
-    const client = handle.cast();
-    const vp = client.viewports.get(viewport_id.generic) orelse
-        @panic("Viewport destroyed or never existed");
+        if (!vp.open) return error.ViewportClosed;
 
-    std.debug.assert(vp.renderer == .gl);
-    const gl = &vp.renderer.gl;
-    defer vp.current_buffer = null;
+        std.debug.assert(vp.current_buffer == null);
 
-    const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
-        @panic("Buffer prematurely destroyed");
+        const buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
+            error.Timeout => unreachable,
+        };
 
-    try gl.buffer_present(vp, buffer);
-}
-
-pub fn cpu_viewport_create(handle: *ClientHandle, width: u32, height: u32) !CpuViewportID {
-    const vp = try handle.cast().viewport_create(.cpu, width, height, false);
-    return .{ .generic = vp.id };
-}
-
-pub fn cpu_viewport_create_from_pending(handle: *ClientHandle, viewport_id: ViewportID) !CpuViewportID {
-    const vp = try handle.cast().viewport_create_from_pending(.cpu, viewport_id, false);
-    return .{ .generic = vp.id };
-}
-
-pub fn cpu_frame_begin(handle: *ClientHandle, viewport_id: CpuViewportID) !FrameBeginCpu {
-    const client = handle.cast();
-
-    const vp = client.viewports.get(viewport_id.generic) orelse return error.ViewportDoesNotExist;
-    std.debug.assert(vp.renderer == .cpu);
-    const cpu = &vp.renderer.cpu;
-
-    if (!vp.open) return error.ViewportClosed;
-
-    std.debug.assert(vp.current_buffer == null);
-
-    var buffer: ?*RendererCpu.Buffer = null;
-    while (buffer == null) {
-        buffer = cpu.get_buffer() orelse {
-            std.debug.assert(cpu.buffers_collection.available.count() > 0);
-            try client.wait_for(viewport_id.generic, .buffer_released);
-            try client.update_by_tag(viewport_id.generic, .buffer_released);
-            continue;
+        vp.current_buffer = buffer.id;
+        return .{
+            .fbo = buffer.fbo,
+            .viewport_width = vp.width,
+            .viewport_height = vp.height,
         };
     }
 
-    vp.current_buffer = buffer.?.id;
+    pub fn gl_frame_end(handle: *ViewportHandle) void {
+        const vp = handle.cast();
+        std.debug.assert(vp.renderer == .gl);
+        const gl = &vp.renderer.gl;
 
-    return .{
-        .buffer = buffer.?.data,
-        .width = buffer.?.width,
-        .height = buffer.?.height,
-        .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
-        .viewport_width = vp.width,
-        .viewport_height = vp.height,
-    };
-}
+        const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
+            @panic("Buffer prematurely destroyed");
 
-pub fn cpu_frame_end(_: *ClientHandle, _: CpuViewportID) void {}
+        gl.frame_end(buffer);
+    }
 
-pub fn cpu_frame_present(handle: *ClientHandle, viewport_id: CpuViewportID) !void {
-    const client = handle.cast();
+    pub fn gl_frame_present(handle: *ViewportHandle) !void {
+        const vp = handle.cast();
 
-    const vp = client.viewports.get(viewport_id.generic) orelse return;
-    std.debug.assert(vp.renderer == .cpu);
-    const cpu = &vp.renderer.cpu;
-    defer vp.current_buffer = null;
+        std.debug.assert(vp.renderer == .gl);
+        const gl = &vp.renderer.gl;
+        defer vp.current_buffer = null;
 
-    const buffer = cpu.buffers_collection.available.getPtr(vp.current_buffer.?).?;
-    try cpu.buffer_present(vp, buffer);
-}
+        const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
+            @panic("Buffer prematurely destroyed");
 
-pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
-    const client = handle.cast();
+        try gl.buffer_present(vp, buffer);
+    }
 
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .cursor_shape_set = .{ .viewport_id = viewport_id, .shape = shape },
-        },
-    );
-}
+    pub fn cpu_frame_begin(handle: *ViewportHandle) !CpuFrameBegin {
+        const vp = handle.cast();
+        const client = vp.client;
+        std.debug.assert(vp.renderer == .cpu);
+        const cpu = &vp.renderer.cpu;
 
-pub fn sub_viewport_embed(
-    handle: *ClientHandle,
-    viewport_id: ViewportID,
-    client_id_to_embed: ClientID,
-    rect: Rect,
-) !SubViewportID {
-    const client = handle.cast();
+        if (!vp.open) return error.ViewportClosed;
 
-    try client.sub_viewport_status.ensureUnusedCapacity(client.gpa, 1);
+        std.debug.assert(vp.current_buffer == null);
 
-    const id = client.next_sub_viewport_id.increment();
-    client.sub_viewport_status.putAssumeCapacityNoClobber(id, .pending);
+        var buffer: ?*RendererCpu.Buffer = null;
+        while (buffer == null) {
+            buffer = cpu.get_buffer() orelse {
+                std.debug.assert(cpu.buffers_collection.available.count() > 0);
+                try client.wait_for(vp.id, .buffer_released);
+                try client.update_by_tag(vp.id, .buffer_released);
+                continue;
+            };
+        }
 
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .sub_viewport_embed = .{
-                .client_id_to_embed = client_id_to_embed,
-                .embeder_viewport_id = viewport_id,
-                .rect = rect,
-                .sub_viewport_id = id,
-            },
-        },
-    );
-
-    return id;
-}
-
-pub fn sub_viewport_rect_set(
-    handle: *ClientHandle,
-    sub_viewport_id: SubViewportID,
-    rect: Rect,
-) !void {
-    const client = handle.cast();
-
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .sub_viewport_rect_set = .{
-                .rect = rect,
-                .sub_viewport_id = sub_viewport_id,
-            },
-        },
-    );
-}
-
-pub fn client_info_iterator(handle: *ClientHandle) ClientInfoIterator {
-    return .{
-        .handle = handle,
-        .i = 0,
-    };
-}
-
-pub const ClientInfoIterator = struct {
-    handle: *ClientHandle,
-    i: usize,
-
-    pub fn next(iter: *ClientInfoIterator) ?Result {
-        const client = iter.handle.cast();
-        if (iter.i >= client.other_clients.count()) return null;
-        defer iter.i += 1;
-
-        const id, const clone = .{
-            client.other_clients.keys()[iter.i],
-            client.other_clients.values()[iter.i],
-        };
+        vp.current_buffer = buffer.?.id;
 
         return .{
-            .client_id = id,
-            .info = .{
-                .name = clone.strings[clone.name.offset..][0..clone.name.len],
-            },
+            .buffer = buffer.?.data,
+            .width = buffer.?.width,
+            .height = buffer.?.height,
+            .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
+            .viewport_width = vp.width,
+            .viewport_height = vp.height,
         };
     }
 
-    pub const Result = struct {
-        client_id: ptypes.ClientID,
-        info: ptypes.ClientInfo,
+    pub fn cpu_frame_end(_: *ViewportHandle) void {}
+
+    pub fn cpu_frame_present(handle: *ViewportHandle) !void {
+        const vp = handle.cast();
+        std.debug.assert(vp.renderer == .cpu);
+        const cpu = &vp.renderer.cpu;
+        defer vp.current_buffer = null;
+
+        const buffer = cpu.buffers_collection.available.getPtr(vp.current_buffer.?).?;
+        try cpu.buffer_present(vp, buffer);
+    }
+
+    pub const CpuFrameBegin = struct {
+        buffer: []u8,
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u8,
+        viewport_width: u32,
+        viewport_height: u32,
+    };
+
+    pub const GlFrameBegin = struct {
+        fbo: c_uint,
+        viewport_width: u32,
+        viewport_height: u32,
     };
 };
 
@@ -420,4 +353,5 @@ const server_to_client = @import("protocol").server_to_client;
 const Client = @import("Client.zig");
 const RendererGL = @import("RendererGL.zig");
 const RendererCpu = @import("RendererCpu.zig");
+const Viewport = @import("Viewport.zig");
 const buffers = @import("buffers.zig");

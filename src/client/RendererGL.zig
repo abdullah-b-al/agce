@@ -38,7 +38,6 @@ pub fn frame_end(r: *RendererGL, buffer: *Buffer) void {
     const tmp_syncobj = r.gbm.syncobj_create();
     defer _ = c_linux.drmSyncobjDestroy(r.gbm.dri.handle, tmp_syncobj);
 
-    // NOTE: Could the tmp syncobj be reused ?
     const import_result =
         c_linux.drmSyncobjImportSyncFile(r.gbm.dri.handle, tmp_syncobj, egl_sync_fd);
     std.debug.assert(import_result == 0);

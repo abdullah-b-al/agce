@@ -63,15 +63,19 @@ pub fn has_buffer(vp: *Viewport, buffer_id: BufferID) bool {
     return vp.buffers_status.contains(buffer_id);
 }
 
-pub fn push_message(vp: *Viewport, message: Client.Message) void {
-    vp.messages.insertAssumeCapacity(0, message);
-}
-
-pub fn push_event(vp: *Viewport, event: Client.Event) void {
+pub fn event_push(vp: *Viewport, event: Client.Event) void {
     vp.events.insertAssumeCapacity(0, event);
 }
 
-pub fn handle_message(vp: *Viewport, comptime tag: Client.Message.Tag, message: Client.Message) !void {
+pub fn event_pop(vp: *Viewport) ?Client.Event {
+    return vp.events.pop();
+}
+
+pub fn message_push(vp: *Viewport, message: Client.Message) void {
+    vp.messages.insertAssumeCapacity(0, message);
+}
+
+pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: Client.Message) !void {
     std.debug.assert(tag == message);
     const msg = @field(message, @tagName(tag));
 

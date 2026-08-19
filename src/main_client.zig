@@ -21,17 +21,17 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     }
 
-    const client = try api.init(init.io, init.gpa, init.environ_map, .{
+    const handle = try api.init(init.io, init.gpa, init.environ_map, .{
         .name = "main_client",
     });
-    defer api.deinit(client);
+    defer handle.deinit();
 
     if (use_gl) {
-        try api.init_opengl(client, 3, 3);
+        try handle.init_opengl(3, 3);
     }
 
-    const viewport_gl = if (use_gl) try api.gl_viewport_create(client, 1280, 720, vsync) else null;
-    const viewport_cpu = if (use_cpu) try api.cpu_viewport_create(client, 1280, 720) else null;
+    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try .create(handle, .gl, 1280, 720, vsync) else null;
+    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try .create(handle, .cpu, 1280, 720, vsync) else null;
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();
@@ -42,8 +42,8 @@ pub fn main(init: std.process.Init) !void {
         const timeout: Io.Timeout =
             .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
 
-        try api.poll(client, timeout);
-        try api.update(client);
+        try handle.poll(timeout);
+        try handle.update();
 
         const should_render_cpu =
             time_cpu.untilNow(init.io, .awake).toMilliseconds() >= 1000 or
@@ -55,20 +55,20 @@ pub fn main(init: std.process.Init) !void {
 
         if (should_render_cpu) {
             if (viewport_cpu) |cpu| {
-                try render_cpu(client, cpu, random);
+                try render_cpu(cpu, random);
                 time_cpu = .now(init.io, .awake);
             }
         }
 
         if (should_render_gpu) {
             if (viewport_gl) |gl| {
-                try render_gpu(client, gl, random);
+                try render_gpu(gl, random);
                 time_gpu = .now(init.io, .awake);
             }
         }
 
-        const exit_gpu = if (viewport_gl) |gl| !api.viewport_open(client, gl.generic) else true;
-        const exit_cpu = if (viewport_cpu) |cpu| !api.viewport_open(client, cpu.generic) else true;
+        const exit_gpu = if (viewport_gl) |gl| !gl.is_open() else true;
+        const exit_cpu = if (viewport_cpu) |cpu| !cpu.is_open() else true;
         if (exit_gpu and exit_cpu) {
             break;
         }
@@ -77,8 +77,8 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-fn render_cpu(handle: *ClientHandle, vp: CpuViewportID, random: std.Random) !void {
-    const frame = try api.cpu_frame_begin(handle, vp);
+fn render_cpu(vp: *ViewportHandle, random: std.Random) !void {
+    const frame = try vp.cpu_frame_begin();
 
     const r: u8 = random.int(u8);
     const g: u8 = random.int(u8);
@@ -93,12 +93,12 @@ fn render_cpu(handle: *ClientHandle, vp: CpuViewportID, random: std.Random) !voi
         frame.buffer[i + 3] = @intCast(a); // A
     }
 
-    api.cpu_frame_end(handle, vp);
-    try api.cpu_frame_present(handle, vp);
+    vp.cpu_frame_end();
+    try vp.cpu_frame_present();
 }
 
-fn render_gpu(handle: *ClientHandle, vp: GlViewportID, random: std.Random) !void {
-    const frame = try api.gl_frame_begin(handle, vp);
+fn render_gpu(vp: *ViewportHandle, random: std.Random) !void {
+    const frame = try vp.gl_frame_begin();
 
     const fr = random.float(f32);
     const fg = random.float(f32);
@@ -117,8 +117,8 @@ fn render_gpu(handle: *ClientHandle, vp: GlViewportID, random: std.Random) !void
     glad.glClearColor(fr, fg, fb, fa);
     glad.glClear(glad.GL_COLOR_BUFFER_BIT);
 
-    api.gl_frame_end(handle, vp);
-    try api.gl_frame_present(handle, vp);
+    vp.gl_frame_end();
+    try vp.gl_frame_present();
 }
 
 const std = @import("std");
@@ -131,3 +131,4 @@ const ViewportID = @import("client").ViewportID;
 const GlViewportID = @import("client").GlViewportID;
 const CpuViewportID = @import("client").CpuViewportID;
 const ClientHandle = @import("client").ClientHandle;
+const ViewportHandle = @import("client").ViewportHandle;

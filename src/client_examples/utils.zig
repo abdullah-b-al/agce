@@ -1,5 +1,5 @@
-pub fn render(handle: *agce.ClientHandle, viewport: agce.CpuViewportID, color: u24) !void {
-    const frame = try agce.cpu_frame_begin(handle, viewport);
+pub fn render(viewport: *agce.ViewportHandle, color: u24) !void {
+    const frame = try viewport.cpu_frame_begin();
     std.debug.assert(frame.bytes_per_pixel == 4);
     const ptr: [*]u32 = @ptrCast(@alignCast(frame.buffer.ptr));
     const buffer: []u32 = ptr[0 .. frame.buffer.len / frame.bytes_per_pixel];
@@ -11,8 +11,8 @@ pub fn render(handle: *agce.ClientHandle, viewport: agce.CpuViewportID, color: u
         p.* = a | r | g | b;
     }
 
-    agce.cpu_frame_end(handle, viewport);
-    try agce.cpu_frame_present(handle, viewport);
+    viewport.cpu_frame_end();
+    try viewport.cpu_frame_present();
 }
 
 pub fn fade_color(

@@ -121,7 +121,7 @@ pub fn update_by_tag(client: *Client, viewport_id: ViewportID, comptime tag: Mes
         i -= 1;
         const message = vp.messages.items[i];
         if (message == tag) {
-            try vp.handle_message(tag, message);
+            try vp.message_handle(tag, message);
             _ = vp.messages.orderedRemove(i);
         }
     }
@@ -212,13 +212,13 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
 
         .viewport_resize => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
-            vp.push_event(.{ .viewport_resize = e });
-            vp.push_message(.{ .viewport_resize = e });
+            vp.event_push(.{ .viewport_resize = e });
+            vp.message_push(.{ .viewport_resize = e });
         },
         .viewport_closed => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
-            vp.push_event(.{ .viewport_closed = e });
-            vp.push_message(.{ .viewport_closed = e });
+            vp.event_push(.{ .viewport_closed = e });
+            vp.message_push(.{ .viewport_closed = e });
         },
 
         inline .mouse_enter,
@@ -230,7 +230,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         => |e, tag| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             const event = @unionInit(Event, @tagName(tag), e);
-            vp.push_event(event);
+            vp.event_push(event);
         },
 
         inline .buffer_destroyed, .buffer_created => |e, tag| {
@@ -239,7 +239,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
                 .viewport_id = vp.id,
                 .message = e,
             });
-            vp.push_message(msg);
+            vp.message_push(msg);
         },
 
         inline .frame_render,
@@ -248,7 +248,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         => |e, tag| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             const msg = @unionInit(Message, @tagName(tag), e);
-            vp.push_message(msg);
+            vp.message_push(msg);
         },
     }
 }
@@ -265,7 +265,7 @@ pub fn viewport_from_buffer_id(client: *Client, buffer_id: BufferID) ?*Viewport 
 
 pub fn viewport_create(
     client: *Client,
-    comptime tag: Viewport.Renderer.Tag,
+    tag: Viewport.Renderer.Tag,
     width: u32,
     height: u32,
     vsync: bool,
@@ -280,9 +280,34 @@ pub fn viewport_create(
     return vp;
 }
 
+pub fn viewport_resize(client: *Client, vp: *Viewport, requseted_width: u32, requseted_height: u32) !void {
+    const buffer_size = switch (vp.renderer) {
+        inline else => |r| r.buffer_size(),
+    };
+
+    const width = @min(buffer_size[0], requseted_width);
+    const height = @min(buffer_size[1], requseted_height);
+
+    try client_to_server.message_send_json(
+        client.io,
+        client.gpa,
+        client.connection,
+        .{
+            .viewport_resize = .{
+                .viewport_id = vp.id,
+                .width = width,
+                .height = height,
+            },
+        },
+    );
+
+    vp.width = width;
+    vp.height = width;
+}
+
 pub fn viewport_create_from_pending(
     client: *Client,
-    comptime tag: Viewport.Renderer.Tag,
+    tag: Viewport.Renderer.Tag,
     id: ViewportID,
     vsync: bool,
 ) !*Viewport {
@@ -303,7 +328,7 @@ pub fn viewport_create_from_pending(
 
 pub fn viewport_create_with_id(
     client: *Client,
-    comptime tag: Viewport.Renderer.Tag,
+    tag: Viewport.Renderer.Tag,
     id: ViewportID,
     width: u32,
     height: u32,
@@ -361,6 +386,20 @@ pub fn viewport_create_with_id(
     }
 
     return vp;
+}
+
+pub fn frame_wait_for_vsync_if_enabled(client: *Client, vp: *Viewport) !void {
+    if (!vp.vsync) return;
+    try frame_wait_for_vsync(client, vp);
+}
+
+pub fn frame_wait_for_vsync(client: *Client, vp: *Viewport) !void {
+    std.debug.assert(vp.vsync);
+
+    while (!vp.can_render) {
+        try client.wait_for(vp.id, .frame_render);
+        try client.update_by_tag(vp.id, .frame_render);
+    }
 }
 
 pub fn send_viewport_create(
@@ -457,6 +496,34 @@ pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
         client.connection,
         .{ .buffer_destroy = .{ .buffer_id = buffer_id } },
     );
+}
+
+pub fn sub_viewport_embed(
+    client: *Client,
+    viewport_id: ViewportID,
+    client_id_to_embed: ptypes.ClientID,
+    rect: ptypes.Rect,
+) !SubViewportID {
+    try client.sub_viewport_status.ensureUnusedCapacity(client.gpa, 1);
+
+    const id = client.next_sub_viewport_id.increment();
+    client.sub_viewport_status.putAssumeCapacityNoClobber(id, .pending);
+
+    try client_to_server.message_send_json(
+        client.io,
+        client.gpa,
+        client.connection,
+        .{
+            .sub_viewport_embed = .{
+                .client_id_to_embed = client_id_to_embed,
+                .embeder_viewport_id = viewport_id,
+                .rect = rect,
+                .sub_viewport_id = id,
+            },
+        },
+    );
+
+    return id;
 }
 
 pub const Gbm = struct {
