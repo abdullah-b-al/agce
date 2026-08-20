@@ -330,8 +330,8 @@ pub fn viewport_create_with_id(
     client: *Client,
     tag: Viewport.Renderer.Tag,
     id: ViewportID,
-    width: u32,
-    height: u32,
+    requested_width: u32,
+    requested_height: u32,
     vsync: bool,
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
@@ -345,8 +345,8 @@ pub fn viewport_create_with_id(
         vp.* = .init(
             id,
             client,
-            width,
-            height,
+            requested_width,
+            requested_height,
             .argb8888,
             vsync,
             renderer,
@@ -357,6 +357,7 @@ pub fn viewport_create_with_id(
 
     switch (vp.renderer) {
         inline else => |*r, t| {
+            const width, const height = buffers.new_dimensions(requested_width, requested_height);
             const array = try buffers.buffers_create(
                 Viewport.Renderer.RendererBuffer(t),
                 2,
@@ -372,7 +373,7 @@ pub fn viewport_create_with_id(
         },
     }
 
-    try client.send_viewport_create(id, width, height, true);
+    try client.send_viewport_create(id, requested_width, requested_height, true);
 
     while (true) {
         try client.wait_for(id, .viewport_created);
