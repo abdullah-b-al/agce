@@ -73,8 +73,6 @@ pub fn build(b: *std.Build) !void {
 
     const check = b.step("check", "Check the compilation");
 
-    build_examples(b, check, client, target, optimize);
-
     { // client cli
         const exe = b.addExecutable(.{
             .name = "agce-client",
@@ -196,35 +194,6 @@ fn build_glad(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin
         .lib = lib,
         .c = c.createModule(),
     };
-}
-
-fn build_examples(
-    b: *Build,
-    check: *Build.Step,
-    client: *Build.Module,
-    target: Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-) void {
-    inline for (.{
-        "minimal_embeded_viewport",
-        "minimal_viewport_container",
-    }) |name| {
-        const exe = b.addExecutable(.{
-            .name = name,
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/client_examples/" ++ name ++ ".zig"),
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-                .imports = &.{
-                    .{ .name = "agce", .module = client },
-                },
-            }),
-        });
-
-        b.installArtifact(exe);
-        check.dependOn(&exe.step);
-    }
 }
 
 const std = @import("std");
