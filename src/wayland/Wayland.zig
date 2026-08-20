@@ -697,10 +697,25 @@ pub fn cursor_shape_set(wl: *Wayland, args: Event.TypeOf(.cursor_shape_set)) !vo
     vp.pointer.set_shape(shape orelse return);
 }
 
+fn process_char(maybe_char: ?u32) ?u32 {
+    const char = maybe_char orelse return null;
+
+    // filter
+    return switch (char) {
+        0...' ' - 1,
+        127, // DEL
+        => null,
+
+        else => char,
+    };
+}
+
 pub fn keyboard_key(wl: *Wayland, args: Event.TypeOf(.keyboard_key)) !void {
     if (wl.input_repeat_future) |*future| {
         future.cancel(wl.io);
     }
+
+    wl.input_repeat_future = null;
 
     const window_id = wl.input_focus_keyboard orelse return;
     const win = wl.windows.get(window_id) orelse return;
@@ -730,6 +745,20 @@ pub fn keyboard_key(wl: *Wayland, args: Event.TypeOf(.keyboard_key)) !void {
         },
     });
 
+    if (process_char(args.char)) |char| {
+        try wl.dispatch.server_put(@src(), .{
+            .keyboard_char = .{
+                .client_id = key.client_id,
+                .payload = .{
+                    .viewport_id = key.viewport_id,
+                    .char = char,
+                },
+            },
+        });
+    }
+
+    errdefer comptime unreachable;
+
     const maybe_ms = switch (args.state) {
         .pressed => wl.input_delay_ms,
         .repeat => wl.input_rate_ms,
@@ -741,6 +770,7 @@ pub fn keyboard_key(wl: *Wayland, args: Event.TypeOf(.keyboard_key)) !void {
             wl.dispatch,
             ms,
             args.key,
+            args.char,
         }) catch |err| blk: {
             log.err("Failed to start task input_repeat {}", .{err});
             break :blk null;
@@ -917,16 +947,17 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
 }
 
 fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSystem) void {
-    const ws_event: Event = blk: switch (event) {
+    const wl = ws.native.wayland;
+    switch (event) {
         .keymap => |e| {
-            ws.native.wayland.keyboard_keymap(e.fd, e.size, e.format) catch |err| {
-                log.err("keyboard_keymap failed with{}", .{err});
+            wl.keyboard_keymap(e.fd, e.size, e.format) catch |err| {
+                log.err("keyboard_keymap failed with {}", .{err});
             };
 
             return;
         },
         .modifiers => |e| {
-            ws.native.wayland.keyboard_modifiers(
+            wl.keyboard_modifiers(
                 e.mods_depressed,
                 e.mods_latched,
                 e.mods_locked,
@@ -935,7 +966,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             return;
         },
         .repeat_info => |e| {
-            ws.native.wayland.keyboard_repeat_info(e.rate, e.delay);
+            wl.keyboard_repeat_info(e.rate, e.delay);
             return;
         },
 
@@ -945,14 +976,15 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
                 return;
             };
 
-            const window_id = ws.native.wayland.window_id_from_surface(surface) orelse {
+            const window_id = wl.window_id_from_surface(surface) orelse {
                 log.err("Dropping keyboard event .{t}: Surface without a window", .{tag});
                 return;
             };
 
-            break :blk @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
+            const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
                 .window_id = window_id,
             });
+            ws.dispatch.window_system_put(@src(), ws_event) catch {};
         },
         .key => |e| {
             const key = input.linux_key_to_protocol_key(e.key) orelse {
@@ -969,11 +1001,25 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
                 },
             };
 
-            break :blk .{ .keyboard_key = .{ .key = key, .state = state } };
-        },
-    };
+            var char: ?u32 = null;
+            if (state != .released and wl.xkb_state != null) {
+                // Adding 8 because https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_keyboard-enum-keymap_format
+                const code = e.key + 8;
+                char = c_linux.xkb_state_key_get_utf32(wl.xkb_state.?, code);
+            }
 
-    ws.dispatch.window_system_put(@src(), ws_event) catch {};
+            ws.dispatch.window_system_put(
+                @src(),
+                .{
+                    .keyboard_key = .{
+                        .key = key,
+                        .state = state,
+                        .char = char,
+                    },
+                },
+            ) catch {};
+        },
+    }
 }
 
 fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
@@ -1181,7 +1227,7 @@ pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDevi
 }
 
 const InputRepeatFuture = Io.Future(@typeInfo(@TypeOf(input_repeat)).@"fn".return_type.?);
-fn input_repeat(dispatch: *Dispatch, ms: i32, key: pinput.Key) void {
+fn input_repeat(dispatch: *Dispatch, ms: i32, key: pinput.Key, char: ?u32) void {
     dispatch.io.sleep(.fromMilliseconds(ms), .awake) catch return;
 
     // FIXME: This might end up sending stale data.
@@ -1189,6 +1235,7 @@ fn input_repeat(dispatch: *Dispatch, ms: i32, key: pinput.Key) void {
     dispatch.window_system_put(@src(), .{ .keyboard_key = .{
         .key = key,
         .state = .repeat,
+        .char = char,
     } }) catch return;
 }
 

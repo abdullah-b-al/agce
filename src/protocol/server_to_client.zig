@@ -22,6 +22,7 @@ pub const MessagePayload = union(enum(u32)) {
 
     frame_render: FrameRender,
 
+    keyboard_char: KeyboardChar,
     keyboard_key: KeyboardKey,
     mouse_enter: MouseEnter,
     mouse_leave: MouseLeave,
@@ -81,6 +82,11 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferCreated = struct {
         buffer_id: types.BufferID,
         status: types.Status,
+    };
+
+    pub const KeyboardChar = struct {
+        viewport_id: types.ViewportID,
+        char: u32,
     };
 
     pub const KeyboardKey = struct {

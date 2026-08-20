@@ -33,7 +33,7 @@ pub fn init(
         else
             null;
 
-    var path_buf: [utils.socket_max_path]u8 = undefined;
+    var path_buf: [constants.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
 
@@ -227,6 +227,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         .mouse_button,
         .mouse_scroll,
         .keyboard_key,
+        .keyboard_char,
         => |e, tag| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             const event = @unionInit(Event, @tagName(tag), e);
@@ -559,6 +560,7 @@ pub const Gbm = struct {
 pub const Event = union(enum) {
     viewport_resize: ptypes.ViewportResize,
     viewport_closed: server_to_client.MessagePayload.ViewportClosed,
+    keyboard_char: server_to_client.MessagePayload.KeyboardChar,
     keyboard_key: server_to_client.MessagePayload.KeyboardKey,
     mouse_enter: server_to_client.MessagePayload.MouseEnter,
     mouse_leave: server_to_client.MessagePayload.MouseLeave,
@@ -607,6 +609,7 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const utils = @import("utils");
+const constants = @import("constants");
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;
 const ptypes = @import("protocol").types;

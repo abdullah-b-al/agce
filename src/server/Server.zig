@@ -18,7 +18,7 @@ pub fn create(
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
 
-    var path_buf: [utils.socket_max_path]u8 = undefined;
+    var path_buf: [constants.socket_max_path]u8 = undefined;
     const unix_path = blk: {
         const path = utils.unix_address_path(environ, &path_buf);
         break :blk try gpa.dupe(u8, path);
@@ -514,6 +514,7 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const utils = @import("utils");
+const constants = @import("constants");
 const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;

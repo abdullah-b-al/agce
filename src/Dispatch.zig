@@ -129,9 +129,14 @@ pub const WindowSystemEvent = union(enum) {
         return utils.TypeOfField(WindowSystemEvent, @tagName(tag));
     }
 
+    pub const KeyboardChar = struct {
+        char: u32,
+    };
+
     pub const KeyboardKey = struct {
         key: pinput.Key,
         state: pinput.KeyState,
+        char: ?u32,
     };
 
     pub const KeyboardEnter = struct {
@@ -194,6 +199,7 @@ pub const ServerEvent = union(enum) {
     buffer_created: WithClientID(Payload.BufferCreated),
 
     keyboard_key: WithClientID(Payload.KeyboardKey),
+    keyboard_char: WithClientID(Payload.KeyboardChar),
     mouse_enter: WithClientID(Payload.MouseEnter),
     mouse_leave: WithClientID(Payload.MouseLeave),
     mouse_motion: WithClientID(Payload.MouseMotion),
@@ -259,3 +265,4 @@ const ClientID = ptypes.ClientID;
 const ViewportKey = @import("WindowSystem.zig").ViewportKey;
 const WindowID = @import("WindowSystem.zig").WindowID;
 const utils = @import("utils");
+const constants = @import("constants");

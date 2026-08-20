@@ -31,10 +31,19 @@ pub fn build(b: *std.Build) !void {
 
     const glad = build_glad(b, target, optimize);
 
+    const constants = b.createModule(.{
+        .root_source_file = b.path("src/constants.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const utils = b.createModule(.{
         .root_source_file = b.path("src/utils.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "constants", .module = constants },
+        },
     });
 
     const protocol = blk: {
@@ -61,6 +70,7 @@ pub fn build(b: *std.Build) !void {
                 .{ .name = "protocol", .module = protocol },
                 .{ .name = "utils", .module = utils },
                 .{ .name = "glad", .module = glad.c },
+                .{ .name = "constants", .module = constants },
             },
         });
 
@@ -148,6 +158,7 @@ pub fn build(b: *std.Build) !void {
                         .{ .name = "c_linux", .module = c_linux.? },
                         .{ .name = "protocol", .module = protocol },
                         .{ .name = "utils", .module = utils },
+                        .{ .name = "constants", .module = constants },
                     },
                 }),
             });
