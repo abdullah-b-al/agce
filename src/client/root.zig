@@ -119,6 +119,31 @@ pub const ClientHandle = opaque {
         return client.viewports_from_server.keys()[0];
     }
 
+    pub fn expect_viewport(handle: *ClientHandle) bool {
+        return handle.cast().env_flags.expect_viewport;
+    }
+
+    pub fn spawn_process_to_embed(handle: *ClientHandle, argv: []const []const u8) !std.process.Child {
+        const client = handle.cast();
+        var map = try client.environ_map.clone(client.gpa);
+        defer map.deinit();
+        try map.put(
+            constants.env_flag_expect_viewport_key,
+            constants.env_flag_expect_viewport_true,
+        );
+
+        return try std.process.spawn(
+            client.io,
+            .{
+                .argv = argv,
+                .environ_map = &map,
+                .stdout = .close,
+                .stderr = .close,
+                .stdin = .close,
+            },
+        );
+    }
+
     pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
         const client = handle.cast();
 
@@ -370,3 +395,4 @@ const RendererGL = @import("RendererGL.zig");
 const RendererCpu = @import("RendererCpu.zig");
 const Viewport = @import("Viewport.zig");
 const buffers = @import("buffers.zig");
+const constants = @import("constants");

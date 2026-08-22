@@ -2,6 +2,7 @@ const Client = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
+environ_map: std.process.Environ.Map,
 connection: net.Stream,
 
 info: ?ptypes.ClientInfoClone,
@@ -21,12 +22,17 @@ messages_arena: std.heap.ArenaAllocator,
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
 
+env_flags: EnvFlags,
+
 pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
     info: ?ptypes.ClientInfo,
 ) !Client {
+    var map = try environ_map.clone(gpa);
+    errdefer map.deinit();
+
     const clone: ?ptypes.ClientInfoClone =
         if (info) |i|
             try .clone(gpa, i)
@@ -42,6 +48,7 @@ pub fn init(
     return .{
         .io = io,
         .gpa = gpa,
+        .environ_map = map,
         .connection = stream,
         .info = clone,
         .other_clients = .empty,
@@ -54,6 +61,8 @@ pub fn init(
         .sub_viewport_status = .empty,
         .gbm = null,
         .gl_context = null,
+
+        .env_flags = .from_environ(&map),
     };
 }
 
@@ -83,6 +92,7 @@ pub fn deinit(client: *Client) void {
     client.messages_arena.deinit();
     client.other_clients.deinit(client.gpa);
 
+    client.environ_map.deinit();
     client.connection.close(client.io);
 }
 
@@ -603,6 +613,19 @@ pub const CreateStatus = enum {
 pub const Size = struct {
     width: u32,
     height: u32,
+};
+
+const EnvFlags = struct {
+    expect_viewport: bool,
+
+    pub fn from_environ(map: *const std.process.Environ.Map) EnvFlags {
+        return .{
+            .expect_viewport = if (map.get(constants.env_flag_expect_viewport_key)) |value|
+                std.mem.eql(u8, value, constants.env_flag_expect_viewport_true)
+            else
+                false,
+        };
+    }
 };
 
 const std = @import("std");
