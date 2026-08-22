@@ -4,6 +4,8 @@ id: WindowID,
 surface: *cwl.Surface,
 
 viewport_key: ViewportKey,
+input_focus_keyboard: ViewportKey,
+input_focus_mouse: ViewportKey,
 
 xdg_surface: *xdg.Surface,
 xdg_toplevel: *xdg.Toplevel,
@@ -48,6 +50,8 @@ pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key
         .id = window_id,
         .surface = surface,
         .viewport_key = viewport_key,
+        .input_focus_keyboard = viewport_key,
+        .input_focus_mouse = viewport_key,
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
         .commited_once = false,

@@ -53,6 +53,7 @@ pub fn viewport_create(
     wl: *Wayland,
     parent_surface: *cwl.Surface,
     viewport_id: ViewportID,
+    window_id: WindowID,
     rect: ptypes.Rect,
     create_sync_timeline: bool,
     vsync: bool,
@@ -62,6 +63,7 @@ pub fn viewport_create(
         wl,
         parent_surface,
         viewport_id,
+        window_id,
         rect,
         vsync,
     );
@@ -390,6 +392,7 @@ const BufferAndTimelineFds = ptypes.BufferAndTimelineFds;
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.ClientResources);
 const ViewportKey = @import("../WindowSystem.zig").ViewportKey;
+const WindowID = @import("../WindowSystem.zig").WindowID;
 const BufferKey = @import("../WindowSystem.zig").BufferKey;
 const WindowSystem = @import("../WindowSystem.zig");
 const BufferID = ptypes.BufferID;

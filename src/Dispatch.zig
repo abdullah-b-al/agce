@@ -150,11 +150,13 @@ pub const WindowSystemEvent = union(enum) {
     pub const MouseEnter = struct {
         client_id: ClientID,
         viewport_id: ptypes.ViewportID,
+        window_id: WindowID,
     };
 
     pub const MouseLeave = struct {
         client_id: ClientID,
         viewport_id: ptypes.ViewportID,
+        window_id: WindowID,
     };
 
     pub const MouseMotion = struct {

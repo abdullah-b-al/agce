@@ -27,7 +27,7 @@ xkb_context: *c_linux.struct_xkb_context,
 xkb_keymap: ?*c_linux.struct_xkb_keymap,
 xkb_state: ?*c_linux.struct_xkb_state,
 
-input_focus_mouse: ?ViewportKey,
+input_focus_mouse: ?WindowID,
 input_focus_keyboard: ?WindowID,
 input_delay_ms: ?i32,
 input_rate_ms: ?i32,
@@ -524,6 +524,7 @@ fn viewport_create_with_sub_viewport(
         wl,
         embeder_viewport.surface,
         embeded_key.viewport_id,
+        embeder_viewport.window_id,
         sub_viewport_data.rect,
         args.payload.create_sync_timeline,
         args.payload.vsync,
@@ -579,6 +580,7 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
         wl,
         window.surface,
         args.payload.viewport_id,
+        window.id,
         .{
             .x = 0,
             .y = 0,
@@ -719,7 +721,7 @@ pub fn keyboard_key(wl: *Wayland, args: Event.TypeOf(.keyboard_key)) !void {
 
     const window_id = wl.input_focus_keyboard orelse return;
     const win = wl.windows.get(window_id) orelse return;
-    const key = win.viewport_key;
+    const key = win.input_focus_keyboard;
 
     const mods = c_linux.xkb_state_serialize_mods(wl.xkb_state, c_linux.XKB_STATE_MODS_EFFECTIVE);
     const alt =
@@ -796,7 +798,9 @@ pub fn keyboard_leave(wl: *Wayland, _: Event.KeyboardLeave) !void {
 }
 
 pub fn mouse_enter(wl: *Wayland, args: Event.TypeOf(.mouse_enter)) !void {
-    wl.input_focus_mouse = .{
+    const window = wl.windows.get(args.window_id) orelse return;
+    wl.input_focus_mouse = args.window_id;
+    window.input_focus_mouse = .{
         .client_id = args.client_id,
         .viewport_id = args.viewport_id,
     };
@@ -827,7 +831,8 @@ pub fn mouse_leave(wl: *Wayland, args: Event.TypeOf(.mouse_leave)) !void {
     );
 }
 pub fn mouse_motion(wl: *Wayland, args: Event.TypeOf(.mouse_motion)) !void {
-    const key = wl.input_focus_mouse orelse return;
+    const window = wl.windows.get(wl.input_focus_mouse orelse return) orelse return;
+    const key = window.input_focus_mouse;
 
     try wl.dispatch.server_put(@src(), .{
         .mouse_motion = .{
@@ -841,7 +846,12 @@ pub fn mouse_motion(wl: *Wayland, args: Event.TypeOf(.mouse_motion)) !void {
     });
 }
 pub fn mouse_button(wl: *Wayland, args: Event.TypeOf(.mouse_button)) !void {
-    const key = wl.input_focus_mouse orelse return;
+    const window = wl.windows.get(wl.input_focus_mouse orelse return) orelse return;
+    const key = window.input_focus_mouse;
+    if (args.state == .pressed) {
+        window.input_focus_keyboard = window.input_focus_mouse;
+    }
+
     try wl.dispatch.server_put(@src(), .{
         .mouse_button = .{
             .client_id = key.client_id,
@@ -854,7 +864,9 @@ pub fn mouse_button(wl: *Wayland, args: Event.TypeOf(.mouse_button)) !void {
     });
 }
 pub fn mouse_scroll(wl: *Wayland, args: Event.TypeOf(.mouse_scroll)) !void {
-    const key = wl.input_focus_mouse orelse return;
+    const window = wl.windows.get(wl.input_focus_mouse orelse return) orelse return;
+    const key = window.input_focus_mouse;
+
     try wl.dispatch.server_put(@src(), .{
         .mouse_scroll = .{
             .client_id = key.client_id,
@@ -976,7 +988,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
                 return;
             };
 
-            const window_id = wl.window_id_from_surface(surface) orelse {
+            const window_id = wl.window_id_from_window_surface(surface) orelse {
                 log.err("Dropping keyboard event .{t}: Surface without a window", .{tag});
                 return;
             };
@@ -1030,7 +1042,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
                 return;
             };
 
-            const key = ws.native.wayland.viewport_key_from_surface(surface) orelse {
+            const key, const vp = ws.native.wayland.viewport_from_surface(surface) orelse {
                 log.warn("Dropping pointer event without a viewport {t}", .{tag});
                 return;
             };
@@ -1046,6 +1058,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
             break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
                 .client_id = key.client_id,
                 .viewport_id = key.viewport_id,
+                .window_id = vp.window_id,
             });
         },
         .motion => |e| .{
@@ -1137,7 +1150,7 @@ pub fn window_from_viewport_key(wl: *const Wayland, key: ViewportKey) ?*Window {
     return null;
 }
 
-pub fn window_id_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?WindowID {
+pub fn window_id_from_window_surface(wl: *const Wayland, surface: *cwl.Surface) ?WindowID {
     for (wl.windows.values()) |win| {
         if (win.surface == surface) {
             return win.id;
@@ -1148,10 +1161,19 @@ pub fn window_id_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?Window
 }
 
 pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?ViewportKey {
+    const key, _ = wl.viewport_from_surface(surface) orelse return null;
+
+    return key;
+}
+
+pub fn viewport_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?struct { ViewportKey, *const Viewport } {
     for (wl.resources.values()) |rs| {
-        for (rs.viewports.values()) |vp| {
+        for (rs.viewports.values()) |*vp| {
             if (vp.surface == surface) {
-                return .{ .client_id = rs.client_id, .viewport_id = vp.id };
+                return .{
+                    .{ .client_id = rs.client_id, .viewport_id = vp.id },
+                    vp,
+                };
             }
         }
     }
@@ -1291,3 +1313,4 @@ const BufferID = ptypes.BufferID;
 const Event = Dispatch.WindowSystemEvent;
 const input = @import("input.zig");
 const SubViewport = @import("SubViewport.zig");
+const Viewport = @import("Viewport.zig");

@@ -1,6 +1,7 @@
 const Viewport = @This();
 
 id: ViewportID,
+window_id: WindowID,
 surface: *cwl.Surface,
 pointer: Pointer,
 subsurface: *cwl.Subsurface,
@@ -19,6 +20,7 @@ pub fn init(
     wl: *Wayland,
     parent_surface: *cwl.Surface,
     id: ViewportID,
+    window_id: WindowID,
     rect: ptypes.Rect,
     vsync: bool,
 ) !Viewport {
@@ -41,6 +43,7 @@ pub fn init(
 
     return .{
         .id = id,
+        .window_id = window_id,
         .surface = surface,
         .pointer = .init,
         .subsurface = subsurface,
