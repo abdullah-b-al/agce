@@ -169,10 +169,12 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
 
                     try ws.dispatch.server_put(@src(), .{
                         .sub_viewport_embeded = .{
-                            .client_id = v.embeder.client_id,
+                            .client_id = v.embeder.key.client_id,
                             .payload = .{
-                                .sub_viewport_id = v.embeder.sub_viewport_id,
+                                .sub_viewport_id = v.embeder.key.sub_viewport_id,
                                 .status = .success,
+                                .render_width = v.embeder.render_width,
+                                .render_height = v.embeder.render_height,
                             },
                         },
                     });
@@ -309,7 +311,11 @@ pub const WindowID = enum(u32) {
 pub const ViewportCreateResult = union(enum) {
     create_with_window: ViewportKey,
     create_with_sub_viewport: struct {
-        embeder: SubViewportKey,
+        embeder: struct {
+            key: SubViewportKey,
+            render_width: u32,
+            render_height: u32,
+        },
         embeded: ViewportKey,
     },
 };

@@ -11,8 +11,15 @@ pub fn main(init: std.process.Init) !void {
         try handle.poll_once(.none);
         try handle.update();
 
-        if (handle.viewport_pending_peek()) |id| {
-            break :blk try agce.ViewportHandle.create_from_pending(handle, .cpu, false, id);
+        if (handle.viewport_pending_peek()) |result| {
+            break :blk try agce.ViewportHandle.create_from_pending(
+                handle,
+                .cpu,
+                result.id,
+                result.requsted_width,
+                result.requsted_height,
+                false,
+            );
         }
     };
 

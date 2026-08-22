@@ -55,6 +55,8 @@ pub fn viewport_create(
     viewport_id: ViewportID,
     window_id: WindowID,
     rect: ptypes.Rect,
+    render_width: u32,
+    render_height: u32,
     create_sync_timeline: bool,
     vsync: bool,
 ) !void {
@@ -65,6 +67,8 @@ pub fn viewport_create(
         viewport_id,
         window_id,
         rect,
+        render_width,
+        render_height,
         vsync,
     );
 
@@ -375,7 +379,7 @@ pub const BufferListener = struct {
 
 pub const SubViewportPending = struct {
     sub_viewport_id: SubViewportID,
-    rect: ptypes.Rect,
+    clip_rect: ptypes.Rect,
     to_embed: ViewportKey,
     embed_in: ViewportID,
 };

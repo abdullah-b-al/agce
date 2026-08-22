@@ -410,7 +410,7 @@ pub fn sub_viewport_embed(wl: *Wayland, args: Event.TypeOf(.sub_viewport_embed))
                 .client_id = args.payload.client_id_to_embed,
                 .viewport_id = viewport_id,
             },
-            .rect = args.payload.rect,
+            .clip_rect = args.payload.rect,
             .embed_in = args.payload.embeder_viewport_id,
             .sub_viewport_id = args.payload.sub_viewport_id,
         },
@@ -440,25 +440,25 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
     const rs = try wl.resources_get(key.client_id);
     const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    const set_position = args.payload.rect.x != vp.x or args.payload.rect.y != vp.y;
-    const set_size = args.payload.rect.width != vp.width or args.payload.rect.height != vp.height;
+    const set_position = args.payload.rect.x != vp.clip_rect.x or args.payload.rect.y != vp.clip_rect.y;
+    const set_size = args.payload.rect.width != vp.clip_rect.width or args.payload.rect.height != vp.clip_rect.height;
 
     // TODO: Bound the rect to the parent's
-    vp.x = @intCast(args.payload.rect.x);
-    vp.y = @intCast(args.payload.rect.y);
-    vp.width = @intCast(args.payload.rect.width);
-    vp.height = @intCast(args.payload.rect.height);
+    vp.clip_rect = args.payload.rect;
 
     if (set_position) {
-        vp.subsurface.setPosition(vp.x, vp.y);
+        vp.subsurface.setPosition(
+            @intCast(vp.clip_rect.x),
+            @intCast(vp.clip_rect.y),
+        );
     }
 
     if (set_size) {
         vp.viewport.setSource(
             .fromInt(0),
             .fromInt(0),
-            .fromInt(@intCast(vp.width)),
-            .fromInt(@intCast(vp.height)),
+            .fromInt(@intCast(vp.clip_rect.width)),
+            .fromInt(@intCast(vp.clip_rect.height)),
         );
     }
 
@@ -525,7 +525,9 @@ fn viewport_create_with_sub_viewport(
         embeder_viewport.surface,
         embeded_key.viewport_id,
         embeder_viewport.window_id,
-        sub_viewport_data.rect,
+        sub_viewport_data.clip_rect,
+        args.payload.width,
+        args.payload.height,
         args.payload.create_sync_timeline,
         args.payload.vsync,
     );
@@ -545,8 +547,12 @@ fn viewport_create_with_sub_viewport(
     return .{
         .create_with_sub_viewport = .{
             .embeder = .{
-                .client_id = embeder.client_id,
-                .sub_viewport_id = sub_viewport_data.sub_viewport_id,
+                .key = .{
+                    .client_id = embeder.client_id,
+                    .sub_viewport_id = sub_viewport_data.sub_viewport_id,
+                },
+                .render_width = args.payload.width,
+                .render_height = args.payload.height,
             },
 
             .embeded = embeded_key,
@@ -587,6 +593,8 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
             .width = args.payload.width,
             .height = args.payload.height,
         },
+        args.payload.width,
+        args.payload.height,
         args.payload.create_sync_timeline,
         args.payload.vsync,
     );

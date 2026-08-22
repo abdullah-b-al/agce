@@ -2,19 +2,17 @@ const Viewport = @This();
 
 id: ViewportID,
 window_id: WindowID,
+clip_rect: ptypes.Rect,
+render_width: i32,
+render_height: i32,
+vsync: bool,
+sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
+
 surface: *cwl.Surface,
 pointer: Pointer,
 subsurface: *cwl.Subsurface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
-vsync: bool,
-
-x: i32,
-y: i32,
-width: i32,
-height: i32,
-
-sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
 pub fn init(
     wl: *Wayland,
@@ -22,6 +20,8 @@ pub fn init(
     id: ViewportID,
     window_id: WindowID,
     rect: ptypes.Rect,
+    render_width: u32,
+    render_height: u32,
     vsync: bool,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
@@ -51,10 +51,9 @@ pub fn init(
         .viewport = viewport,
         .vsync = vsync,
 
-        .x = @intCast(rect.x),
-        .y = @intCast(rect.y),
-        .width = @intCast(rect.width),
-        .height = @intCast(rect.height),
+        .clip_rect = rect,
+        .render_width = @intCast(render_width),
+        .render_height = @intCast(render_height),
 
         .sub_viewports = .empty,
     };
@@ -73,26 +72,26 @@ pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
 }
 
 pub fn set_source(vp: *Viewport, width: i32, height: i32) void {
-    vp.width = width;
-    vp.height = height;
+    vp.render_width = width;
+    vp.render_height = height;
 
     vp.viewport.setSource(
         .fromInt(0),
         .fromInt(0),
-        .fromInt(@intCast(vp.width)),
-        .fromInt(@intCast(vp.height)),
+        .fromInt(@intCast(vp.render_width)),
+        .fromInt(@intCast(vp.render_height)),
     );
 }
 
 pub fn set_source_min(vp: *Viewport, window: *Window, buffer: *Buffer) void {
     const width = @min(
-        vp.width,
+        vp.render_width,
         buffer.width(),
         window.buffer.width,
     );
 
     const height = @min(
-        vp.height,
+        vp.render_height,
         buffer.height(),
         window.buffer.height,
     );

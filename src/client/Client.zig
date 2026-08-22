@@ -222,6 +222,8 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
                 .success => vp.status = .created,
                 .failure => vp.status = .failed,
             }
+            vp.render_width = e.render_width;
+            vp.render_height = e.render_height;
         },
 
         .viewport_resize => |e| {
@@ -325,15 +327,16 @@ pub fn viewport_create_from_pending(
     tag: Viewport.Renderer.Tag,
     id: ViewportID,
     vsync: bool,
+    render_width: u32,
+    render_height: u32,
 ) !*Viewport {
     std.debug.assert(
         client.viewports_from_server.contains(id),
     );
-    const size = client.viewports_from_server.get(id).?;
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, size.width, size.height, vsync),
-        .cpu => try client.viewport_create_with_id(.cpu, id, size.width, size.height, vsync),
+        .gl => try client.viewport_create_with_id(.gl, id, render_width, render_height, vsync),
+        .cpu => try client.viewport_create_with_id(.cpu, id, render_width, render_height, vsync),
     };
 
     _ = client.viewports_from_server.orderedRemove(id);

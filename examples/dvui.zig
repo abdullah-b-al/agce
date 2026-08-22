@@ -99,32 +99,10 @@ pub fn menu() ?dvui.App.Result {
 }
 
 pub fn content() ?dvui.App.Result {
-    if (doom_process == null) {
-        doom();
-    } else if (doom_sub_viewport) |svp| {
-        dvui.label(@src(), "Playing DOOM", .{}, .{});
-        const box = dvui.box(@src(), .{}, .{
-            .expand = .both,
-        });
-        defer box.deinit();
-
-        const doom_box = dvui.flexbox(
-            @src(),
-            .{ .justify_content = .center },
-            .{
-                .expand = .both,
-                .min_size_content = .{ .w = 500, .h = 500 },
-                .max_size_content = .{ .w = 500, .h = 500 },
-            },
-        );
-        defer doom_box.deinit();
-
-        svp.rect_set(.{
-            .x = @intFromFloat(box.data().contentRectScale().r.x),
-            .y = @intFromFloat(box.data().contentRectScale().r.y),
-            .width = @intFromFloat(box.data().rect.w),
-            .height = @intFromFloat(box.data().rect.h),
-        }) catch return .close;
+    if (doom_sub_viewport) |svp| {
+        doom_play(svp);
+    } else if (doom_process == null) {
+        doom_launch();
     } else {
         var iter = handle.client_info_iterator();
         while (iter.next()) |value| {
@@ -145,7 +123,48 @@ pub fn content() ?dvui.App.Result {
     return null;
 }
 
-pub fn doom() void {
+pub fn doom_play(svp: *agce.SubViewportHandle) void {
+    if (svp.status() != .created) return;
+    const render_size = svp.render_size();
+
+    dvui.label(@src(), "Playing DOOM {}x{}", .{ render_size[0], render_size[1] }, .{});
+    const flex_box = dvui.flexbox(@src(), .{
+        .justify_content = .center,
+    }, .{
+        .expand = .both,
+        .color_fill = .red,
+        .color_border = .red,
+        .border = .all(1),
+    });
+    defer flex_box.deinit();
+    const doom_box = dvui.box(@src(), .{}, .{
+        .expand = .both,
+        .color_fill = .green,
+        .color_border = .green,
+        .border = .all(1),
+        .min_size_content = .{ .w = @floatFromInt(render_size[0]), .h = @floatFromInt(render_size[1]) },
+        .max_size_content = .{ .w = @floatFromInt(render_size[0]), .h = @floatFromInt(render_size[1]) },
+    });
+    defer doom_box.deinit();
+
+    const rect = svp.rect_get();
+    const x, const y = widget_origin(doom_box.data(), null);
+    const width: u32 = @intFromFloat(doom_box.data().rect.w);
+    const height: u32 = @intFromFloat(doom_box.data().rect.h);
+    const rect_x = (width -| render_size[0]) / 2;
+    const rect_y = (height -| render_size[1]) / 2;
+    const rect_set: agce.Rect = .{
+        .x = rect_x + x,
+        .y = rect_y + y,
+        .width = render_size[0],
+        .height = render_size[1],
+    };
+
+    if (!std.meta.eql(rect, rect_set)) {
+        svp.rect_set(rect_set) catch return;
+    }
+}
+pub fn doom_launch() void {
     std.debug.assert(doom_process == null);
     const static = struct {
         var path_exe_buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -192,6 +211,20 @@ pub fn doom() void {
             };
         }
     }
+}
+
+fn widget_origin(wd: *const dvui.WidgetData, si: ?*dvui.ScrollInfo) struct { u32, u32 } {
+    var x: f32 = if (si) |info| info.viewport.x else 0;
+    var y: f32 = if (si) |info| info.viewport.y else 0;
+    var data: *const dvui.WidgetData = wd;
+
+    while (!data.isRoot()) {
+        x += data.rect.x;
+        y += data.rect.y;
+        data = data.parent.data();
+    }
+
+    return .{ @trunc(@max(0, x)), @trunc(@max(0, y)) };
 }
 
 const std = @import("std");

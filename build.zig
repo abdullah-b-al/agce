@@ -82,9 +82,10 @@ pub fn build(b: *std.Build) !void {
     };
 
     const check = b.step("check", "Check the compilation");
+    const examples = b.step("examples", "Build examples");
 
-    build_simple_examples(b, check, client, target, optimize);
-    build_dvui_example(b, check, client, target, optimize);
+    build_simple_examples(b, examples, client, target, optimize, check);
+    build_dvui_example(b, examples, client, target, optimize, check);
 
     { // client cli
         const exe = b.addExecutable(.{
@@ -150,25 +151,30 @@ pub fn build(b: *std.Build) !void {
             scanner.generate("wp_linux_drm_syncobj_manager_v1", 1);
             scanner.generate("wp_cursor_shape_manager_v1", 1);
 
-            const exe = b.addExecutable(.{
+            const module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "wayland", .module = wayland },
+                    .{ .name = "c_linux", .module = c_linux.? },
+                    .{ .name = "protocol", .module = protocol },
+                    .{ .name = "utils", .module = utils },
+                    .{ .name = "constants", .module = constants },
+                },
+            });
+            module.linkSystemLibrary("wayland-client", .{});
+
+            const exe = b.addExecutable(.{ .name = "agce", .root_module = module });
+            examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
+
+            const exe_check = b.addExecutable(.{
                 .name = "agce",
-                .root_module = b.createModule(.{
-                    .root_source_file = b.path("src/main.zig"),
-                    .target = target,
-                    .optimize = optimize,
-                    .imports = &.{
-                        .{ .name = "wayland", .module = wayland },
-                        .{ .name = "c_linux", .module = c_linux.? },
-                        .{ .name = "protocol", .module = protocol },
-                        .{ .name = "utils", .module = utils },
-                        .{ .name = "constants", .module = constants },
-                    },
-                }),
+                .root_module = module,
+                .use_llvm = false,
             });
 
-            exe.root_module.linkSystemLibrary("wayland-client", .{});
-            b.installArtifact(exe);
-            check.dependOn(&exe.step);
+            check.dependOn(&exe_check.step);
         },
         else => return error.UnsupportedOS,
     }
@@ -216,46 +222,54 @@ const Step = std.Build.Step;
 
 fn build_simple_examples(
     b: *Build,
-    check: *Build.Step,
+    examples: *Build.Step,
     client: *Build.Module,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    check: *Build.Step,
 ) void {
     inline for (.{
         "minimal_embeded_viewport",
         "minimal_viewport_container",
     }) |name| {
+        const module = b.createModule(.{
+            .root_source_file = b.path("examples/" ++ name ++ ".zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "agce", .module = client },
+            },
+        });
         const exe = b.addExecutable(.{
             .name = name,
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("examples/" ++ name ++ ".zig"),
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-                .imports = &.{
-                    .{ .name = "agce", .module = client },
-                },
-            }),
+            .root_module = module,
         });
+        examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
 
-        b.installArtifact(exe);
-        check.dependOn(&exe.step);
+        const exe_check = b.addExecutable(.{
+            .name = name ++ "-check",
+            .root_module = module,
+            .use_llvm = false,
+        });
+        check.dependOn(&exe_check.step);
     }
 }
 
 fn build_dvui_example(
     b: *Build,
-    check: *Build.Step,
+    examples: *Build.Step,
     client: *Build.Module,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    check: *Build.Step,
 ) void {
     const fork_dvui = b.option(bool, "fork_dvui", "Override the client module of dvui. Always use with --fork") orelse false;
-    const dvui = b.lazyDependency("dvui", .{
+    const dvui = b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
         .backend = .agce,
-    }) orelse return;
+    });
 
     const dvui_agce = dvui.module("agce");
     if (fork_dvui) {
@@ -263,20 +277,27 @@ fn build_dvui_example(
         dvui_agce.import_table.putAssumeCapacity("agce", client);
     }
 
-    const exe = b.addExecutable(.{
-        .name = "dvui",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/dvui.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .imports = &.{
-                .{ .name = "agce", .module = client },
-                .{ .name = "dvui", .module = dvui.module("dvui_agce") },
-            },
-        }),
+    const module = b.createModule(.{
+        .root_source_file = b.path("examples/dvui.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "agce", .module = client },
+            .{ .name = "dvui", .module = dvui.module("dvui_agce") },
+        },
     });
 
-    b.installArtifact(exe);
-    check.dependOn(&exe.step);
+    const exe = b.addExecutable(.{
+        .name = "dvui",
+        .root_module = module,
+    });
+    examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
+
+    const exe_check = b.addExecutable(.{
+        .name = "dvui-check",
+        .root_module = module,
+        .use_llvm = false,
+    });
+    check.dependOn(&exe_check.step);
 }

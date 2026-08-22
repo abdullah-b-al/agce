@@ -111,12 +111,23 @@ pub const ClientHandle = opaque {
         }
     }
 
-    pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportID {
+    pub const ViewportPendingPeek = struct {
+        id: ViewportID,
+        requsted_width: u32,
+        requsted_height: u32,
+    };
+    pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportPendingPeek {
         const client = handle.cast();
         if (client.viewports_from_server.count() == 0)
             return null;
 
-        return client.viewports_from_server.keys()[0];
+        const id = client.viewports_from_server.keys()[0];
+        const size = client.viewports_from_server.values()[0];
+        return .{
+            .id = id,
+            .requsted_width = size.width,
+            .requsted_height = size.height,
+        };
     }
 
     pub fn expect_viewport(handle: *ClientHandle) bool {
@@ -212,13 +223,17 @@ pub const ViewportHandle = opaque {
     pub fn create_from_pending(
         handle: *ClientHandle,
         renderer: Renderer,
-        vsync: bool,
         viewport_id: ViewportID,
+        render_width: u32,
+        render_height: u32,
+        vsync: bool,
     ) !*ViewportHandle {
         const vp = try handle.cast().viewport_create_from_pending(
             renderer,
             viewport_id,
             vsync,
+            render_width,
+            render_height,
         );
         return @ptrCast(vp);
     }
@@ -371,6 +386,21 @@ pub const ViewportHandle = opaque {
 pub const SubViewportHandle = opaque {
     fn cast(handle: *SubViewportHandle) *SubViewport {
         return @ptrCast(@alignCast(handle));
+    }
+
+    pub fn status(handle: *SubViewportHandle) Client.CreateStatus {
+        return handle.cast().status;
+    }
+
+    pub fn render_size(handle: *SubViewportHandle) [2]u32 {
+        return .{
+            handle.cast().render_width,
+            handle.cast().render_height,
+        };
+    }
+
+    pub fn rect_get(handle: *SubViewportHandle) Rect {
+        return handle.cast().rect;
     }
 
     pub fn rect_set(handle: *SubViewportHandle, rect: Rect) !void {
