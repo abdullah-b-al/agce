@@ -12,6 +12,11 @@
             .url = "git+https://github.com/marlersoft/zigwin32#ec98bb4d9eea532320a8551720a9e3ec6de64994",
             .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",
         },
+        .dvui = .{
+            .url = "git+https://github.com/abdullah-b-al/dvui.git#3f3062c39b131e0e9e6fa549c5e186f617afaaf8",
+            .hash = "dvui-0.5.0-dev-AQFJmU-xAAGUqx3dhiXtooD5plDBr3xnDDZ2Ru6PryOd",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",
