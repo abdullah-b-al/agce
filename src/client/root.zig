@@ -157,26 +157,6 @@ pub const ClientHandle = opaque {
         );
     }
 
-    pub fn sub_viewport_rect_set(
-        handle: *ClientHandle,
-        sub_viewport_id: SubViewportID,
-        rect: Rect,
-    ) !void {
-        const client = handle.cast();
-
-        try client_to_server.message_send_json(
-            client.io,
-            client.gpa,
-            client.connection,
-            .{
-                .sub_viewport_rect_set = .{
-                    .rect = rect,
-                    .sub_viewport_id = sub_viewport_id,
-                },
-            },
-        );
-    }
-
     pub fn client_info_iterator(handle: *ClientHandle) ClientInfoIterator {
         return .{
             .handle = handle,
@@ -270,9 +250,11 @@ pub const ViewportHandle = opaque {
         try vp.client.frame_wait_for_vsync(vp);
     }
 
-    pub fn sub_viewport_embed(handle: *ViewportHandle, client_id_to_embed: ClientID, rect: Rect) !SubViewportID {
+    pub fn sub_viewport_embed(handle: *ViewportHandle, client_id_to_embed: ClientID, rect: Rect) !*SubViewportHandle {
         const vp = handle.cast();
-        return vp.client.sub_viewport_embed(vp.id, client_id_to_embed, rect);
+        return @ptrCast(
+            try vp.client.sub_viewport_embed(vp.id, client_id_to_embed, rect),
+        );
     }
 
     pub fn resize(handle: *ViewportHandle, requseted_width: u32, requseted_height: u32) !void {
@@ -386,6 +368,32 @@ pub const ViewportHandle = opaque {
     };
 };
 
+pub const SubViewportHandle = opaque {
+    fn cast(handle: *SubViewportHandle) *SubViewport {
+        return @ptrCast(@alignCast(handle));
+    }
+
+    pub fn rect_set(handle: *SubViewportHandle, rect: Rect) !void {
+        const svp = handle.cast();
+
+        if (svp.status != .created) return;
+
+        try client_to_server.message_send_json(
+            svp.client.io,
+            svp.client.gpa,
+            svp.client.connection,
+            .{
+                .sub_viewport_rect_set = .{
+                    .rect = rect,
+                    .sub_viewport_id = svp.id,
+                },
+            },
+        );
+
+        svp.rect = rect;
+    }
+};
+
 const std = @import("std");
 const ptypes = @import("protocol").types;
 const client_to_server = @import("protocol").client_to_server;
@@ -394,5 +402,6 @@ const Client = @import("Client.zig");
 const RendererGL = @import("RendererGL.zig");
 const RendererCpu = @import("RendererCpu.zig");
 const Viewport = @import("Viewport.zig");
+const SubViewport = @import("SubViewport.zig");
 const buffers = @import("buffers.zig");
 const constants = @import("constants");

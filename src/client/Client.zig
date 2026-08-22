@@ -15,7 +15,7 @@ next_sub_viewport_id: ptypes.SubViewportID,
 
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_from_server: std.array_hash_map.Auto(ViewportID, Size),
-sub_viewport_status: std.array_hash_map.Auto(SubViewportID, CreateStatus),
+sub_viewports: std.array_hash_map.Auto(SubViewportID, *SubViewport),
 
 messages_arena: std.heap.ArenaAllocator,
 
@@ -58,7 +58,7 @@ pub fn init(
         .next_sub_viewport_id = .first,
         .viewports = .empty,
         .viewports_from_server = .empty,
-        .sub_viewport_status = .empty,
+        .sub_viewports = .empty,
         .gbm = null,
         .gl_context = null,
 
@@ -71,9 +71,13 @@ pub fn deinit(client: *Client) void {
         vp.deinit();
         client.gpa.destroy(vp);
     }
-
     client.viewports.deinit(client.gpa);
-    client.sub_viewport_status.deinit(client.gpa);
+
+    for (client.sub_viewports.values()) |svp| {
+        client.gpa.destroy(svp);
+    }
+    client.sub_viewports.deinit(client.gpa);
+
     client.viewports_from_server.deinit(client.gpa);
 
     if (client.gbm) |gbm| {
@@ -213,10 +217,10 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         },
 
         .sub_viewport_embeded => |e| {
-            const status = client.sub_viewport_status.getPtr(e.sub_viewport_id) orelse return;
+            const vp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
             switch (e.status) {
-                .success => status.* = .created,
-                .failure => status.* = .failed,
+                .success => vp.status = .created,
+                .failure => vp.status = .failed,
             }
         },
 
@@ -515,11 +519,15 @@ pub fn sub_viewport_embed(
     viewport_id: ViewportID,
     client_id_to_embed: ptypes.ClientID,
     rect: ptypes.Rect,
-) !SubViewportID {
-    try client.sub_viewport_status.ensureUnusedCapacity(client.gpa, 1);
+) !*SubViewport {
+    try client.sub_viewports.ensureUnusedCapacity(client.gpa, 1);
+    const svp = try client.gpa.create(SubViewport);
+    errdefer client.gpa.destroy(svp);
 
     const id = client.next_sub_viewport_id.increment();
-    client.sub_viewport_status.putAssumeCapacityNoClobber(id, .pending);
+    svp.* = .init(id, client, rect);
+
+    client.sub_viewports.putAssumeCapacityNoClobber(id, svp);
 
     try client_to_server.message_send_json(
         client.io,
@@ -535,7 +543,7 @@ pub fn sub_viewport_embed(
         },
     );
 
-    return id;
+    return svp;
 }
 
 pub const Gbm = struct {
@@ -645,5 +653,6 @@ const BufferID = ptypes.BufferID;
 const log = std.log.scoped(.Client);
 const buffers = @import("buffers.zig");
 const Viewport = @import("Viewport.zig");
+const SubViewport = @import("SubViewport.zig");
 const RendererGL = @import("RendererGL.zig");
 const RendererCpu = @import("RendererCpu.zig");
