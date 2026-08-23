@@ -82,11 +82,7 @@ pub fn build(b: *std.Build) !void {
     };
 
     const check = b.step("check", "Check the compilation");
-    const step_examples = b.step("examples", "Build examples");
     const step_server = b.step("server", "Build the server");
-
-    build_simple_examples(b, step_examples, client, target, optimize, check);
-    build_dvui_example(b, step_examples, client, target, optimize, check);
 
     { // client cli
         const exe = b.addExecutable(.{
@@ -167,9 +163,7 @@ pub fn build(b: *std.Build) !void {
             module.linkSystemLibrary("wayland-client", .{});
 
             const exe = b.addExecutable(.{ .name = "agce", .root_module = module });
-            const art = b.addInstallArtifact(exe, .{});
-            step_server.dependOn(&art.step);
-            step_examples.dependOn(&art.step);
+            step_server.dependOn(&(b.addInstallArtifact(exe, .{}).step));
 
             const exe_check = b.addExecutable(.{
                 .name = "agce",
@@ -222,85 +216,3 @@ fn build_glad(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin
 const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
-
-fn build_simple_examples(
-    b: *Build,
-    step_examples: *Build.Step,
-    client: *Build.Module,
-    target: Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    check: *Build.Step,
-) void {
-    inline for (.{
-        "minimal_embeded_viewport",
-        "minimal_viewport_container",
-    }) |name| {
-        const module = b.createModule(.{
-            .root_source_file = b.path("examples/" ++ name ++ ".zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .imports = &.{
-                .{ .name = "agce", .module = client },
-            },
-        });
-        const exe = b.addExecutable(.{
-            .name = name,
-            .root_module = module,
-        });
-        step_examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
-
-        const exe_check = b.addExecutable(.{
-            .name = name ++ "-check",
-            .root_module = module,
-            .use_llvm = false,
-        });
-        check.dependOn(&exe_check.step);
-    }
-}
-
-fn build_dvui_example(
-    b: *Build,
-    step_examples: *Build.Step,
-    client: *Build.Module,
-    target: Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    check: *Build.Step,
-) void {
-    const fork_dvui = b.option(bool, "fork_dvui", "Override the client module of dvui. Always use with --fork") orelse false;
-    const dvui = b.dependency("dvui", .{
-        .target = target,
-        .optimize = optimize,
-        .backend = .agce,
-    });
-
-    const dvui_agce = dvui.module("agce");
-    if (fork_dvui) {
-        std.debug.assert(dvui_agce.import_table.contains("agce"));
-        dvui_agce.import_table.putAssumeCapacity("agce", client);
-    }
-
-    const module = b.createModule(.{
-        .root_source_file = b.path("examples/dvui.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "agce", .module = client },
-            .{ .name = "dvui", .module = dvui.module("dvui_agce") },
-        },
-    });
-
-    const exe = b.addExecutable(.{
-        .name = "dvui",
-        .root_module = module,
-    });
-    step_examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
-
-    const exe_check = b.addExecutable(.{
-        .name = "dvui-check",
-        .root_module = module,
-        .use_llvm = false,
-    });
-    check.dependOn(&exe_check.step);
-}
