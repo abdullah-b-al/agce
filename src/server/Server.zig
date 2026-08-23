@@ -54,11 +54,7 @@ pub fn create(
 }
 
 pub fn destroy(server: *Server) void {
-    for (server.clients.map.values()) |client| {
-        client.close(server.io);
-        server.gpa.destroy(client);
-    }
-    server.clients.map.deinit(server.gpa);
+    server.clients.deinit(server.io, server.gpa);
 
     for (server.arena_pool.items) |arena| {
         arena.deinit();
@@ -87,38 +83,30 @@ pub fn arena_release(server: *Server, arena: *std.heap.ArenaAllocator) void {
     server.arena_pool.appendAssumeCapacity(arena);
 }
 
-pub fn remove_closed_clients(server: *Server) void {
-    var i = server.clients.map.count();
-    while (i > 0) {
-        i -= 1;
-        const client = server.clients.map.values()[i];
-        if (client.closed) {
-            const id = client.id;
-            log.debug("Removed closed client {f}", .{id});
-            client.destroy(server.gpa);
-            _ = server.clients.map.orderedRemove(id);
-        }
-    }
-}
-
-pub fn client_connected(server: *Server, stream: net.Stream) !void {
-    try server.clients.map.ensureUnusedCapacity(server.gpa, 1);
+pub fn unknown_client_connected(server: *Server, stream: net.Stream) !void {
     errdefer stream.close(server.io);
 
-    const id = server.clients.new_id();
-    const client: *Client = try .create(server.gpa, id, stream);
-    log.info("Client connected {}", .{id});
+    try server.clients.prepare_for_new_client(server.gpa);
+    server.clients.new_unknown(server.gpa, stream);
 
-    server.clients.map.putAssumeCapacity(id, client);
-    server.dispatch.window_system_put(@src(), .{ .client_connected = id }) catch |err| switch (err) {
-        error.Canceled => return err,
-    };
+    log.info("Unknown client connected", .{});
 }
 
 pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_message: ClientMessage) error{Canceled}!void {
-    server.client_message_handle_inner(arena, client_message) catch |err| switch (err) {
+    return server.client_message_handle_inner(arena, client_message) catch |err| switch (err) {
         error.Canceled => |e| return e,
 
+        error.MisbehavingUnknownClient => {
+            switch (client_message.client) {
+                .known => @panic("Invalid error for client"),
+                .unknown => |index| {
+                    const client = server.clients.unknown.items[index];
+                    client.close(server.io);
+                    log.err("Closing misbehaving unknown client. Expected only a register message during register phase", .{});
+                },
+            }
+        },
+        error.OutOfMemoryDuringRegister,
         error.HeaderInvalidLen,
         error.HeaderInvalidFormat,
         error.HeaderInvalidMessageTag,
@@ -129,11 +117,20 @@ pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_m
         error.CmsgInvalidLevel,
         error.CmsgInvalidType,
         => {
-            const client = server.clients.map.get(client_message.client_id) orelse return;
-            client.close(server.io);
-            log.err("Closing client {} with error {}", .{ client_message.client_id, err });
+            switch (client_message.client) {
+                .known => |id| {
+                    const client = server.clients.known.get(id) orelse return;
+                    client.close(server.io);
+                    log.err("Closing client {} with {}", .{ id, err });
 
-            try server.dispatch.window_system_put(@src(), .{ .client_disconnected = client.id });
+                    try server.dispatch.window_system_put(@src(), .{ .client_disconnected = client.id });
+                },
+                .unknown => |index| {
+                    const client = server.clients.unknown.items[index];
+                    client.close(server.io);
+                    log.err("Closing client unknown with {}", .{err});
+                },
+            }
         },
 
         error.Overflow,
@@ -167,26 +164,52 @@ pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_m
 }
 
 fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client_message: ClientMessage) !void {
-    const id = client_message.client_id;
-    const client = server.clients.map.get(id) orelse return;
-    std.debug.assert(!client.closed);
-
     if (client_message.err) |err| {
         return err;
     }
 
     const timeout: Io.Timeout =
-        .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } };
+        .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
 
-    const maybe_message = try client_to_server.message_receive(server.io, arena, client.stream, timeout);
+    switch (client_message.client) {
+        .known => |id| {
+            const client = server.clients.known.get(id).?;
+            std.debug.assert(!client.closed);
 
-    if (maybe_message) |message| {
-        if (server.window_system_event_from_message(client, message)) |e| {
+            const maybe_message = try client_to_server.message_receive(server.io, arena, client.stream, timeout);
+            const message = maybe_message orelse return;
+            const e = try server.window_system_event_from_message(client, message);
             try server.dispatch.window_system_put(@src(), e);
-            // log.debug("Server dispatched event {}", .{e});
-        } else |err| {
-            log.err("{}", .{err});
-        }
+        },
+        .unknown => |index| {
+            const client = server.clients.unknown.items[index];
+            std.debug.assert(!client.closed);
+
+            const maybe_message = try client_to_server.message_receive(server.io, arena, client.stream, timeout);
+            const message = maybe_message orelse return;
+
+            const register = switch (message) {
+                .register => |r| r,
+                else => return error.MisbehavingUnknownClient,
+            };
+
+            const id = server.clients.promote_client_to_known(server.gpa, index);
+
+            var dupe: ?ptypes.ClientInfoClone =
+                if (register.info) |info|
+                    ptypes.ClientInfoClone.dupe(server.gpa, info) catch
+                        return error.OutOfMemoryDuringRegister
+                else
+                    null;
+            errdefer if (dupe) |*d| d.deinit(server.gpa);
+
+            try server.dispatch.server_put(@src(), .{
+                .client_registered = .{
+                    .client_id = id,
+                    .info = dupe,
+                },
+            });
+        },
     }
 }
 
@@ -198,28 +221,53 @@ pub fn handle_event(
         .exit => {
             return error.Exit;
         },
-        .client_info => {
-            var msg = event.client_info;
-            defer msg.managed.deinit();
+        .client_registered => {
+            var e = event.client_registered;
+            defer if (e.info) |*info| info.deinit(server.gpa);
 
-            for (server.clients.map.values()) |client| {
-                if (@intFromEnum(client.id) == @intFromEnum(msg.client_id)) continue;
+            const client = server.clients.known.get(e.client_id) orelse return;
 
-                try server_to_client.message_send_json(
-                    server.io,
-                    server.gpa,
-                    client.stream,
-                    .{
-                        .client_info = .{
-                            .client_id = msg.client_id,
-                            .info = msg.managed.unmanaged,
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{ .registered = .{} },
+            );
+
+            // broadcast the new client's info
+            if (e.info) |info| {
+                for (server.clients.known.values()) |other| {
+                    if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
+
+                    try server_to_client.message_send_json(
+                        server.io,
+                        server.gpa,
+                        other.stream,
+                        .{
+                            .client_registered = .{
+                                .client_id = client.id,
+                                .info = info,
+                            },
                         },
-                    },
-                );
+                    );
+                }
             }
+
+            const dupe: ?ptypes.ClientInfoCloneManaged =
+                if (e.info) |info|
+                    .{ .gpa = server.gpa, .unmanaged = try .dupe(server.gpa, info) }
+                else
+                    null;
+
+            try server.dispatch.window_system_put(@src(), .{
+                .client_registered = .{
+                    .client_id = e.client_id,
+                    .info = dupe,
+                },
+            });
         },
         inline else => |e, tag| {
-            const client = server.clients.map.get(e.client_id) orelse return;
+            const client = server.clients.known.get(e.client_id) orelse return;
 
             const payload = @unionInit(
                 server_to_client.MessagePayload,
@@ -236,8 +284,10 @@ pub fn handle_event(
     }
 }
 
-pub fn window_system_event_from_message(server: *Server, client: *Client, payload: MessagePayload) !Dispatch.WindowSystemEvent {
+pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) error{UnsupportedMessageOnOs}!Dispatch.WindowSystemEvent {
     switch (payload) {
+        .register => @panic("Cannot be turned into a WindowSystemEvent. This is meant for the Server"),
+
         inline .buffer_create_cpu_with_fd,
         .buffer_create_gpu_with_fds,
         => |msg, tag| {
@@ -274,18 +324,6 @@ pub fn window_system_event_from_message(server: *Server, client: *Client, payloa
             return @unionInit(Dispatch.WindowSystemEvent, @tagName(tag), expr);
         },
 
-        .client_info_set => |msg| {
-            return .{
-                .client_info_set = .{
-                    .client_id = client.id,
-                    .payload = .{
-                        .gpa = server.gpa,
-                        .unmanaged = try .dupe(server.gpa, msg),
-                    },
-                },
-            };
-        },
-
         inline .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
@@ -305,8 +343,13 @@ pub fn window_system_event_from_message(server: *Server, client: *Client, payloa
 }
 
 pub const ClientMessage = struct {
-    client_id: ClientID,
     err: ?Io.Operation.NetReceive.Error,
+    client: Source,
+
+    const Source = union(enum) {
+        known: ClientID,
+        unknown: usize,
+    };
 };
 
 fn ReturnType(comptime func: anytype) type {
@@ -316,12 +359,12 @@ fn ReturnType(comptime func: anytype) type {
 pub const CheckClientTask = union(enum) {
     pub const task_count = @typeInfo(CheckClientTask).@"union".fields.len;
 
-    client_connected: ReturnType(fn_client_connected),
-    client_has_message: ReturnType(fn_client_has_message),
+    accept_new_connection: ReturnType(fn_client_connected),
+    check_client_messages: ReturnType(fn_check_client_messages),
 
     pub fn handle(task: CheckClientTask, server: *Server) !void {
         switch (task) {
-            .client_connected => |result| {
+            .accept_new_connection => |result| {
                 const stream = result catch |err| switch (err) {
                     error.Canceled => return,
                     else => |e| {
@@ -330,15 +373,14 @@ pub const CheckClientTask = union(enum) {
                     },
                 };
 
-                server.client_connected(stream) catch |err| switch (err) {
-                    error.Canceled => return,
+                server.unknown_client_connected(stream) catch |err| switch (err) {
                     error.OutOfMemory => |e| {
                         log.err("{}", .{e});
                         return;
                     },
                 };
             },
-            .client_has_message => |result| {
+            .check_client_messages => |result| {
                 defer server.arena_release(result.arena);
 
                 if (result.err) |e| switch (e) {
@@ -349,12 +391,13 @@ pub const CheckClientTask = union(enum) {
                     server.client_message_handle(result.arena.allocator(), message) catch return;
                 }
 
-                server.remove_closed_clients();
+                server.clients.remove_closed_known_clients();
+                server.clients.remove_promoted_or_closed_unknown_clients();
             },
         }
     }
 
-    const ClientHasMessage = struct {
+    const CheckClientMessage = struct {
         const Error = error{ Canceled, OutOfMemory };
 
         arena: *std.heap.ArenaAllocator,
@@ -364,20 +407,20 @@ pub const CheckClientTask = union(enum) {
         pub fn @"error"(
             arena: *std.heap.ArenaAllocator,
             err: anytype,
-        ) ClientHasMessage {
+        ) CheckClientMessage {
             return .{ .arena = arena, .messages = &.{}, .err = err };
         }
     };
 
-    fn fn_client_has_message(
+    fn fn_check_client_messages(
         io: Io,
         arena_instance: *std.heap.ArenaAllocator,
         clients: *const Clients,
-    ) ClientHasMessage {
-        std.debug.assert(clients.map.count() > 0);
+    ) CheckClientMessage {
+        std.debug.assert(clients.count() > 0);
 
         const arena = arena_instance.allocator();
-        const count = clients.map.count();
+        const count = clients.count();
 
         const storage = arena.alloc(Io.Operation.Storage, count) catch |err|
             return .@"error"(arena_instance, err);
@@ -390,23 +433,37 @@ pub const CheckClientTask = union(enum) {
         }
 
         var batch = Io.Batch.init(storage);
-        for (clients.map.values(), 0..) |client, i| {
-            std.debug.assert(!client.closed);
+        var batch_i: usize = 0;
+        const table = .{
+            clients.known.values(),
+            clients.unknown.items,
+        };
 
-            // len must be 1 for recv_fd to work
-            const msg_buf = arena.alloc(net.IncomingMessage, 1) catch |err| return .@"error"(arena_instance, err);
+        inline for (table) |entry| {
+            for (entry) |client| {
+                std.debug.assert(!client.closed);
+                if (@TypeOf(client) == *UnknownClient or @TypeOf(client) == UnknownClient) {
+                    std.debug.assert(!client.promoted_to_known);
+                }
 
-            const op: Io.Operation = .{
-                .net_receive = .{
-                    .socket_handle = client.stream.socket.handle,
-                    .message_buffer = msg_buf,
-                    .data_buffer = buffers[i],
-                    .flags = .{ .peek = true },
-                },
-            };
+                // len must be 1 for recv_fd to work
+                const msg_buf = arena.alloc(net.IncomingMessage, 1) catch |err| return .@"error"(arena_instance, err);
 
-            _ = batch.add(op);
+                const op: Io.Operation = .{
+                    .net_receive = .{
+                        .socket_handle = client.stream.socket.handle,
+                        .message_buffer = msg_buf,
+                        .data_buffer = buffers[batch_i],
+                        .flags = .{ .peek = true },
+                    },
+                };
+
+                _ = batch.add(op);
+                batch_i += 1;
+            }
         }
+
+        std.debug.assert(batch_i == count);
 
         batch.awaitAsync(io) catch |err| switch (err) {
             error.Canceled => |e| return .@"error"(arena_instance, e),
@@ -417,9 +474,19 @@ pub const CheckClientTask = union(enum) {
 
         while (batch.next()) |completed| {
             const err, _ = completed.result.net_receive;
-            const id = clients.map.values()[completed.index].id;
+            const source: ClientMessage.Source = blk: {
+                if (completed.index < clients.known.count()) {
+                    const index = completed.index;
+                    const id = clients.known.values()[index].id;
+                    break :blk .{ .known = id };
+                } else {
+                    const index = completed.index - clients.known.count();
+                    break :blk .{ .unknown = index };
+                }
+            };
+
             list.appendAssumeCapacity(.{
-                .client_id = id,
+                .client = source,
                 .err = if (err) |e| switch (e) {
                     error.Canceled => |canceled| return .@"error"(arena_instance, canceled),
                     else => |rest| rest,
@@ -474,15 +541,15 @@ pub const Task = union(enum) {
         var select: Io.Select(CheckClientTask) = .init(server.io, &select_buffer);
 
         select.concurrent(
-            .client_connected,
+            .accept_new_connection,
             CheckClientTask.fn_client_connected,
             .{ server.io, &server.server },
         ) catch @panic("ConcurrencyUnavailable");
 
-        if (server.clients.map.count() > 0) {
+        if (server.clients.count() > 0) {
             select.concurrent(
-                .client_has_message,
-                CheckClientTask.fn_client_has_message,
+                .check_client_messages,
+                CheckClientTask.fn_check_client_messages,
                 .{ server.io, server.arena_acquire(), &server.clients },
             ) catch @panic("ConcurrencyUnavailable");
         }
@@ -525,3 +592,4 @@ const client_to_server = @import("protocol").client_to_server;
 const ptypes = @import("protocol").types;
 const ClientID = ptypes.ClientID;
 const Client = Clients.Client;
+const UnknownClient = Clients.UnknownClient;

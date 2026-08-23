@@ -128,8 +128,20 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn client_connected(wl: *Wayland, id: ClientID) !void {
+pub fn client_registered(wl: *Wayland, id: ClientID, maybe_info: ?ptypes.ClientInfoCloneManaged) !void {
     try wl.resources.putNoClobber(wl.gpa, id, .init(id));
+
+    if (maybe_info) |info| {
+        const clone: ptypes.ClientInfoClone = try .dupe(wl.gpa, info.unmanaged);
+
+        const rs = wl.resources_get(id) catch unreachable;
+
+        if (rs.info) |*i| {
+            i.deinit(wl.gpa);
+        }
+
+        rs.info = clone;
+    }
 }
 
 pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
@@ -148,38 +160,6 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
     _ = wl.resources.orderedRemove(id);
 
     try wl.windows_destroy();
-}
-
-pub fn client_info_set(wl: *Wayland, args: Event.TypeOf(.client_info_set)) !void {
-    var clone: ptypes.ClientInfoClone = try .dupe(wl.gpa, args.payload.unmanaged);
-    errdefer clone.deinit(wl.gpa);
-
-    const rs = try wl.resources_get(args.client_id);
-
-    if (rs.info) |*info| {
-        info.deinit(wl.gpa);
-    }
-
-    rs.info = clone;
-}
-
-pub fn clients_info_broadcast(wl: *Wayland) !void {
-    for (wl.resources.values()) |rs| {
-        const clone = rs.info orelse continue;
-
-        var unmanaged: ptypes.ClientInfoClone = try .dupe(wl.gpa, clone);
-        errdefer unmanaged.deinit(wl.gpa);
-
-        try wl.dispatch.server_put(@src(), .{
-            .client_info = .{
-                .client_id = rs.client_id,
-                .managed = .{
-                    .gpa = wl.gpa,
-                    .unmanaged = unmanaged,
-                },
-            },
-        });
-    }
 }
 
 pub fn resources_get(wl: *Wayland, id: ClientID) error{ClientDoesNotExist}!*ClientResources {

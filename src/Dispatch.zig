@@ -75,9 +75,8 @@ pub const WindowSystemEvent = union(enum) {
     const Payload = client_to_server.MessagePayload;
 
     exit,
-    client_connected: ClientID,
+    client_registered: ClientRegistered,
     client_disconnected: ClientID,
-    client_info_set: WithClientID(ptypes.ClientInfoCloneManaged),
 
     buffer_create_cpu_with_fd: WithClientID(Payload.BufferCreateCpuWithFd),
     buffer_create_gpu_with_fds: WithClientID(Payload.BufferCreateGpuWithFds),
@@ -118,6 +117,11 @@ pub const WindowSystemEvent = union(enum) {
             },
         }
     }
+
+    pub const ClientRegistered = struct {
+        client_id: ClientID,
+        info: ?ptypes.ClientInfoCloneManaged,
+    };
 
     pub const WindowResize = struct {
         id: WindowID,
@@ -185,7 +189,7 @@ pub const ServerEvent = union(enum) {
 
     exit,
 
-    client_info: ClientInfo,
+    client_registered: ClientRegistered,
 
     viewport_create: WithClientID(Payload.ViewportCreate),
     viewport_created: WithClientID(Payload.ViewportCreated),
@@ -211,6 +215,11 @@ pub const ServerEvent = union(enum) {
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
     }
+
+    pub const ClientRegistered = struct {
+        client_id: ClientID,
+        info: ?ptypes.ClientInfoClone,
+    };
 
     pub const ClientInfo = struct {
         client_id: ptypes.ClientID,

@@ -2,6 +2,34 @@ pub const MessageFormat = enum(u32) {
     json,
 };
 
+pub const ClientID = enum(u32) {
+    pub const first: ClientID = @enumFromInt(1);
+    _,
+
+    pub fn increment(id: *ClientID) ClientID {
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ClientID({})", .{@intFromEnum(self)});
+    }
+};
+
+pub const ClientFingerprint = enum(u32) {
+    _,
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ClientFingerprint({})", .{@intFromEnum(self)});
+    }
+};
+
+pub const ClientFullID = struct {
+    id: ClientID,
+    fingerprint: ClientFingerprint,
+};
+
 pub const ViewportID = enum(u32) {
     first_for_client = 1,
     first_for_server = std.math.maxInt(u16) + 1,
@@ -49,13 +77,6 @@ pub const SubViewportID = enum(u32) {
     }
 };
 
-pub const Rect = struct {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-};
-
 pub const BufferID = enum(u32) {
     pub const first: @This() = @enumFromInt(1);
 
@@ -69,6 +90,18 @@ pub const BufferID = enum(u32) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("BufferID({})", .{@intFromEnum(self)});
+    }
+};
+
+pub const RequestID = enum(u32) {
+    pub const first: @This() = @enumFromInt(1);
+
+    _,
+
+    pub fn increment(id: *RequestID) RequestID {
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
     }
 };
 
@@ -129,6 +162,13 @@ pub const ReleaseTimelinePoint = enum(u64) {
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ReleaseTimelinePoint({})", .{@intFromEnum(self)});
     }
+};
+
+pub const Rect = struct {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 };
 
 pub const BufferFormat = enum {
@@ -211,15 +251,6 @@ pub const CursorShape = enum {
     zoom_out,
 };
 
-pub const ClientID = enum(u32) {
-    pub const first: ClientID = @enumFromInt(1);
-    _,
-
-    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ClientID({})", .{@intFromEnum(self)});
-    }
-};
-
 pub const ClientInfo = struct {
     name: []const u8,
 };
@@ -259,7 +290,7 @@ pub const ClientInfoClone = struct {
         return result;
     }
 
-    pub fn dupe(gpa: std.mem.Allocator, info: ClientInfoClone) !ClientInfoClone {
+    pub fn dupe(gpa: std.mem.Allocator, info: ClientInfoClone) error{OutOfMemory}!ClientInfoClone {
         return .{
             .strings = try gpa.dupe(u8, info.strings),
             .name = info.name,

@@ -4,6 +4,7 @@ io: Io,
 gpa: std.mem.Allocator,
 environ_map: std.process.Environ.Map,
 connection: net.Stream,
+registered: bool,
 
 info: ?ptypes.ClientInfoClone,
 
@@ -22,7 +23,7 @@ messages_arena: std.heap.ArenaAllocator,
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
 
-env_flags: EnvFlags,
+env: Env,
 
 pub fn init(
     io: Io,
@@ -50,6 +51,7 @@ pub fn init(
         .gpa = gpa,
         .environ_map = map,
         .connection = stream,
+        .registered = false,
         .info = clone,
         .other_clients = .empty,
         .messages_arena = .init(gpa),
@@ -62,7 +64,7 @@ pub fn init(
         .gbm = null,
         .gl_context = null,
 
-        .env_flags = .from_environ(&map),
+        .env = .from_environ(&map),
     };
 }
 
@@ -188,14 +190,17 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
     );
 
     const client_info_dupe: ?ptypes.ClientInfoClone = switch (message) {
-        .client_info => |e| try .dupe(client.gpa, e.info),
+        .client_registered => |e| try .dupe(client.gpa, e.info),
         else => null,
     };
 
     errdefer comptime unreachable;
 
     switch (message) {
-        .client_info => |e| {
+        .registered => {
+            client.registered = true;
+        },
+        .client_registered => |e| {
             const gop = client.other_clients.getOrPutAssumeCapacity(e.client_id);
 
             if (gop.found_existing) {
@@ -626,13 +631,13 @@ pub const Size = struct {
     height: u32,
 };
 
-const EnvFlags = struct {
+const Env = struct {
     expect_viewport: bool,
 
-    pub fn from_environ(map: *const std.process.Environ.Map) EnvFlags {
+    pub fn from_environ(map: *const std.process.Environ.Map) Env {
         return .{
-            .expect_viewport = if (map.get(constants.env_flag_expect_viewport_key)) |value|
-                std.mem.eql(u8, value, constants.env_flag_expect_viewport_true)
+            .expect_viewport = if (map.get(constants.env_expect_viewport_key)) |value|
+                std.mem.eql(u8, value, constants.env_expect_viewport_true)
             else
                 false,
         };

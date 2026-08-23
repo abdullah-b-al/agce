@@ -80,29 +80,20 @@ pub fn destroy(ws: *WindowSystem) void {
 pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
     switch (event) {
         .exit => return error.Exit,
-        .client_connected => |id| {
+        .client_registered => {
+            var e = event.client_registered;
+            defer if (e.info) |*info| {
+                info.deinit();
+            };
+
             switch (ws.native) {
-                .wayland => |wl| try wl.client_connected(id),
+                .wayland => |wl| try wl.client_registered(e.client_id, e.info),
                 .win32 => @panic("TODO"),
             }
         },
         .client_disconnected => |id| {
             switch (ws.native) {
                 .wayland => |wl| try wl.client_disconnected(id),
-                .win32 => @panic("TODO"),
-            }
-        },
-        .client_info_set => {
-            var args = event.client_info_set;
-            defer args.payload.deinit();
-
-            switch (ws.native) {
-                .wayland => |wl| try wl.client_info_set(args),
-                .win32 => @panic("TODO"),
-            }
-
-            switch (ws.native) {
-                .wayland => |wl| try wl.clients_info_broadcast(),
                 .win32 => @panic("TODO"),
             }
         },

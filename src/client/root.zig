@@ -26,13 +26,24 @@ pub fn init(
     client.* = try .init(io, gpa, environ_map, info);
     errdefer client.deinit();
 
-    if (client.info) |i| {
-        try client_to_server.message_send_json(
-            io,
-            gpa,
-            client.connection,
-            .{ .client_info_set = i },
-        );
+    try client_to_server.message_send_json(
+        io,
+        gpa,
+        client.connection,
+        .{
+            .register = .{ .full_id = null, .info = client.info },
+        },
+    );
+
+    const duration: Io.Clock.Duration = .{ .raw = .fromSeconds(1), .clock = .awake };
+    client.poll_once(.{ .duration = duration }) catch |err| switch (err) {
+        error.Timeout => return error.TimeoutDuringRegisterPhase,
+        else => |e| return e,
+    };
+
+    if (!client.registered) {
+        std.log.err("Server did not respond with 'registered'", .{});
+        return error.FailedToRegister;
     }
 
     return @ptrCast(client);
@@ -131,7 +142,7 @@ pub const ClientHandle = opaque {
     }
 
     pub fn expect_viewport(handle: *ClientHandle) bool {
-        return handle.cast().env_flags.expect_viewport;
+        return handle.cast().env.expect_viewport;
     }
 
     pub fn spawn_process_to_embed(handle: *ClientHandle, argv: []const []const u8) !std.process.Child {
@@ -139,8 +150,8 @@ pub const ClientHandle = opaque {
         var map = try client.environ_map.clone(client.gpa);
         defer map.deinit();
         try map.put(
-            constants.env_flag_expect_viewport_key,
-            constants.env_flag_expect_viewport_true,
+            constants.env_expect_viewport_key,
+            constants.env_expect_viewport_true,
         );
 
         return try std.process.spawn(
@@ -425,6 +436,7 @@ pub const SubViewportHandle = opaque {
 };
 
 const std = @import("std");
+const Io = std.Io;
 const ptypes = @import("protocol").types;
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;

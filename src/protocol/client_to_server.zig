@@ -7,6 +7,7 @@ pub const Message = struct {
 
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
+    register: Register,
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
     buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
 
@@ -22,7 +23,10 @@ pub const MessagePayload = union(enum(u32)) {
 
     cursor_shape_set: CursorShape,
 
-    client_info_set: types.ClientInfoClone,
+    pub const Register = struct {
+        full_id: ?types.ClientFullID,
+        info: ?types.ClientInfoClone,
+    };
 
     pub const ViewportCreate = struct {
         viewport_id: types.ViewportID,
@@ -131,9 +135,9 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
             );
         },
 
+        .register,
         .sub_viewport_embed,
         .sub_viewport_rect_set,
-        .client_info_set,
         .cursor_shape_set,
         .buffer_present,
         .buffer_present_with_sync,
@@ -229,9 +233,9 @@ fn read_and_parse_data_json_linux(
             return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
 
+        .register,
         .sub_viewport_embed,
         .sub_viewport_rect_set,
-        .client_info_set,
         .cursor_shape_set,
         .buffer_present,
         .buffer_present_with_sync,
@@ -261,10 +265,10 @@ fn read_and_parse_data_json(
         .buffer_destroy,
         .viewport_resize,
         .cursor_shape_set,
-        .client_info_set,
         .sub_viewport_embed,
         .sub_viewport_rect_set,
         .viewport_create,
+        .register,
         => |tag| {
             const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

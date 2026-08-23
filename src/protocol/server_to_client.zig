@@ -7,6 +7,7 @@ pub const Message = struct {
 
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
+    registered: Void,
     viewport_create: ViewportCreate,
     viewport_created: ViewportCreated,
     viewport_resize: types.ViewportResize,
@@ -14,7 +15,7 @@ pub const MessagePayload = union(enum(u32)) {
 
     sub_viewport_embeded: SubviewportCreated,
 
-    client_info: ClientInfo,
+    client_registered: ClientRegistered,
 
     buffer_released: BufferReleased,
     buffer_destroyed: BufferDestroyed,
@@ -41,6 +42,8 @@ pub const MessagePayload = union(enum(u32)) {
         }
     }
 
+    pub const Void = struct { void: u8 = 0 };
+
     pub const SubviewportCreated = struct {
         sub_viewport_id: types.SubViewportID,
         status: types.Status,
@@ -48,7 +51,7 @@ pub const MessagePayload = union(enum(u32)) {
         render_height: u32,
     };
 
-    pub const ClientInfo = struct {
+    pub const ClientRegistered = struct {
         client_id: types.ClientID,
         info: types.ClientInfoClone,
     };
