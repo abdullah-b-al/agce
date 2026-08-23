@@ -82,10 +82,11 @@ pub fn build(b: *std.Build) !void {
     };
 
     const check = b.step("check", "Check the compilation");
-    const examples = b.step("examples", "Build examples");
+    const step_examples = b.step("examples", "Build examples");
+    const step_server = b.step("server", "Build the server");
 
-    build_simple_examples(b, examples, client, target, optimize, check);
-    build_dvui_example(b, examples, client, target, optimize, check);
+    build_simple_examples(b, step_examples, client, target, optimize, check);
+    build_dvui_example(b, step_examples, client, target, optimize, check);
 
     { // client cli
         const exe = b.addExecutable(.{
@@ -166,7 +167,9 @@ pub fn build(b: *std.Build) !void {
             module.linkSystemLibrary("wayland-client", .{});
 
             const exe = b.addExecutable(.{ .name = "agce", .root_module = module });
-            examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
+            const art = b.addInstallArtifact(exe, .{});
+            step_server.dependOn(&art.step);
+            step_examples.dependOn(&art.step);
 
             const exe_check = b.addExecutable(.{
                 .name = "agce",
@@ -222,7 +225,7 @@ const Step = std.Build.Step;
 
 fn build_simple_examples(
     b: *Build,
-    examples: *Build.Step,
+    step_examples: *Build.Step,
     client: *Build.Module,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -245,7 +248,7 @@ fn build_simple_examples(
             .name = name,
             .root_module = module,
         });
-        examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
+        step_examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
 
         const exe_check = b.addExecutable(.{
             .name = name ++ "-check",
@@ -258,7 +261,7 @@ fn build_simple_examples(
 
 fn build_dvui_example(
     b: *Build,
-    examples: *Build.Step,
+    step_examples: *Build.Step,
     client: *Build.Module,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -292,7 +295,7 @@ fn build_dvui_example(
         .name = "dvui",
         .root_module = module,
     });
-    examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
+    step_examples.dependOn(&(b.addInstallArtifact(exe, .{}).step));
 
     const exe_check = b.addExecutable(.{
         .name = "dvui-check",
