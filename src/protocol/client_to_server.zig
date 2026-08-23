@@ -33,12 +33,8 @@ pub const MessagePayload = union(enum(u32)) {
         create_sync_timeline: bool,
         vsync: bool,
 
-        /// Ignored if the viewport is a sub-viewport
         width: u32,
-        /// Ignored if the viewport is a sub-viewport
         height: u32,
-        /// Ignored if the viewport is a sub-viewport
-        create_window: bool,
     };
 
     pub const SubViewportEmbed = struct {

@@ -396,7 +396,7 @@ pub fn viewport_create_with_id(
         },
     }
 
-    try client.send_viewport_create(id, requested_width, requested_height, true);
+    try client.send_viewport_create(id, requested_width, requested_height);
 
     while (true) {
         try client.wait_for(id, .viewport_created);
@@ -431,7 +431,6 @@ pub fn send_viewport_create(
     viewport_id: ViewportID,
     width: u32,
     height: u32,
-    create_window: bool,
 ) !void {
     const vp = client.viewports.get(viewport_id).?;
 
@@ -450,7 +449,6 @@ pub fn send_viewport_create(
 
             .width = width,
             .height = height,
-            .create_window = create_window,
         },
     });
 }
