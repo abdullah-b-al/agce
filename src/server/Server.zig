@@ -2,16 +2,19 @@ const Server = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
+environ: *std.process.Environ.Map,
 dispatch: *Dispatch,
 
+rand: std.Random.DefaultPrng,
 unix_path: []const u8,
 server: net.Server,
 clients: Clients,
+generated_full_ids: std.array_hash_map.Auto(ptypes.ClientFullID, void),
 arena_pool: std.ArrayList(*std.heap.ArenaAllocator),
 
 pub fn create(
     io: Io,
-    environ: *const std.process.Environ.Map,
+    environ: *std.process.Environ.Map,
     gpa: std.mem.Allocator,
     dispatch: *Dispatch,
 ) !*Server {
@@ -44,6 +47,9 @@ pub fn create(
         .io = io,
         .gpa = gpa,
         .dispatch = dispatch,
+        .rand = .init(0),
+        .environ = environ,
+        .generated_full_ids = .empty,
 
         .unix_path = unix_path,
         .server = net_server,
@@ -55,6 +61,7 @@ pub fn create(
 
 pub fn destroy(server: *Server) void {
     server.clients.deinit(server.io, server.gpa);
+    server.generated_full_ids.deinit(server.gpa);
 
     for (server.arena_pool.items) |arena| {
         arena.deinit();
@@ -106,6 +113,8 @@ pub fn client_message_handle(server: *Server, arena: std.mem.Allocator, client_m
                 },
             }
         },
+
+        error.ClientSentInvalidClientFullID,
         error.OutOfMemoryDuringRegister,
         error.HeaderInvalidLen,
         error.HeaderInvalidFormat,
@@ -178,8 +187,18 @@ fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client
 
             const maybe_message = try client_to_server.message_receive(server.io, arena, client.stream, timeout);
             const message = maybe_message orelse return;
-            const e = try server.window_system_event_from_message(client, message);
-            try server.dispatch.window_system_put(@src(), e);
+
+            switch (message) {
+                .generate_client_full_id => {
+                    try server.dispatch.server_put(@src(), .{
+                        .generate_client_full_id = id,
+                    });
+                },
+                else => {
+                    const e = try server.window_system_event_from_message(client, message);
+                    try server.dispatch.window_system_put(@src(), e);
+                },
+            }
         },
         .unknown => |index| {
             const client = server.clients.unknown.items[index];
@@ -193,7 +212,28 @@ fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client
                 else => return error.MisbehavingUnknownClient,
             };
 
-            const id = server.clients.promote_client_to_known(server.gpa, index);
+            const id = blk: {
+                const full_id =
+                    register.full_id orelse
+                    break :blk server.clients.next_id.increment();
+
+                if (server.generated_full_ids.contains(full_id)) {
+                    _ = server.generated_full_ids.orderedRemove(full_id);
+                    break :blk full_id.id;
+                }
+
+                log.err("{} {}", .{ error.ClientSentInvalidClientFullID, full_id });
+                return error.ClientSentInvalidClientFullID;
+            };
+
+            const fingerprint =
+                if (register.full_id) |full|
+                    full.fingerprint
+                else
+                    null;
+
+            server.clients.promote_client_to_known(server.gpa, index, id);
+            log.debug("Promoted unknown client to {f}", .{id});
 
             var dupe: ?ptypes.ClientInfoClone =
                 if (register.info) |info|
@@ -206,6 +246,7 @@ fn client_message_handle_inner(server: *Server, arena: std.mem.Allocator, client
             try server.dispatch.server_put(@src(), .{
                 .client_registered = .{
                     .client_id = id,
+                    .fingerprint = fingerprint,
                     .info = dupe,
                 },
             });
@@ -221,6 +262,24 @@ pub fn handle_event(
         .exit => {
             return error.Exit;
         },
+        .generate_client_full_id => |requster| {
+            const client = server.clients.known.get(requster) orelse return;
+            try server.generated_full_ids.ensureUnusedCapacity(server.gpa, 1);
+
+            const full_id = server.generate_full_id();
+            server.generated_full_ids.putAssumeCapacityNoClobber(full_id, {});
+            log.debug("Generated {f}", .{full_id});
+            try server_to_client.message_send_json(
+                server.io,
+                server.gpa,
+                client.stream,
+                .{
+                    .generated_client_full_id = .{
+                        .full_id = full_id,
+                    },
+                },
+            );
+        },
         .client_registered => {
             var e = event.client_registered;
             defer if (e.info) |*info| info.deinit(server.gpa);
@@ -235,22 +294,20 @@ pub fn handle_event(
             );
 
             // broadcast the new client's info
-            if (e.info) |info| {
-                for (server.clients.known.values()) |other| {
-                    if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
+            for (server.clients.known.values()) |other| {
+                if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
 
-                    try server_to_client.message_send_json(
-                        server.io,
-                        server.gpa,
-                        other.stream,
-                        .{
-                            .client_registered = .{
-                                .client_id = client.id,
-                                .info = info,
-                            },
+                try server_to_client.message_send_json(
+                    server.io,
+                    server.gpa,
+                    other.stream,
+                    .{
+                        .client_registered = .{
+                            .client_id = client.id,
+                            .info = e.info,
                         },
-                    );
-                }
+                    },
+                );
             }
 
             const dupe: ?ptypes.ClientInfoCloneManaged =
@@ -284,9 +341,15 @@ pub fn handle_event(
     }
 }
 
-pub fn window_system_event_from_message(_: *Server, client: *Client, payload: MessagePayload) error{UnsupportedMessageOnOs}!Dispatch.WindowSystemEvent {
+pub fn window_system_event_from_message(
+    _: *Server,
+    client: *Client,
+    payload: MessagePayload,
+) error{UnsupportedMessageOnOs}!Dispatch.WindowSystemEvent {
     switch (payload) {
-        .register => @panic("Cannot be turned into a WindowSystemEvent. This is meant for the Server"),
+        .register,
+        .generate_client_full_id,
+        => @panic("Cannot be turned into a WindowSystemEvent. This is meant for the Server"),
 
         inline .buffer_create_cpu_with_fd,
         .buffer_create_gpu_with_fds,
@@ -342,6 +405,17 @@ pub fn window_system_event_from_message(_: *Server, client: *Client, payload: Me
     }
 }
 
+pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
+    const client_id = server.clients.next_id.increment();
+    var fp: ptypes.ClientFingerprint = @enumFromInt(server.rand.random().int(u32));
+
+    while (server.generated_full_ids.contains(.{ .id = client_id, .fingerprint = fp })) {
+        fp = @enumFromInt(server.rand.random().int(u32));
+    }
+
+    return .{ .id = client_id, .fingerprint = fp };
+}
+
 pub const ClientMessage = struct {
     err: ?Io.Operation.NetReceive.Error,
     client: Source,
@@ -368,14 +442,14 @@ pub const CheckClientTask = union(enum) {
                 const stream = result catch |err| switch (err) {
                     error.Canceled => return,
                     else => |e| {
-                        log.err("Server: {}", .{e});
+                        log.err("accept_new_connection {}", .{e});
                         return;
                     },
                 };
 
                 server.unknown_client_connected(stream) catch |err| switch (err) {
                     error.OutOfMemory => |e| {
-                        log.err("{}", .{e});
+                        log.err("accept_new_connection {}", .{e});
                         return;
                     },
                 };

@@ -26,8 +26,45 @@ pub const ClientFingerprint = enum(u32) {
 };
 
 pub const ClientFullID = struct {
+    const env_string_delimiter = ',';
+    const env_string_fmt = "{}" ++ .{env_string_delimiter} ++ "{}";
+    pub const env_string_max_len = blk: {
+        const out = std.fmt.comptimePrint(env_string_fmt, .{
+            std.math.maxInt(u32),
+            std.math.maxInt(u32),
+        });
+        break :blk out.len;
+    };
+
     id: ClientID,
     fingerprint: ClientFingerprint,
+
+    pub fn to_env_string(fid: ClientFullID, buf: []u8) []const u8 {
+        std.debug.assert(buf.len >= env_string_max_len);
+
+        return std.fmt.bufPrint(buf, env_string_fmt, .{
+            @intFromEnum(fid.id),
+            @intFromEnum(fid.fingerprint),
+        }) catch unreachable;
+    }
+
+    pub fn from_env_string(string: []const u8) ?ClientFullID {
+        var iter = std.mem.splitScalar(u8, string, env_string_delimiter);
+        const id = iter.next() orelse return null;
+        const fp = iter.next() orelse return null;
+
+        return .{
+            .id = @enumFromInt(std.fmt.parseInt(u32, id, 10) catch return null),
+            .fingerprint = @enumFromInt(std.fmt.parseInt(u32, fp, 10) catch return null),
+        };
+    }
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("ClientFullID({},{})", .{
+            @intFromEnum(self.id),
+            @intFromEnum(self.fingerprint),
+        });
+    }
 };
 
 pub const ViewportID = enum(u32) {
@@ -90,18 +127,6 @@ pub const BufferID = enum(u32) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("BufferID({})", .{@intFromEnum(self)});
-    }
-};
-
-pub const RequestID = enum(u32) {
-    pub const first: @This() = @enumFromInt(1);
-
-    _,
-
-    pub fn increment(id: *RequestID) RequestID {
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
     }
 };
 
@@ -252,6 +277,10 @@ pub const CursorShape = enum {
 };
 
 pub const ClientInfo = struct {
+    pub const empty: ClientInfo = .{
+        .name = &.{},
+    };
+
     name: []const u8,
 };
 

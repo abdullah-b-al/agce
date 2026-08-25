@@ -190,6 +190,7 @@ pub const ServerEvent = union(enum) {
     exit,
 
     client_registered: ClientRegistered,
+    generate_client_full_id: ClientID,
 
     viewport_create: WithClientID(Payload.ViewportCreate),
     viewport_created: WithClientID(Payload.ViewportCreated),
@@ -218,7 +219,13 @@ pub const ServerEvent = union(enum) {
 
     pub const ClientRegistered = struct {
         client_id: ClientID,
+        fingerprint: ?ptypes.ClientFingerprint,
         info: ?ptypes.ClientInfoClone,
+
+        pub fn full_id(r: ClientRegistered) ?ptypes.ClientFullID {
+            const fp = r.fingerprint orelse return null;
+            return .{ .id = r.client_id, .fingerprint = fp };
+        }
     };
 
     pub const ClientInfo = struct {

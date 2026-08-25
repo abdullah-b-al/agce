@@ -8,6 +8,8 @@ pub const Message = struct {
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     register: Register,
+    generate_client_full_id: Void,
+
     buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
     buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
 
@@ -27,6 +29,8 @@ pub const MessagePayload = union(enum(u32)) {
         full_id: ?types.ClientFullID,
         info: ?types.ClientInfoClone,
     };
+
+    pub const Void = struct { void: u8 = 0 };
 
     pub const ViewportCreate = struct {
         viewport_id: types.ViewportID,
@@ -140,6 +144,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         .buffer_destroy,
         .viewport_create,
         .viewport_resize,
+        .generate_client_full_id,
         => {
             var buf: [4096]u8 = undefined;
             var writer = stream.writer(io, &buf);
@@ -238,6 +243,7 @@ fn read_and_parse_data_json_linux(
         .buffer_destroy,
         .viewport_create,
         .viewport_resize,
+        .generate_client_full_id,
         => {
             return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
         },
@@ -265,6 +271,7 @@ fn read_and_parse_data_json(
         .sub_viewport_rect_set,
         .viewport_create,
         .register,
+        .generate_client_full_id,
         => |tag| {
             const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

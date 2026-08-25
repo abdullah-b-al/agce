@@ -31,7 +31,7 @@ pub fn init(
         gpa,
         client.connection,
         .{
-            .register = .{ .full_id = null, .info = client.info },
+            .register = .{ .full_id = client.env.client_full_id, .info = client.info },
         },
     );
 
@@ -143,27 +143,6 @@ pub const ClientHandle = opaque {
 
     pub fn expect_viewport(handle: *ClientHandle) bool {
         return handle.cast().env.expect_viewport;
-    }
-
-    pub fn spawn_process_to_embed(handle: *ClientHandle, argv: []const []const u8) !std.process.Child {
-        const client = handle.cast();
-        var map = try client.environ_map.clone(client.gpa);
-        defer map.deinit();
-        try map.put(
-            constants.env_expect_viewport_key,
-            constants.env_expect_viewport_true,
-        );
-
-        return try std.process.spawn(
-            client.io,
-            .{
-                .argv = argv,
-                .environ_map = &map,
-                .stdout = .close,
-                .stderr = .close,
-                .stdin = .close,
-            },
-        );
     }
 
     pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
@@ -435,6 +414,37 @@ pub const SubViewportHandle = opaque {
     }
 };
 
+pub const ProcessHandle = opaque {
+    fn cast(handle: *ProcessHandle) *Process {
+        return @ptrCast(@alignCast(handle));
+    }
+
+    pub fn create(handle: *ClientHandle, argv: []const []const u8) !*ProcessHandle {
+        const client = handle.cast();
+
+        const process: *Process = try .create(client.io, client.gpa, argv, &client.environ_map);
+        errdefer process.destroy(client.gpa);
+        try client.processes.append(client.gpa, process);
+
+        try client_to_server.message_send_json(
+            client.io,
+            client.gpa,
+            client.connection,
+            .{ .generate_client_full_id = .{} },
+        );
+
+        return @ptrCast(process);
+    }
+
+    pub fn status(handle: *ProcessHandle) Process.Status {
+        return handle.cast().status;
+    }
+
+    pub fn spawn(handle: *ProcessHandle, options: Process.SpawnOptions) !void {
+        return handle.cast().spawn(options);
+    }
+};
+
 const std = @import("std");
 const Io = std.Io;
 const ptypes = @import("protocol").types;
@@ -446,4 +456,5 @@ const RendererCpu = @import("RendererCpu.zig");
 const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
 const buffers = @import("buffers.zig");
+const Process = @import("Process.zig");
 const constants = @import("constants");

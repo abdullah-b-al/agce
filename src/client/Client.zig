@@ -6,7 +6,7 @@ environ_map: std.process.Environ.Map,
 connection: net.Stream,
 registered: bool,
 
-info: ?ptypes.ClientInfoClone,
+info: ptypes.ClientInfoClone,
 
 other_clients: std.array_hash_map.Auto(ptypes.ClientID, ptypes.ClientInfoClone),
 
@@ -17,6 +17,8 @@ next_sub_viewport_id: ptypes.SubViewportID,
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_from_server: std.array_hash_map.Auto(ViewportID, Size),
 sub_viewports: std.array_hash_map.Auto(SubViewportID, *SubViewport),
+
+processes: std.ArrayList(*Process),
 
 messages_arena: std.heap.ArenaAllocator,
 
@@ -29,16 +31,14 @@ pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
-    info: ?ptypes.ClientInfo,
+    maybe_info: ?ptypes.ClientInfo,
 ) !Client {
     var map = try environ_map.clone(gpa);
     errdefer map.deinit();
 
-    const clone: ?ptypes.ClientInfoClone =
-        if (info) |i|
-            try .clone(gpa, i)
-        else
-            null;
+    const info: ptypes.ClientInfo = if (maybe_info) |info| info else .empty;
+
+    const clone: ptypes.ClientInfoClone = try .clone(gpa, info);
 
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(environ_map, &path_buf);
@@ -61,6 +61,7 @@ pub fn init(
         .viewports = .empty,
         .viewports_from_server = .empty,
         .sub_viewports = .empty,
+        .processes = .empty,
         .gbm = null,
         .gl_context = null,
 
@@ -69,36 +70,44 @@ pub fn init(
 }
 
 pub fn deinit(client: *Client) void {
+    for (client.processes.items) |p| {
+        p.destroy(client.gpa);
+    }
+
     for (client.viewports.values()) |vp| {
         vp.deinit();
         client.gpa.destroy(vp);
     }
-    client.viewports.deinit(client.gpa);
 
     for (client.sub_viewports.values()) |svp| {
         client.gpa.destroy(svp);
     }
-    client.sub_viewports.deinit(client.gpa);
-
-    client.viewports_from_server.deinit(client.gpa);
 
     if (client.gbm) |gbm| {
         gbm.dri.close(client.io);
         c_linux.gbm_device_destroy(gbm.device);
     }
 
-    if (client.info) |*info| {
-        info.deinit(client.gpa);
-    }
+    client.info.deinit(client.gpa);
 
     for (client.other_clients.values()) |*info| {
         info.deinit(client.gpa);
     }
 
-    client.messages_arena.deinit();
-    client.other_clients.deinit(client.gpa);
+    const containers = .{
+        &client.viewports,
+        &client.sub_viewports,
+        &client.viewports_from_server,
+        &client.other_clients,
+        &client.processes,
+    };
+
+    inline for (containers) |container| {
+        container.deinit(client.gpa);
+    }
 
     client.environ_map.deinit();
+    client.messages_arena.deinit();
     client.connection.close(client.io);
 }
 
@@ -189,9 +198,10 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         timeout,
     );
 
+    const empty_client_info: ptypes.ClientInfoClone = try .clone(client.gpa, .empty);
     const client_info_dupe: ?ptypes.ClientInfoClone = switch (message) {
-        .client_registered => |e| try .dupe(client.gpa, e.info),
-        else => null,
+        .client_registered => |e| if (e.info) |info| try .dupe(client.gpa, info) else empty_client_info,
+        else => empty_client_info,
     };
 
     errdefer comptime unreachable;
@@ -200,6 +210,15 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         .registered => {
             client.registered = true;
         },
+        .generated_client_full_id => |result| {
+            const process = blk: for (client.processes.items) |process| {
+                if (process.full_id == null) break :blk process;
+            } else null;
+
+            if (process) |p| {
+                p.received_id(result.full_id);
+            } else unreachable;
+        },
         .client_registered => |e| {
             const gop = client.other_clients.getOrPutAssumeCapacity(e.client_id);
 
@@ -207,7 +226,16 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
                 gop.value_ptr.deinit(client.gpa);
             }
 
-            gop.value_ptr.* = client_info_dupe.?;
+            gop.value_ptr.* = client_info_dupe orelse empty_client_info;
+
+            const process = blk: for (client.processes.items) |process| {
+                const full_id = process.full_id orelse continue;
+                if (full_id.id == e.client_id) break :blk process;
+            } else null;
+
+            if (process) |p| {
+                p.client_connected();
+            }
         },
         .viewport_create => |e| {
 
@@ -631,6 +659,7 @@ pub const Size = struct {
 
 const Env = struct {
     expect_viewport: bool,
+    client_full_id: ?ptypes.ClientFullID,
 
     pub fn from_environ(map: *const std.process.Environ.Map) Env {
         return .{
@@ -638,6 +667,11 @@ const Env = struct {
                 std.mem.eql(u8, value, constants.env_expect_viewport_true)
             else
                 false,
+
+            .client_full_id = if (map.get(constants.env_client_full_id)) |value|
+                .from_env_string(value)
+            else
+                null,
         };
     }
 };
@@ -662,3 +696,4 @@ const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
 const RendererGL = @import("RendererGL.zig");
 const RendererCpu = @import("RendererCpu.zig");
+const Process = @import("Process.zig");

@@ -54,11 +54,9 @@ pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: net.Stream
     clients.unknown.appendAssumeCapacity(client);
 }
 
-pub fn promote_client_to_known(clients: *Clients, gpa: std.mem.Allocator, index: usize) ptypes.ClientID {
+pub fn promote_client_to_known(clients: *Clients, gpa: std.mem.Allocator, index: usize, id: ptypes.ClientID) void {
     const unknown = clients.unknown.items[index];
     std.debug.assert(!unknown.promoted_to_known);
-
-    const id = clients.next_id.increment();
 
     const client = clients.known_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
@@ -69,7 +67,6 @@ pub fn promote_client_to_known(clients: *Clients, gpa: std.mem.Allocator, index:
 
     clients.known.putAssumeCapacityNoClobber(id, client);
     unknown.promoted_to_known = true;
-    return id;
 }
 
 pub fn remove_closed_known_clients(clients: *Clients) void {
