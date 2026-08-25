@@ -179,34 +179,54 @@ fn main_win32(ws: *WindowSystem) !void {
 fn main_server(server: *Server) error{Canceled}!void {
     defer log.info("{s} exited", .{@src().fn_name});
 
-    const T = Server.Task;
-    var select_buffer: [2]T = undefined;
-    var select: Io.Select(T) = .init(server.io, &select_buffer);
-    defer {
-        while (select.cancel()) |canceled| {
-            canceled.handle(server) catch {};
+    var accept_thread = server.io.concurrent(
+        accept_new_clients,
+        .{ global_dispatch, &server.server },
+    ) catch |err| std.process.fatal("{}", .{err});
+    defer accept_thread.cancel(server.io) catch {};
+
+    var exit = false;
+    while (!exit) {
+        var select_buffer: [2]Server.Task = undefined;
+        var select: Io.Select(Server.Task) = .init(server.io, &select_buffer);
+
+        select.concurrent(
+            .get_events,
+            Server.Task.fn_get_events,
+            .{ server, server.arena_acquire() },
+        ) catch |err| std.process.fatal("{}", .{err});
+
+        if (server.clients.count() > 0) {
+            select.concurrent(
+                .get_client_messages,
+                Server.Task.fn_get_client_messages,
+                .{ server, server.arena_acquire() },
+            ) catch |err| std.process.fatal("{}", .{err});
         }
-    }
 
-    select.concurrent(.check_clients, T.fn_check_clients, .{server}) catch
-        @panic("ConcurrencyUnavailable");
-    select.concurrent(.check_events, T.fn_check_events, .{server.dispatch}) catch
-        @panic("ConcurrencyUnavailable");
+        // These tasks modify the state of the server.
+        // Cancel before handling to prevent race conditions
+        const first = select.await();
+        const second = select.cancel();
+        std.debug.assert(select.cancel() == null);
 
-    while (true) {
-        const selected = try select.await();
-        try selected.handle(server);
+        // delay handling errors as to not leak resources of the second
+        if (first) |f| {
+            f.handle(server) catch |err| switch (err) {
+                error.Canceled, error.Exit => exit = true,
+                error.OutOfMemory => {},
+            };
+        } else |err| switch (err) {
+            error.Canceled => exit = true,
+        }
 
-        // Restart
-        switch (selected) {
-            .check_clients => {
-                select.concurrent(.check_clients, T.fn_check_clients, .{server}) catch
-                    @panic("ConcurrencyUnavailable");
-            },
-            .check_events => {
-                select.concurrent(.check_events, T.fn_check_events, .{server.dispatch}) catch
-                    @panic("ConcurrencyUnavailable");
-            },
+        if (second) |s| {
+            s.handle(server) catch |err| switch (err) {
+                error.Exit => exit = true,
+                error.Canceled, // always canceled
+                error.OutOfMemory,
+                => {},
+            };
         }
     }
 }
@@ -218,6 +238,20 @@ pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
             global_dispatch.server_put(@src(), .exit) catch {};
         },
         else => unreachable,
+    }
+}
+
+fn accept_new_clients(dispatch: *Dispatch, server: *net.Server) error{Canceled}!void {
+    while (true) {
+        const stream = server.accept(dispatch.io) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => {
+                log.err("Accept client failed {}", .{err});
+                continue;
+            },
+        };
+
+        try dispatch.server_put(@src(), .{ .unknown_client_connected = stream });
     }
 }
 

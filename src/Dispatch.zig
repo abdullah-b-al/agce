@@ -69,6 +69,13 @@ pub fn server_get(dispatch: *Dispatch) error{Canceled}!ServerEvent {
     };
 }
 
+pub fn server_get_many(dispatch: *Dispatch, buf: []ServerEvent) error{Canceled}!usize {
+    return dispatch.server.queue.get(dispatch.io, buf, 1) catch |err| switch (err) {
+        error.Closed => unreachable,
+        error.Canceled => |e| return e,
+    };
+}
+
 pub const WindowSystemResultQueue = IoQueue(WindowSystemResult);
 pub const WindowSystemQueue = IoQueue(WindowSystemEvent);
 pub const WindowSystemEvent = union(enum) {
@@ -189,8 +196,7 @@ pub const ServerEvent = union(enum) {
 
     exit,
 
-    client_registered: ClientRegistered,
-    generate_client_full_id: ClientID,
+    unknown_client_connected: net.Stream,
 
     viewport_create: WithClientID(Payload.ViewportCreate),
     viewport_created: WithClientID(Payload.ViewportCreated),
@@ -216,17 +222,6 @@ pub const ServerEvent = union(enum) {
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
     }
-
-    pub const ClientRegistered = struct {
-        client_id: ClientID,
-        fingerprint: ?ptypes.ClientFingerprint,
-        info: ?ptypes.ClientInfoClone,
-
-        pub fn full_id(r: ClientRegistered) ?ptypes.ClientFullID {
-            const fp = r.fingerprint orelse return null;
-            return .{ .id = r.client_id, .fingerprint = fp };
-        }
-    };
 
     pub const ClientInfo = struct {
         client_id: ptypes.ClientID,
@@ -269,6 +264,7 @@ pub fn IoQueue(comptime T: type) type {
 
 const std = @import("std");
 const Io = std.Io;
+const net = Io.net;
 const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;

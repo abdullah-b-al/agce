@@ -26,6 +26,9 @@ pub const ClientFingerprint = enum(u32) {
 };
 
 pub const ClientFullID = struct {
+    id: ClientID,
+    fingerprint: ClientFingerprint,
+
     const env_string_delimiter = ',';
     const env_string_fmt = "{}" ++ .{env_string_delimiter} ++ "{}";
     pub const env_string_max_len = blk: {
@@ -35,9 +38,6 @@ pub const ClientFullID = struct {
         });
         break :blk out.len;
     };
-
-    id: ClientID,
-    fingerprint: ClientFingerprint,
 
     pub fn to_env_string(fid: ClientFullID, buf: []u8) []const u8 {
         std.debug.assert(buf.len >= env_string_max_len);

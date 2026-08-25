@@ -15,17 +15,24 @@ pub const init: Clients = .{
 };
 
 pub fn deinit(clients: *Clients, io: Io, gpa: std.mem.Allocator) void {
-    for (clients.known.values()) |client| {
-        client.close(io);
+    inline for (.{
+        clients.known.values(),
+        clients.unknown.items,
+    }) |slice| {
+        for (slice) |client| {
+            client.close(io);
+        }
     }
-    clients.known.deinit(gpa);
-    clients.known_pool.deinit(gpa);
 
-    for (clients.unknown.items) |client| {
-        client.close(io);
-    }
+    clients.known.deinit(gpa);
     clients.unknown.deinit(gpa);
-    clients.unknown_pool.deinit(gpa);
+
+    inline for (.{
+        &clients.known_pool,
+        &clients.unknown_pool,
+    }) |pool| {
+        pool.deinit(gpa);
+    }
 }
 
 pub fn count(clients: *const Clients) usize {
@@ -33,15 +40,19 @@ pub fn count(clients: *const Clients) usize {
 }
 
 pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
-    const total = @max(
-        clients.known.capacity(),
-        clients.unknown.capacity,
-    ) + 1;
+    try clients.known.ensureUnusedCapacity(gpa, 1);
+    try clients.unknown.ensureUnusedCapacity(gpa, 1);
 
-    try clients.known.ensureTotalCapacity(gpa, total);
-    try clients.unknown.ensureTotalCapacity(gpa, total);
-    try clients.known_pool.addCapacity(gpa, 1);
-    try clients.unknown_pool.addCapacity(gpa, 1);
+    const c = clients.count() + 1;
+
+    inline for (.{
+        &clients.known_pool,
+        &clients.unknown_pool,
+    }) |pool| {
+        while (pool.free_list.len() < c) {
+            try pool.addCapacity(gpa, 1);
+        }
+    }
 }
 
 pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: net.Stream) void {
