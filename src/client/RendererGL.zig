@@ -136,7 +136,7 @@ pub fn resize(
     requested_height: u32,
 ) !void {
     std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = buffers.new_dimensions(requested_width, requested_height);
+    const new_width, const new_height = utils.new_dimensions(requested_width, requested_height);
 
     const buffer = r.buffers_collection.available.values()[0];
     if (buffer.width < new_width or buffer.height < new_height) {
@@ -334,3 +334,4 @@ const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.RendererGL);
 const CreateStatus = Client.CreateStatus;
 const Viewport = @import("Viewport.zig");
+const utils = @import("utils");

@@ -408,7 +408,7 @@ pub fn viewport_create_with_id(
 
     switch (vp.renderer) {
         inline else => |*r, t| {
-            const width, const height = buffers.new_dimensions(requested_width, requested_height);
+            const width, const height = utils.new_dimensions(requested_width, requested_height);
             const array = try buffers.buffers_create(
                 Viewport.Renderer.RendererBuffer(t),
                 2,

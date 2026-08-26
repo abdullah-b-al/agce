@@ -593,7 +593,8 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.TypeOf(.window_
         return error.WindowDoesNotExist;
     };
 
-    try win.buffer_resize(wl, args.width, args.height);
+    try win.resize(wl, args.width, args.height);
+    win.viewport_bound(wl);
     win.commit();
     _ = wl.display.flush();
 

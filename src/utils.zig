@@ -97,6 +97,23 @@ pub fn TypeOfField(comptime U: type, comptime name: []const u8) type {
     unreachable;
 }
 
+pub fn new_dimensions(width: u32, height: u32) struct { u32, u32 } {
+    return .{
+        dimension_multiple_of(width, 640),
+        dimension_multiple_of(height, 480),
+    };
+}
+
+fn dimension_multiple_of(requested: u32, multiple_of: u32) u32 {
+    var result: u32 = 0;
+
+    while (result < requested) {
+        result += multiple_of;
+    }
+
+    return result;
+}
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
