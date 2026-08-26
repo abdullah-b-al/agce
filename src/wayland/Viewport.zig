@@ -2,7 +2,8 @@ const Viewport = @This();
 
 id: ViewportID,
 window_id: WindowID,
-clip_rect: ptypes.Rect,
+/// The rect representing the SubViewport position and size
+clipping_rect: ?ptypes.Rect,
 render_width: i32,
 render_height: i32,
 vsync: bool,
@@ -19,7 +20,7 @@ pub fn init(
     parent_surface: *cwl.Surface,
     id: ViewportID,
     window_id: WindowID,
-    rect: ptypes.Rect,
+    clipping_rect: ?ptypes.Rect,
     render_width: u32,
     render_height: u32,
     vsync: bool,
@@ -30,16 +31,27 @@ pub fn init(
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
     subsurface.setDesync();
     const viewport = try wl.viewporter.getViewport(surface);
-    viewport.setSource(
-        .fromInt(0),
-        .fromInt(0),
-        .fromInt(@intCast(rect.width)),
-        .fromInt(@intCast(rect.height)),
-    );
-    subsurface.setPosition(
-        @intCast(rect.x),
-        @intCast(rect.y),
-    );
+
+    if (clipping_rect) |rect| {
+        viewport.setSource(
+            .fromInt(0),
+            .fromInt(0),
+            .fromInt(@intCast(@min(render_width, rect.width))),
+            .fromInt(@intCast(@min(render_height, rect.height))),
+        );
+
+        subsurface.setPosition(
+            @intCast(rect.x),
+            @intCast(rect.y),
+        );
+    } else {
+        viewport.setSource(
+            .fromInt(0),
+            .fromInt(0),
+            .fromInt(@intCast(render_width)),
+            .fromInt(@intCast(render_height)),
+        );
+    }
 
     return .{
         .id = id,
@@ -51,7 +63,7 @@ pub fn init(
         .viewport = viewport,
         .vsync = vsync,
 
-        .clip_rect = rect,
+        .clipping_rect = clipping_rect,
         .render_width = @intCast(render_width),
         .render_height = @intCast(render_height),
 
@@ -71,27 +83,17 @@ pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
     vp.surface.destroy();
 }
 
-pub fn set_source(vp: *Viewport, width: i32, height: i32) void {
-    vp.render_width = width;
-    vp.render_height = height;
-
-    vp.viewport.setSource(
-        .fromInt(0),
-        .fromInt(0),
-        .fromInt(@intCast(vp.render_width)),
-        .fromInt(@intCast(vp.render_height)),
-    );
-}
-
 pub fn set_source_min(vp: *Viewport, window: *Window, buffer: *Buffer) void {
     const width = @min(
         vp.render_width,
+        if (vp.clipping_rect) |r| r.width else std.math.maxInt(u32),
         buffer.width(),
         window.buffer.width,
     );
 
     const height = @min(
         vp.render_height,
+        if (vp.clipping_rect) |r| r.height else std.math.maxInt(u32),
         buffer.height(),
         window.buffer.height,
     );

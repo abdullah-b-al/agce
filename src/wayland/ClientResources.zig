@@ -54,7 +54,7 @@ pub fn viewport_create(
     parent_surface: *cwl.Surface,
     viewport_id: ViewportID,
     window_id: WindowID,
-    rect: ptypes.Rect,
+    rect: ?ptypes.Rect,
     render_width: u32,
     render_height: u32,
     create_sync_timeline: bool,

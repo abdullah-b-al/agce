@@ -370,7 +370,15 @@ pub fn viewport_resize(wl: *Wayland, args: Event.TypeOf(.viewport_resize)) !void
     const rs = try wl.resources_get(args.client_id);
     const vp = rs.viewports.getPtr(args.payload.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    vp.set_source(@intCast(args.payload.width), @intCast(args.payload.height));
+    vp.render_width = @intCast(args.payload.width);
+    vp.render_height = @intCast(args.payload.height);
+
+    vp.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(vp.render_width)),
+        .fromInt(@intCast(vp.render_height)),
+    );
 }
 
 pub fn sub_viewport_embed(wl: *Wayland, args: Event.TypeOf(.sub_viewport_embed)) !void {
@@ -417,19 +425,21 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
 
     std.debug.assert(key.viewport_id.is_server_id());
 
+    const requsted_rect = args.payload.rect;
     const rs = try wl.resources_get(key.client_id);
     const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    const set_position = args.payload.rect.x != vp.clip_rect.x or args.payload.rect.y != vp.clip_rect.y;
-    const set_size = args.payload.rect.width != vp.clip_rect.width or args.payload.rect.height != vp.clip_rect.height;
+    const rect = &vp.clipping_rect.?;
+    const set_position = requsted_rect.x != rect.x or requsted_rect.y != rect.y;
+    const set_size = requsted_rect.width != rect.width or requsted_rect.height != rect.height;
 
     // TODO: Bound the rect to the parent's
-    vp.clip_rect = args.payload.rect;
+    rect.* = requsted_rect;
 
     if (set_position) {
         vp.subsurface.setPosition(
-            @intCast(vp.clip_rect.x),
-            @intCast(vp.clip_rect.y),
+            @intCast(rect.x),
+            @intCast(rect.y),
         );
     }
 
@@ -437,9 +447,22 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
         vp.viewport.setSource(
             .fromInt(0),
             .fromInt(0),
-            .fromInt(@intCast(vp.clip_rect.width)),
-            .fromInt(@intCast(vp.clip_rect.height)),
+            .fromInt(@intCast(@min(rect.width, vp.render_width))),
+            .fromInt(@intCast(@min(rect.height, vp.render_height))),
         );
+
+        vp.surface.commit();
+
+        try wl.dispatch.server_put(@src(), .{
+            .viewport_resize = .{
+                .client_id = key.client_id,
+                .payload = .{
+                    .viewport_id = key.viewport_id,
+                    .width = @intCast(rect.width),
+                    .height = @intCast(rect.height),
+                },
+            },
+        });
     }
 
     _ = wl.display.flush();
@@ -567,12 +590,7 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
         window.surface,
         args.payload.viewport_id,
         window.id,
-        .{
-            .x = 0,
-            .y = 0,
-            .width = args.payload.width,
-            .height = args.payload.height,
-        },
+        null,
         args.payload.width,
         args.payload.height,
         args.payload.create_sync_timeline,
