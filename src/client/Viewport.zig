@@ -86,7 +86,7 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
         },
         .viewport_resize => {
             switch (vp.renderer) {
-                .gl => |*gl| try gl.resize(vp, msg.size.width, msg.size.height),
+                .gl => |*gl| try gl.resize(vp, msg.size),
                 .cpu => |*cpu| try cpu.resize(vp, msg),
             }
         },
@@ -126,10 +126,7 @@ pub fn viewport_resize(vp: *Viewport, size: ptypes.Size) void {
     const width = @min(buffer_size[0], size.width);
     const height = @min(buffer_size[1], size.height);
 
-    vp.size = .{
-        .width = width,
-        .height = height,
-    };
+    vp.size = .{ .width = width, .height = height };
 }
 
 pub const Renderer = union(enum) {

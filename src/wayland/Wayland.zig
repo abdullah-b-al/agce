@@ -246,99 +246,74 @@ pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Event.TypeOf(.buffer_create
     );
 }
 
-pub fn buffer_present(wl: *Wayland, args: Event.TypeOf(.buffer_present)) !void {
+const BufferPresent = union(enum) {
+    no_sync: Event.TypeOf(.buffer_present),
+    sync: Event.TypeOf(.buffer_present_with_sync),
+};
+
+pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
+    const client_id, const viewport_id, const viewport_size, const buffer_id = switch (args) {
+        inline else => |v| .{
+            v.client_id,             v.payload.viewport_id,
+            v.payload.viewport_size, v.payload.buffer_id,
+        },
+    };
+
     const viewport_key: ViewportKey = .{
-        .client_id = args.client_id,
-        .viewport_id = args.payload.viewport_id,
+        .client_id = client_id,
+        .viewport_id = viewport_id,
     };
 
-    const window = wl.window_from_viewport_key(viewport_key) orelse {
+    const win = wl.window_from_viewport_key(viewport_key) orelse {
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
 
-    const rs = try wl.resources_get(args.client_id);
+    const rs = try wl.resources_get(client_id);
 
-    const vp = rs.viewports.getPtr(args.payload.viewport_id) orelse {
+    const vp = rs.viewports.getPtr(viewport_id) orelse {
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
-    vp.render_size = args.payload.viewport_size;
+    vp.render_size = viewport_size;
 
-    const buffer = rs.buffers.getPtr(args.payload.buffer_id) orelse {
-        if (rs.wl_buffers_pending.contains(args.payload.buffer_id)) {
-            log.warn("Buffer is pending {} for {}", .{ args.payload.buffer_id, args.client_id });
+    const buffer = rs.buffers.getPtr(buffer_id) orelse {
+        if (rs.wl_buffers_pending.contains(buffer_id)) {
+            log.warn("Buffer is pending {} for {}", .{ buffer_id, client_id });
         } else {
-            log.err("Buffer does not exist {} for {}", .{ args.payload.buffer_id, args.client_id });
+            log.err("Buffer does not exist {} for {}", .{ buffer_id, client_id });
         }
         return;
     };
 
-    try rs.viewport_mark_commit(wl.gpa, args.payload.buffer_id, args.payload.viewport_id);
-    vp.set_source_min(window, buffer);
-    vp.surface.damage(0, 0, buffer.width(), buffer.height());
-    vp.surface.attach(buffer.wl_buffer(), 0, 0);
-    vp.surface.commit();
-    // log.debug("buffer_present: commited viewport for {f} {f} {f}", .{ args.client_id, args.payload.viewport_id, args.payload.buffer_id });
-
-    _ = wl.display.flush();
-}
-
-pub fn buffer_present_with_sync(wl: *Wayland, args: Event.TypeOf(.buffer_present_with_sync)) !void {
-    const viewport_key: ViewportKey = .{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id };
-
-    const window = wl.window_from_viewport_key(viewport_key) orelse {
-        log.err("Viewport does not exist {}", .{viewport_key});
-        return;
-    };
-    const rs = try wl.resources_get(args.client_id);
-
-    const vp = rs.viewports.getPtr(args.payload.viewport_id) orelse {
-        log.err("Viewport does not exist {}", .{viewport_key});
-        return;
-    };
-    vp.render_size = args.payload.viewport_size;
-
-    const buffer = rs.buffers.getPtr(args.payload.buffer_id) orelse {
-        if (rs.wl_buffers_pending.contains(args.payload.buffer_id)) {
-            log.warn("Buffer is pending {} for {}", .{ args.payload.buffer_id, args.client_id });
-        } else {
-            log.err("Buffer does not exist {} for {}", .{ args.payload.buffer_id, args.client_id });
-        }
-        return;
-    };
-
-    try rs.viewport_mark_commit(wl.gpa, args.payload.buffer_id, args.payload.viewport_id);
-
+    try rs.viewport_mark_commit(wl.gpa, buffer_id, viewport_id);
     if (vp.vsync) {
         try wl.frame_listener_set(vp.surface, viewport_key);
     }
+
     errdefer comptime unreachable;
 
-    // log.debug("Set acquire point {} and release point {} for ClientID({}) ViewportID({}) BufferID({})", .{
-    //     args.acquire_point,
-    //     args.release_point,
-    //     @intFromEnum(args.client_id),
-    //     @intFromEnum(args.viewport_id),
-    //     @intFromEnum(args.buffer_id),
-    // });
-
-    vp.set_source_min(window, buffer);
+    vp.set_source_min(win, buffer);
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
 
-    if (vp.sync_surface) |sync_surface| {
-        switch (buffer.*) {
-            .gpu => |gpu| {
-                gpu.timeline_acquire.?.set(sync_surface, args.payload.acquire_point);
-                gpu.timeline_release.?.set(sync_surface, args.payload.release_point);
-            },
-            .cpu => {},
-        }
+    switch (args) {
+        .no_sync => {},
+        .sync => |a| {
+            const sync = a.payload;
+            if (vp.sync_surface) |sync_surface| {
+                switch (buffer.*) {
+                    .gpu => |gpu| {
+                        gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
+                        gpu.timeline_release.?.set(sync_surface, sync.release_point);
+                    },
+                    .cpu => {},
+                }
+            }
+        },
     }
 
     vp.surface.commit();
-    // log.debug("buffer_present_with_sync: commited viewport for {} {}", .{ buffer_key, viewport_key });
 
     _ = wl.display.flush();
 }
@@ -599,15 +574,19 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.TypeOf(.window_
     win.commit();
     _ = wl.display.flush();
 
-    try wl.dispatch.server_put(@src(), .{
-        .viewport_resize = .{
-            .client_id = win.viewport_key.client_id,
-            .payload = .{
-                .viewport_id = win.viewport_key.viewport_id,
-                .size = args.size,
+    const rs = try wl.resources_get(win.viewport_key.client_id);
+    const vp = rs.viewports.get(win.viewport_key.viewport_id) orelse return;
+    if (!std.meta.eql(vp.render_size, args.size)) {
+        try wl.dispatch.server_put(@src(), .{
+            .viewport_resize = .{
+                .client_id = win.viewport_key.client_id,
+                .payload = .{
+                    .viewport_id = win.viewport_key.viewport_id,
+                    .size = args.size,
+                },
             },
-        },
-    });
+        });
+    }
 }
 
 pub fn display_dispatch(wl: *Wayland) void {
@@ -929,17 +908,15 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
         .configure => |configure| {
             if (configure.width == 0 or configure.height == 0) return;
 
-            if (configure.width != window.buffer.width or configure.height != window.buffer.height) {
-                ws.event_handle(.{
-                    .window_resize_by_display_server = .{
-                        .id = window_id,
-                        .size = .{
-                            .width = @intCast(configure.width),
-                            .height = @intCast(configure.height),
-                        },
+            ws.event_handle(.{
+                .window_resize_by_display_server = .{
+                    .id = window_id,
+                    .size = .{
+                        .width = @intCast(configure.width),
+                        .height = @intCast(configure.height),
                     },
-                }) catch return;
-            }
+                },
+            }) catch return;
         },
 
         .close => {

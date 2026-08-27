@@ -112,13 +112,13 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
 
         .buffer_present => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.buffer_present(args),
+                .wayland => |wl| try wl.buffer_present(.{ .no_sync = args }),
                 .win32 => @panic("TODO"),
             }
         },
         .buffer_present_with_sync => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.buffer_present_with_sync(args),
+                .wayland => |wl| try wl.buffer_present(.{ .sync = args }),
                 .win32 => @panic("TODO"),
             }
         },

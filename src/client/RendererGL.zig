@@ -133,11 +133,13 @@ pub fn get_buffer(r: *RendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
 pub fn resize(
     r: *RendererGL,
     vp: *Viewport,
-    requested_width: u32,
-    requested_height: u32,
+    requested_size: ptypes.Size,
 ) !void {
     std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = utils.new_dimensions(requested_width, requested_height);
+    const new_width, const new_height = utils.new_dimensions(
+        requested_size.width,
+        requested_size.height,
+    );
 
     const buffer = r.buffers_collection.available.values()[0];
     if (buffer.width < new_width or buffer.height < new_height) {
