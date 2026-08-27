@@ -164,18 +164,11 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                             .payload = .{
                                 .sub_viewport_id = v.embeder.key.sub_viewport_id,
                                 .status = .success,
-                                .render_width = v.embeder.render_width,
-                                .render_height = v.embeder.render_height,
+                                .render_size = v.embeder.render_size,
                             },
                         },
                     });
                 },
-            }
-        },
-        .viewport_resize => |args| {
-            switch (ws.native) {
-                .wayland => |wl| try wl.viewport_resize(args),
-                .win32 => @panic("TODO"),
             }
         },
         .sub_viewport_embed => |args| {
@@ -304,8 +297,7 @@ pub const ViewportCreateResult = union(enum) {
     create_with_sub_viewport: struct {
         embeder: struct {
             key: SubViewportKey,
-            render_width: u32,
-            render_height: u32,
+            render_size: ptypes.Size,
         },
         embeded: ViewportKey,
     },

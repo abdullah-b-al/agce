@@ -263,6 +263,7 @@ pub fn buffer_present(wl: *Wayland, args: Event.TypeOf(.buffer_present)) !void {
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
+    vp.render_size = args.payload.viewport_size;
 
     const buffer = rs.buffers.getPtr(args.payload.buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(args.payload.buffer_id)) {
@@ -296,6 +297,7 @@ pub fn buffer_present_with_sync(wl: *Wayland, args: Event.TypeOf(.buffer_present
         log.err("Viewport does not exist {}", .{viewport_key});
         return;
     };
+    vp.render_size = args.payload.viewport_size;
 
     const buffer = rs.buffers.getPtr(args.payload.buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(args.payload.buffer_id)) {
@@ -366,20 +368,6 @@ pub fn viewport_create(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.view
         return .{ .create_with_window = key };
     }
 }
-pub fn viewport_resize(wl: *Wayland, args: Event.TypeOf(.viewport_resize)) !void {
-    const rs = try wl.resources_get(args.client_id);
-    const vp = rs.viewports.getPtr(args.payload.viewport_id) orelse return error.ViewportDoesNotExist;
-
-    vp.render_width = @intCast(args.payload.width);
-    vp.render_height = @intCast(args.payload.height);
-
-    vp.viewport.setSource(
-        .fromInt(0),
-        .fromInt(0),
-        .fromInt(@intCast(vp.render_width)),
-        .fromInt(@intCast(vp.render_height)),
-    );
-}
 
 pub fn sub_viewport_embed(wl: *Wayland, args: Event.TypeOf(.sub_viewport_embed)) !void {
     const to_embed = try wl.resources_get(args.payload.client_id_to_embed);
@@ -447,8 +435,8 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
         vp.viewport.setSource(
             .fromInt(0),
             .fromInt(0),
-            .fromInt(@intCast(@min(rect.width, vp.render_width))),
-            .fromInt(@intCast(@min(rect.height, vp.render_height))),
+            .fromInt(@intCast(@min(rect.width, vp.render_size.width))),
+            .fromInt(@intCast(@min(rect.height, vp.render_size.height))),
         );
 
         vp.surface.commit();
@@ -458,8 +446,7 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
                 .client_id = key.client_id,
                 .payload = .{
                     .viewport_id = key.viewport_id,
-                    .width = @intCast(rect.width),
-                    .height = @intCast(rect.height),
+                    .size = rect.size(),
                 },
             },
         });
@@ -529,8 +516,7 @@ fn viewport_create_with_sub_viewport(
         embeded_key.viewport_id,
         embeder_viewport.window_id,
         sub_viewport_data.clip_rect,
-        args.payload.width,
-        args.payload.height,
+        args.payload.size,
         args.payload.create_sync_timeline,
         args.payload.vsync,
     );
@@ -554,8 +540,7 @@ fn viewport_create_with_sub_viewport(
                     .client_id = embeder.client_id,
                     .sub_viewport_id = sub_viewport_data.sub_viewport_id,
                 },
-                .render_width = args.payload.width,
-                .render_height = args.payload.height,
+                .render_size = args.payload.size,
             },
 
             .embeded = embeded_key,
@@ -581,8 +566,7 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
         ws,
         id,
         key,
-        @intCast(args.payload.width),
-        @intCast(args.payload.height),
+        args.payload.size,
     );
 
     try rs.viewport_create(
@@ -591,8 +575,7 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
         args.payload.viewport_id,
         window.id,
         null,
-        args.payload.width,
-        args.payload.height,
+        args.payload.size,
         args.payload.create_sync_timeline,
         args.payload.vsync,
     );
@@ -611,7 +594,7 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.TypeOf(.window_
         return error.WindowDoesNotExist;
     };
 
-    try win.resize(wl, args.width, args.height);
+    try win.resize(wl, args.size);
     win.viewport_bound(wl);
     win.commit();
     _ = wl.display.flush();
@@ -621,8 +604,7 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.TypeOf(.window_
             .client_id = win.viewport_key.client_id,
             .payload = .{
                 .viewport_id = win.viewport_key.viewport_id,
-                .width = @intCast(args.width),
-                .height = @intCast(args.height),
+                .size = args.size,
             },
         },
     });
@@ -951,8 +933,10 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
                 ws.event_handle(.{
                     .window_resize_by_display_server = .{
                         .id = window_id,
-                        .width = configure.width,
-                        .height = configure.height,
+                        .size = .{
+                            .width = @intCast(configure.width),
+                            .height = @intCast(configure.height),
+                        },
                     },
                 }) catch return;
             }

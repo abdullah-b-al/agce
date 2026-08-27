@@ -55,8 +55,7 @@ pub fn viewport_create(
     viewport_id: ViewportID,
     window_id: WindowID,
     rect: ?ptypes.Rect,
-    render_width: u32,
-    render_height: u32,
+    render_size: ptypes.Size,
     create_sync_timeline: bool,
     vsync: bool,
 ) !void {
@@ -67,8 +66,7 @@ pub fn viewport_create(
         viewport_id,
         window_id,
         rect,
-        render_width,
-        render_height,
+        render_size,
         vsync,
     );
 

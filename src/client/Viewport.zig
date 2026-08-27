@@ -3,8 +3,7 @@ const Viewport = @This();
 client: *Client,
 id: ViewportID,
 frame_number: usize,
-width: u32,
-height: u32,
+size: ptypes.Size,
 format: ptypes.BufferFormat,
 open: bool,
 vsync: bool,
@@ -22,8 +21,7 @@ renderer: Renderer,
 pub fn init(
     id: ViewportID,
     client: *Client,
-    width: u32,
-    height: u32,
+    size: ptypes.Size,
     format: ptypes.BufferFormat,
     vsync: bool,
     renderer: Renderer,
@@ -31,8 +29,7 @@ pub fn init(
     return .{
         .client = client,
         .id = id,
-        .width = width,
-        .height = height,
+        .size = size,
         .format = format,
         .vsync = vsync,
 
@@ -89,7 +86,7 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
         },
         .viewport_resize => {
             switch (vp.renderer) {
-                .gl => |*gl| try gl.resize(vp, msg.width, msg.height),
+                .gl => |*gl| try gl.resize(vp, msg.size.width, msg.size.height),
                 .cpu => |*cpu| try cpu.resize(vp, msg),
             }
         },
@@ -119,6 +116,20 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
             vp.can_render = true;
         },
     }
+}
+
+pub fn viewport_resize(vp: *Viewport, size: ptypes.Size) void {
+    const buffer_size = switch (vp.renderer) {
+        inline else => |r| r.buffer_size(),
+    };
+
+    const width = @min(buffer_size[0], size.width);
+    const height = @min(buffer_size[1], size.height);
+
+    vp.size = .{
+        .width = width,
+        .height = height,
+    };
 }
 
 pub const Renderer = union(enum) {

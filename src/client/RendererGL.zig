@@ -68,6 +68,7 @@ pub fn buffer_present(_: *RendererGL, vp: *Viewport, buffer: *Buffer) !void {
                 .buffer_id = buffer.id,
                 .acquire_point = buffer.acquire.point,
                 .release_point = buffer.release.point,
+                .viewport_size = vp.size,
             },
         },
     );

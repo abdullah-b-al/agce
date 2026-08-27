@@ -19,7 +19,6 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_present_with_sync: BufferPresentWithSync,
 
     viewport_create: ViewportCreate,
-    viewport_resize: types.ViewportResize,
     sub_viewport_embed: SubViewportEmbed,
     sub_viewport_rect_set: SubViewportRectSet,
 
@@ -37,8 +36,7 @@ pub const MessagePayload = union(enum(u32)) {
         create_sync_timeline: bool,
         vsync: bool,
 
-        width: u32,
-        height: u32,
+        size: types.Size,
     };
 
     pub const SubViewportEmbed = struct {
@@ -78,6 +76,7 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferPresent = struct {
         buffer_id: types.BufferID,
         viewport_id: types.ViewportID,
+        viewport_size: types.Size,
     };
 
     pub const BufferPresentWithSync = struct {
@@ -85,6 +84,7 @@ pub const MessagePayload = union(enum(u32)) {
         viewport_id: types.ViewportID,
         acquire_point: types.AcquireTimelinePoint,
         release_point: types.ReleaseTimelinePoint,
+        viewport_size: types.Size,
     };
 
     pub const BufferDestroy = struct {
@@ -143,7 +143,6 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         .buffer_present_with_sync,
         .buffer_destroy,
         .viewport_create,
-        .viewport_resize,
         .generate_client_full_id,
         => {
             var buf: [4096]u8 = undefined;
@@ -242,7 +241,6 @@ fn read_and_parse_data_json_linux(
         .buffer_present_with_sync,
         .buffer_destroy,
         .viewport_create,
-        .viewport_resize,
         .generate_client_full_id,
         => {
             return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
@@ -265,7 +263,6 @@ fn read_and_parse_data_json(
         inline .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
-        .viewport_resize,
         .cursor_shape_set,
         .sub_viewport_embed,
         .sub_viewport_rect_set,

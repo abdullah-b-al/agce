@@ -4,8 +4,7 @@ id: ViewportID,
 window_id: WindowID,
 /// The rect representing the SubViewport position and size
 clipping_rect: ?ptypes.Rect,
-render_width: i32,
-render_height: i32,
+render_size: ptypes.Size,
 vsync: bool,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
@@ -21,8 +20,7 @@ pub fn init(
     id: ViewportID,
     window_id: WindowID,
     clipping_rect: ?ptypes.Rect,
-    render_width: u32,
-    render_height: u32,
+    render_size: ptypes.Size,
     vsync: bool,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
@@ -36,8 +34,8 @@ pub fn init(
         viewport.setSource(
             .fromInt(0),
             .fromInt(0),
-            .fromInt(@intCast(@min(render_width, rect.width))),
-            .fromInt(@intCast(@min(render_height, rect.height))),
+            .fromInt(@intCast(@min(render_size.width, rect.width))),
+            .fromInt(@intCast(@min(render_size.height, rect.height))),
         );
 
         subsurface.setPosition(
@@ -48,8 +46,8 @@ pub fn init(
         viewport.setSource(
             .fromInt(0),
             .fromInt(0),
-            .fromInt(@intCast(render_width)),
-            .fromInt(@intCast(render_height)),
+            .fromInt(@intCast(render_size.width)),
+            .fromInt(@intCast(render_size.height)),
         );
     }
 
@@ -64,8 +62,7 @@ pub fn init(
         .vsync = vsync,
 
         .clipping_rect = clipping_rect,
-        .render_width = @intCast(render_width),
-        .render_height = @intCast(render_height),
+        .render_size = render_size,
 
         .sub_viewports = .empty,
     };
@@ -85,14 +82,14 @@ pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
 
 pub fn set_source_min(vp: *Viewport, window: *Window, buffer: *Buffer) void {
     const width = @min(
-        vp.render_width,
+        vp.render_size.width,
         if (vp.clipping_rect) |r| r.width else std.math.maxInt(u32),
         buffer.width(),
         window.buffer.width,
     );
 
     const height = @min(
-        vp.render_height,
+        vp.render_size.height,
         if (vp.clipping_rect) |r| r.height else std.math.maxInt(u32),
         buffer.height(),
         window.buffer.height,

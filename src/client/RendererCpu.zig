@@ -13,7 +13,7 @@ pub fn deinit(r: *RendererCpu, gpa: std.mem.Allocator) void {
 pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ptypes.ViewportResize) !void {
     std.debug.assert(msg.viewport_id == vp.id);
     std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = utils.new_dimensions(msg.width, msg.height);
+    const new_width, const new_height = utils.new_dimensions(msg.size.width, msg.size.height);
 
     const buffer = r.buffers_collection.available.values()[0];
     if (buffer.width < new_width or buffer.height < new_height) {
@@ -57,6 +57,7 @@ pub fn buffer_present(_: *RendererCpu, vp: *Viewport, buffer: *Buffer) !void {
             .buffer_present = .{
                 .viewport_id = vp.id,
                 .buffer_id = buffer.id,
+                .viewport_size = vp.size,
             },
         },
     );

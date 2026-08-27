@@ -53,8 +53,7 @@ pub const MessagePayload = union(enum(u32)) {
     pub const SubviewportCreated = struct {
         sub_viewport_id: types.SubViewportID,
         status: types.Status,
-        render_width: u32,
-        render_height: u32,
+        render_size: types.Size,
     };
 
     pub const ClientRegistered = struct {

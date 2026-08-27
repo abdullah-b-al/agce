@@ -2,8 +2,7 @@ const SubViewport = @This();
 
 client: *Client,
 id: SubViewportID,
-render_width: u32,
-render_height: u32,
+render_size: ptypes.Size,
 rect: ptypes.Rect,
 open: bool,
 status: CreateStatus,
@@ -17,8 +16,7 @@ pub fn init(
         .client = client,
         .id = id,
         .rect = rect,
-        .render_width = 0,
-        .render_height = 0,
+        .render_size = .{ .width = 0, .height = 0 },
         .status = .pending,
         .open = false,
     };

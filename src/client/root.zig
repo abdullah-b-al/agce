@@ -9,6 +9,7 @@ pub const CursorShape = ptypes.CursorShape;
 pub const ClientInfo = ptypes.ClientInfo;
 pub const ClientID = ptypes.ClientID;
 pub const Rect = ptypes.Rect;
+pub const Size = ptypes.Size;
 
 pub const Key = @import("protocol").input.Key;
 pub const KeyState = @import("protocol").input.KeyState;
@@ -124,8 +125,7 @@ pub const ClientHandle = opaque {
 
     pub const ViewportPendingPeek = struct {
         id: ViewportID,
-        requsted_width: u32,
-        requsted_height: u32,
+        requsted_size: Size,
     };
     pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportPendingPeek {
         const client = handle.cast();
@@ -134,11 +134,7 @@ pub const ClientHandle = opaque {
 
         const id = client.viewports_from_server.keys()[0];
         const size = client.viewports_from_server.values()[0];
-        return .{
-            .id = id,
-            .requsted_width = size.width,
-            .requsted_height = size.height,
-        };
+        return .{ .id = id, .requsted_size = size };
     }
 
     pub fn expect_viewport(handle: *ClientHandle) bool {
@@ -202,11 +198,10 @@ pub const ViewportHandle = opaque {
     pub fn create(
         handle: *ClientHandle,
         renderer: Renderer,
-        width: u32,
-        height: u32,
+        s: Size,
         vsync: bool,
     ) !*ViewportHandle {
-        const vp = try handle.cast().viewport_create(renderer, width, height, vsync);
+        const vp = try handle.cast().viewport_create(renderer, s, vsync);
         return @ptrCast(vp);
     }
 
@@ -214,16 +209,14 @@ pub const ViewportHandle = opaque {
         handle: *ClientHandle,
         renderer: Renderer,
         viewport_id: ViewportID,
-        render_width: u32,
-        render_height: u32,
+        s: Size,
         vsync: bool,
     ) !*ViewportHandle {
         const vp = try handle.cast().viewport_create_from_pending(
             renderer,
             viewport_id,
             vsync,
-            render_width,
-            render_height,
+            s,
         );
         return @ptrCast(vp);
     }
@@ -236,9 +229,8 @@ pub const ViewportHandle = opaque {
         return handle.cast().open;
     }
 
-    pub fn size(handle: *ViewportHandle) [2]u32 {
-        const vp = handle.cast();
-        return .{ vp.width, vp.height };
+    pub fn size(handle: *ViewportHandle) Size {
+        return handle.cast().size;
     }
 
     pub fn event_pop(handle: *ViewportHandle) ?Client.Event {
@@ -262,9 +254,8 @@ pub const ViewportHandle = opaque {
         );
     }
 
-    pub fn resize(handle: *ViewportHandle, requseted_width: u32, requseted_height: u32) !void {
-        const vp = handle.cast();
-        try vp.client.viewport_resize(vp, requseted_width, requseted_height);
+    pub fn resize(handle: *ViewportHandle, s: ptypes.Size) void {
+        handle.cast().viewport_resize(s);
     }
 
     pub fn gl_frame_begin(handle: *ViewportHandle) !GlFrameBegin {
@@ -284,8 +275,7 @@ pub const ViewportHandle = opaque {
         vp.current_buffer = buffer.id;
         return .{
             .fbo = buffer.fbo,
-            .viewport_width = vp.width,
-            .viewport_height = vp.height,
+            .viewport_size = vp.size,
         };
     }
 
@@ -340,8 +330,7 @@ pub const ViewportHandle = opaque {
             .width = buffer.?.width,
             .height = buffer.?.height,
             .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
-            .viewport_width = vp.width,
-            .viewport_height = vp.height,
+            .viewport_size = vp.size,
         };
     }
 
@@ -362,14 +351,12 @@ pub const ViewportHandle = opaque {
         width: u32,
         height: u32,
         bytes_per_pixel: u8,
-        viewport_width: u32,
-        viewport_height: u32,
+        viewport_size: Size,
     };
 
     pub const GlFrameBegin = struct {
         fbo: c_uint,
-        viewport_width: u32,
-        viewport_height: u32,
+        viewport_size: Size,
     };
 };
 
@@ -382,11 +369,8 @@ pub const SubViewportHandle = opaque {
         return handle.cast().status;
     }
 
-    pub fn render_size(handle: *SubViewportHandle) [2]u32 {
-        return .{
-            handle.cast().render_width,
-            handle.cast().render_height,
-        };
+    pub fn render_size(handle: *SubViewportHandle) ptypes.Size {
+        return handle.cast().render_size;
     }
 
     pub fn rect_get(handle: *SubViewportHandle) Rect {

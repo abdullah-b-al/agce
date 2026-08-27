@@ -92,7 +92,6 @@ pub const WindowSystemEvent = union(enum) {
     buffer_destroy: WithClientID(Payload.BufferDestroy),
 
     viewport_create: WithClientID(Payload.ViewportCreate),
-    viewport_resize: WithClientID(ptypes.ViewportResize),
     sub_viewport_embed: WithClientID(Payload.SubViewportEmbed),
     sub_viewport_rect_set: WithClientID(Payload.SubViewportRectSet),
 
@@ -132,8 +131,7 @@ pub const WindowSystemEvent = union(enum) {
 
     pub const WindowResize = struct {
         id: WindowID,
-        width: i32,
-        height: i32,
+        size: ptypes.Size,
     };
 
     pub fn TypeOf(comptime tag: std.meta.Tag(WindowSystemEvent)) type {

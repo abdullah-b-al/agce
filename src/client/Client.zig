@@ -15,7 +15,7 @@ next_buffer_id: ptypes.BufferID,
 next_sub_viewport_id: ptypes.SubViewportID,
 
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
-viewports_from_server: std.array_hash_map.Auto(ViewportID, Size),
+viewports_from_server: std.array_hash_map.Auto(ViewportID, ptypes.Size),
 sub_viewports: std.array_hash_map.Auto(SubViewportID, *SubViewport),
 
 processes: std.ArrayList(*Process),
@@ -255,8 +255,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
                 .success => vp.status = .created,
                 .failure => vp.status = .failed,
             }
-            vp.render_width = e.render_width;
-            vp.render_height = e.render_height;
+            vp.render_size = e.render_size;
         },
 
         .viewport_resize => |e| {
@@ -316,43 +315,17 @@ pub fn viewport_from_buffer_id(client: *Client, buffer_id: BufferID) ?*Viewport 
 pub fn viewport_create(
     client: *Client,
     tag: Viewport.Renderer.Tag,
-    width: u32,
-    height: u32,
+    size: ptypes.Size,
     vsync: bool,
 ) !*Viewport {
     const id = client.next_viewport_id.increment_for_client();
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, width, height, vsync),
-        .cpu => try client.viewport_create_with_id(.cpu, id, width, height, vsync),
+        .gl => try client.viewport_create_with_id(.gl, id, size, vsync),
+        .cpu => try client.viewport_create_with_id(.cpu, id, size, vsync),
     };
 
     return vp;
-}
-
-pub fn viewport_resize(client: *Client, vp: *Viewport, requseted_width: u32, requseted_height: u32) !void {
-    const buffer_size = switch (vp.renderer) {
-        inline else => |r| r.buffer_size(),
-    };
-
-    const width = @min(buffer_size[0], requseted_width);
-    const height = @min(buffer_size[1], requseted_height);
-
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .viewport_resize = .{
-                .viewport_id = vp.id,
-                .width = width,
-                .height = height,
-            },
-        },
-    );
-
-    vp.width = width;
-    vp.height = width;
 }
 
 pub fn viewport_create_from_pending(
@@ -360,16 +333,15 @@ pub fn viewport_create_from_pending(
     tag: Viewport.Renderer.Tag,
     id: ViewportID,
     vsync: bool,
-    render_width: u32,
-    render_height: u32,
+    size: ptypes.Size,
 ) !*Viewport {
     std.debug.assert(
         client.viewports_from_server.contains(id),
     );
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, render_width, render_height, vsync),
-        .cpu => try client.viewport_create_with_id(.cpu, id, render_width, render_height, vsync),
+        .gl => try client.viewport_create_with_id(.gl, id, size, vsync),
+        .cpu => try client.viewport_create_with_id(.cpu, id, size, vsync),
     };
 
     _ = client.viewports_from_server.orderedRemove(id);
@@ -381,8 +353,7 @@ pub fn viewport_create_with_id(
     client: *Client,
     tag: Viewport.Renderer.Tag,
     id: ViewportID,
-    requested_width: u32,
-    requested_height: u32,
+    requested_size: ptypes.Size,
     vsync: bool,
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
@@ -396,8 +367,7 @@ pub fn viewport_create_with_id(
         vp.* = .init(
             id,
             client,
-            requested_width,
-            requested_height,
+            requested_size,
             .argb8888,
             vsync,
             renderer,
@@ -408,7 +378,7 @@ pub fn viewport_create_with_id(
 
     switch (vp.renderer) {
         inline else => |*r, t| {
-            const width, const height = utils.new_dimensions(requested_width, requested_height);
+            const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
             const array = try buffers.buffers_create(
                 Viewport.Renderer.RendererBuffer(t),
                 2,
@@ -424,7 +394,7 @@ pub fn viewport_create_with_id(
         },
     }
 
-    try client.send_viewport_create(id, requested_width, requested_height);
+    try client.send_viewport_create(id, requested_size);
 
     while (true) {
         try client.wait_for(id, .viewport_created);
@@ -457,8 +427,7 @@ pub fn frame_wait_for_vsync(client: *Client, vp: *Viewport) !void {
 pub fn send_viewport_create(
     client: *Client,
     viewport_id: ViewportID,
-    width: u32,
-    height: u32,
+    size: ptypes.Size,
 ) !void {
     const vp = client.viewports.get(viewport_id).?;
 
@@ -475,8 +444,7 @@ pub fn send_viewport_create(
             .create_sync_timeline = create_sync_timeline,
             .vsync = vp.vsync,
 
-            .width = width,
-            .height = height,
+            .size = size,
         },
     });
 }
@@ -650,11 +618,6 @@ pub const CreateStatus = enum {
     created,
     pending,
     failed,
-};
-
-pub const Size = struct {
-    width: u32,
-    height: u32,
 };
 
 const Env = struct {

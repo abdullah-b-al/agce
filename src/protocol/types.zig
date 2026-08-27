@@ -194,6 +194,15 @@ pub const Rect = struct {
     y: u32,
     width: u32,
     height: u32,
+
+    pub fn size(r: Rect) Size {
+        return .{ .width = r.width, .height = r.height };
+    }
+};
+
+pub const Size = struct {
+    width: u32,
+    height: u32,
 };
 
 pub const BufferFormat = enum {
@@ -220,16 +229,14 @@ pub const BufferAndTimelineFds = extern struct {
 
 pub const WindowCreate = struct {
     viewport_id: ViewportID,
-    width: u32,
-    height: u32,
     create_sync_timeline: bool,
     vsync: bool,
+    size: Size,
 };
 
 pub const ViewportResize = struct {
     viewport_id: ViewportID,
-    width: u32,
-    height: u32,
+    size: Size,
 };
 
 pub const ScrollAxis = enum(u8) {

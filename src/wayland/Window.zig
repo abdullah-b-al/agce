@@ -18,10 +18,16 @@ running: bool,
 buffer_pixels: []align(std.heap.page_size_min) u8,
 buffer: ClientResources.CpuBuffer,
 
-pub fn create(wl: *Wayland, ws: *WindowSystem, window_id: WindowID, viewport_key: ViewportKey, requested_width: i32, requested_height: i32) !*Window {
+pub fn create(
+    wl: *Wayland,
+    ws: *WindowSystem,
+    window_id: WindowID,
+    viewport_key: ViewportKey,
+    requested_size: ptypes.Size,
+) !*Window {
     const width, const height = utils.new_dimensions(
-        @intCast(requested_width),
-        @intCast(requested_height),
+        @intCast(requested_size.width),
+        @intCast(requested_size.height),
     );
     const window = try wl.gpa.create(Window);
     errdefer wl.gpa.destroy(window);
@@ -111,12 +117,12 @@ pub fn viewport_bound(win: *Window, wl: *Wayland) void {
     const vp = rs.viewports.get(win.viewport_key.viewport_id) orelse return;
 
     const width = @min(
-        vp.render_width,
+        vp.render_size.width,
         win.buffer.width,
     );
 
     const height = @min(
-        vp.render_height,
+        vp.render_size.height,
         win.buffer.height,
     );
     win.viewport.setSource(
@@ -127,10 +133,10 @@ pub fn viewport_bound(win: *Window, wl: *Wayland) void {
     );
 }
 
-pub fn resize(win: *Window, wl: *Wayland, requested_width: i32, requested_height: i32) !void {
+pub fn resize(win: *Window, wl: *Wayland, requested_size: ptypes.Size) !void {
     const width, const height = utils.new_dimensions(
-        @intCast(requested_width),
-        @intCast(requested_height),
+        @intCast(requested_size.width),
+        @intCast(requested_size.height),
     );
 
     if (width <= win.buffer.width and height <= win.buffer.height) {

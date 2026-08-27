@@ -404,7 +404,6 @@ pub fn window_system_event_from_message(
         .buffer_present_with_sync,
         .buffer_destroy,
         .viewport_create,
-        .viewport_resize,
         .cursor_shape_set,
         .sub_viewport_embed,
         .sub_viewport_rect_set,

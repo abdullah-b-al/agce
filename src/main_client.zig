@@ -30,8 +30,9 @@ pub fn main(init: std.process.Init) !void {
         try handle.init_opengl(3, 3);
     }
 
-    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try .create(handle, .gl, 1280, 720, vsync) else null;
-    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try .create(handle, .cpu, 1280, 720, vsync) else null;
+    const size: api.Size = .{ .width = 1280, .height = 720 };
+    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try .create(handle, .gl, size, vsync) else null;
+    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try .create(handle, .cpu, size, vsync) else null;
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();
@@ -113,7 +114,7 @@ fn render_gpu(vp: *ViewportHandle, random: std.Random) !void {
     });
 
     glad.glBindFramebuffer(glad.GL_FRAMEBUFFER, frame.fbo);
-    glad.glViewport(0, 0, @intCast(frame.viewport_width), @intCast(frame.viewport_height));
+    glad.glViewport(0, 0, @intCast(frame.viewport_size.width), @intCast(frame.viewport_size.height));
     glad.glClearColor(fr, fg, fb, fa);
     glad.glClear(glad.GL_COLOR_BUFFER_BIT);
 
