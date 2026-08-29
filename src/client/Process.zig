@@ -63,6 +63,9 @@ pub fn spawn(
     var buf: [ptypes.ClientFullID.env_string_max_len]u8 = undefined;
     const string = full_id.to_env_string(&buf);
 
+    std.debug.assert(!process.environ.contains(constants.env_client_full_id));
+    std.debug.assert(!process.environ.contains(constants.env_expect_viewport_key));
+
     try process.environ.put(constants.env_client_full_id, string);
     try process.environ.put(constants.env_expect_viewport_key, constants.env_expect_viewport_true);
 

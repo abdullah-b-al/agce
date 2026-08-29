@@ -54,20 +54,22 @@ pub fn viewport_create(
     parent_surface: *cwl.Surface,
     viewport_id: ViewportID,
     window_id: WindowID,
-    rect: ?ptypes.Rect,
+    rect: ptypes.Rect,
     render_size: ptypes.Size,
     create_sync_timeline: bool,
     vsync: bool,
+    parent: ?ViewportKey,
 ) !void {
     try rs.viewports.ensureUnusedCapacity(wl.gpa, 1);
     var vp = try Viewport.init(
         wl,
         parent_surface,
-        viewport_id,
+        .{ .client_id = rs.client_id, .viewport_id = viewport_id },
         window_id,
         rect,
         render_size,
         vsync,
+        parent,
     );
 
     if (create_sync_timeline) {

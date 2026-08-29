@@ -144,7 +144,7 @@ pub fn client_registered(wl: *Wayland, id: ClientID, maybe_info: ?ptypes.ClientI
     }
 }
 
-pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
+pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
     const rs = wl.resources_get(id) catch {
         log.warn("Tried to disconnected an nonexistent client {}", .{id});
         return;
@@ -155,11 +155,48 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) error{Canceled}!void {
             win.running = false;
         }
     }
+    wl.windows_destroy();
+
+    for (rs.viewports.values()) |vp| {
+        wl.viewport_close(.{ .client_id = rs.client_id, .viewport_id = vp.id });
+    }
 
     rs.deinit(wl);
     _ = wl.resources.orderedRemove(id);
+}
 
-    try wl.windows_destroy();
+pub fn viewport_close(wl: *Wayland, to_close: ViewportKey) void {
+    const rs = wl.resources_get(to_close.client_id) catch unreachable;
+    const vp = rs.viewports.getPtr(to_close.viewport_id).?;
+
+    wl.viewport_closed(to_close);
+
+    wl.dispatch.server_put(@src(), .{
+        .viewport_closed = .{
+            .client_id = rs.client_id,
+            .payload = .{ .viewport_id = vp.id },
+        },
+    }) catch return;
+
+    log.debug("{f} of {f} closed", .{ vp.id, rs.client_id });
+    vp.deinit(wl.gpa);
+    _ = rs.viewports.orderedRemove(to_close.viewport_id);
+}
+
+fn viewport_closed(wl: *Wayland, closed: ViewportKey) void {
+    for (wl.resources.values()) |*rs| {
+        if (rs.client_id == closed.client_id)
+            continue;
+
+        var i = rs.viewports.count();
+        while (i > 0) {
+            i -= 1;
+            const vp = &rs.viewports.values()[i];
+            if (vp.parent_key) |parent| if (std.meta.eql(parent, closed)) {
+                wl.viewport_close(.{ .client_id = rs.client_id, .viewport_id = vp.id });
+            };
+        }
+    }
 }
 
 pub fn resources_get(wl: *Wayland, id: ClientID) error{ClientDoesNotExist}!*ClientResources {
@@ -264,18 +301,24 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
         .viewport_id = viewport_id,
     };
 
-    const win = wl.window_from_viewport_key(viewport_key) orelse {
-        log.err("Viewport does not exist {}", .{viewport_key});
+    const vp = wl.viewport_from_key(viewport_key) orelse {
+        log.err("Viewport does not exist {f} {f}", .{ viewport_key.client_id, viewport_key.viewport_id });
         return;
     };
+
+    const win = wl.window_from_viewport_key(viewport_key);
 
     const rs = try wl.resources_get(client_id);
 
-    const vp = rs.viewports.getPtr(viewport_id) orelse {
-        log.err("Viewport does not exist {}", .{viewport_key});
-        return;
-    };
     vp.render_size = viewport_size;
+    if (vp.parent_key == null) {
+        vp.clipping_rect = .{
+            .x = 0,
+            .y = 0,
+            .width = viewport_size.width,
+            .height = viewport_size.height,
+        };
+    }
 
     const buffer = rs.buffers.getPtr(buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(buffer_id)) {
@@ -291,26 +334,44 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
         try wl.frame_listener_set(vp.surface, viewport_key);
     }
 
-    errdefer comptime unreachable;
-
-    vp.set_source_min(win, buffer);
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
-    vp.surface.attach(buffer.wl_buffer(), 0, 0);
+    const size = wl.viewport_min_source_size_with_buffer(vp, win, buffer);
+    if (size.width <= 0 or size.height <= 0) {
+        // The viewport is outside the parent viewport. Do not render it
+        vp.surface.attach(null, 0, 0);
 
-    switch (args) {
-        .no_sync => {},
-        .sync => |a| {
-            const sync = a.payload;
-            if (vp.sync_surface) |sync_surface| {
-                switch (buffer.*) {
-                    .gpu => |gpu| {
-                        gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
-                        gpu.timeline_release.?.set(sync_surface, sync.release_point);
-                    },
-                    .cpu => {},
+        // Send the buffer_released message immeditly as to not block the client
+        // that's relying on it
+        try wl.dispatch.server_put(@src(), .{
+            .buffer_released = .{
+                .client_id = rs.client_id,
+                .payload = .{ .viewport_id = vp.id, .buffer_id = buffer_id },
+            },
+        });
+    } else {
+        vp.viewport.setSource(
+            .fromInt(0),
+            .fromInt(0),
+            .fromInt(@intCast(size.width)),
+            .fromInt(@intCast(size.height)),
+        );
+
+        vp.surface.attach(buffer.wl_buffer(), 0, 0);
+        switch (args) {
+            .no_sync => {},
+            .sync => |a| {
+                const sync = a.payload;
+                if (vp.sync_surface) |sync_surface| {
+                    switch (buffer.*) {
+                        .gpu => |gpu| {
+                            gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
+                            gpu.timeline_release.?.set(sync_surface, sync.release_point);
+                        },
+                        .cpu => {},
+                    }
                 }
-            }
-        },
+            },
+        }
     }
 
     vp.surface.commit();
@@ -392,59 +453,53 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
     const rs = try wl.resources_get(key.client_id);
     const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    const rect = &vp.clipping_rect.?;
-    const set_position = requsted_rect.x != rect.x or requsted_rect.y != rect.y;
-    const set_size = requsted_rect.width != rect.width or requsted_rect.height != rect.height;
+    const set_position = requsted_rect.x != vp.clipping_rect.x or requsted_rect.y != vp.clipping_rect.y;
 
-    // TODO: Bound the rect to the parent's
-    rect.* = requsted_rect;
+    vp.clipping_rect = requsted_rect;
 
     if (set_position) {
         vp.subsurface.setPosition(
-            @intCast(rect.x),
-            @intCast(rect.y),
+            @intCast(vp.clipping_rect.x),
+            @intCast(vp.clipping_rect.y),
         );
     }
 
-    if (set_size) {
+    const win = wl.window_from_viewport_key(key);
+    const size = wl.viewport_min_source_size(vp, win);
+    if (size.width <= 0 or size.height <= 0) {
+        vp.surface.attach(null, 0, 0);
+    } else {
         vp.viewport.setSource(
             .fromInt(0),
             .fromInt(0),
-            .fromInt(@intCast(@min(rect.width, vp.render_size.width))),
-            .fromInt(@intCast(@min(rect.height, vp.render_size.height))),
+            .fromInt(@intCast(size.width)),
+            .fromInt(@intCast(size.height)),
         );
-
-        vp.surface.commit();
-
-        try wl.dispatch.server_put(@src(), .{
-            .viewport_resize = .{
-                .client_id = key.client_id,
-                .payload = .{
-                    .viewport_id = key.viewport_id,
-                    .size = rect.size(),
-                },
-            },
-        });
     }
+
+    vp.surface.commit();
+
+    try wl.dispatch.server_put(@src(), .{
+        .viewport_resize = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+                .size = vp.clipping_rect.size(),
+            },
+        },
+    });
 
     _ = wl.display.flush();
 }
 
-pub fn windows_destroy(wl: *Wayland) !void {
+pub fn windows_destroy(wl: *Wayland) void {
     var removed = false;
     var i: usize = wl.windows.count();
     while (i > 0) {
         i -= 1;
         const win = wl.windows.values()[i];
         if (win.configured and !win.running) {
-            try wl.dispatch.server_put(@src(), .{
-                .viewport_closed = .{
-                    .client_id = win.viewport_key.client_id,
-                    .payload = .{
-                        .viewport_id = win.viewport_key.viewport_id,
-                    },
-                },
-            });
+            wl.viewport_close(win.viewport_key);
 
             const id = win.id;
             _ = wl.windows.orderedRemove(id);
@@ -494,6 +549,7 @@ fn viewport_create_with_sub_viewport(
         args.payload.size,
         args.payload.create_sync_timeline,
         args.payload.vsync,
+        .{ .client_id = embeder.client_id, .viewport_id = embeder_viewport.id },
     );
 
     embeder_viewport.sub_viewports.putAssumeCapacityNoClobber(
@@ -549,10 +605,11 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
         window.surface,
         args.payload.viewport_id,
         window.id,
-        null,
+        .{ .x = 0, .y = 0, .width = args.payload.size.width, .height = args.payload.size.height },
         args.payload.size,
         args.payload.create_sync_timeline,
         args.payload.vsync,
+        null,
     );
 
     wl.windows.putAssumeCapacityNoClobber(id, window);
@@ -591,8 +648,9 @@ pub fn window_resize_by_display_server(wl: *Wayland, args: Event.TypeOf(.window_
 
 pub fn display_dispatch(wl: *Wayland) void {
     if (wl.display.dispatch() != .SUCCESS) {
-        log.err("Dispatch failed {}", .{wl.display.getError()});
-        return;
+        std.process.fatal("Dispatch failed {}", .{wl.display.getError()});
+        // log.err("Dispatch failed {}", .{wl.display.getError()});
+        // return;
     }
 
     for (wl.windows.values()) |win| {
@@ -1100,22 +1158,22 @@ pub fn window_id_from_xdg_surface(wl: *const Wayland, xdg_surface: *xdg.Surface)
     unreachable;
 }
 
-pub fn window_from_viewport_key(wl: *const Wayland, key: ViewportKey) ?*Window {
+pub fn window_from_viewport_key(wl: *Wayland, key: ViewportKey) *Window {
+    var root = key;
+
+    while (true) {
+        const rs = wl.resources_get(root.client_id) catch unreachable;
+        const vp = rs.viewports.get(root.viewport_id).?;
+        root = vp.parent_key orelse break;
+    }
+
     for (wl.windows.values()) |win| {
-        if (std.meta.eql(win.viewport_key, key)) {
+        if (std.meta.eql(win.viewport_key, root)) {
             return win;
         }
     }
 
-    // Assume key is for a sub-viewport
-    for (wl.windows.values()) |win| {
-        const rs = wl.resources.get(win.viewport_key.client_id) orelse continue;
-        if (rs.contains_viewport_as_subviewport(key)) {
-            return win;
-        }
-    }
-
-    return null;
+    unreachable;
 }
 
 pub fn window_id_from_window_surface(wl: *const Wayland, surface: *cwl.Surface) ?WindowID {
@@ -1132,6 +1190,13 @@ pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?Vie
     const key, _ = wl.viewport_from_surface(surface) orelse return null;
 
     return key;
+}
+
+pub fn viewport_from_key(wl: *Wayland, key: ViewportKey) ?*Viewport {
+    const rs = wl.resources_get(key.client_id) catch return null;
+    const vp = rs.viewports.getPtr(key.viewport_id) orelse return null;
+
+    return vp;
 }
 
 pub fn viewport_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?struct { ViewportKey, *const Viewport } {
@@ -1155,6 +1220,68 @@ pub fn frame_listener_set(wl: *Wayland, surface: *cwl.Surface, key: ViewportKey)
 
     cb.setListener(*Wayland, frame_listener, wl);
     wl.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
+}
+
+fn viewport_min_source_size(wl: *Wayland, vp: *const Viewport, window: *Window) ptypes.Size {
+    const parent_rect = if (vp.parent_key) |key| blk: {
+        const rs = wl.resources_get(key.client_id) catch unreachable;
+        const p = rs.viewports.getPtr(key.viewport_id).?;
+        break :blk wl.viewport_min_source_size(p, window);
+    } else null;
+
+    var width = @min(
+        vp.render_size.width,
+        vp.clipping_rect.width,
+        window.buffer.width,
+    );
+
+    var height = @min(
+        vp.render_size.height,
+        vp.clipping_rect.height,
+        window.buffer.height,
+    );
+    const rect_bottom = vp.clipping_rect.y + vp.clipping_rect.height;
+    const rect_right = vp.clipping_rect.x + vp.clipping_rect.width;
+
+    if (parent_rect) |p| {
+        if (rect_right >= p.width) {
+            width -= @intCast(rect_right - p.width);
+        }
+
+        if (rect_bottom >= p.height) {
+            height -= @intCast(rect_bottom - p.height);
+        }
+    }
+
+    return .{ .width = @max(0, width), .height = @max(0, height) };
+}
+
+fn viewport_min_source_size_with_buffer(wl: *Wayland, vp: *const Viewport, window: *Window, buffer: *Buffer) ptypes.Size {
+    const size = wl.viewport_min_source_size(vp, window);
+    return .{
+        .width = @max(
+            0,
+            @min(size.width, buffer.width()),
+        ),
+        .height = @max(
+            0,
+            @min(size.height, buffer.height()),
+        ),
+    };
+}
+
+fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
+    const parent_key = vp.parent_key orelse return vp.clipping_rect;
+    const rs = wl.resources_get(parent_key.client_id) catch unreachable;
+    const p = rs.viewports.getPtr(parent_key.viewport_id).?;
+
+    const gp = wl.find_real_clip_rect(p);
+    return .{
+        .x = vp.clipping_rect.x + p.clipping_rect.x + gp.x,
+        .y = vp.clipping_rect.y + p.clipping_rect.y + gp.y,
+        .width = @min(vp.clipping_rect.width, p.clipping_rect.width, gp.width),
+        .height = @min(vp.clipping_rect.height, p.clipping_rect.height, gp.height),
+    };
 }
 
 fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, wl: *Wayland) void {
@@ -1274,6 +1401,7 @@ const c_linux = @import("c_linux");
 const Dispatch = @import("../Dispatch.zig");
 const BufferKey = WindowSystem.BufferKey;
 const ViewportKey = WindowSystem.ViewportKey;
+const SubViewportKey = WindowSystem.SubViewportKey;
 const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;
@@ -1282,3 +1410,4 @@ const Event = Dispatch.WindowSystemEvent;
 const input = @import("input.zig");
 const SubViewport = @import("SubViewport.zig");
 const Viewport = @import("Viewport.zig");
+const Buffer = @import("ClientResources.zig").Buffer;

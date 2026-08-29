@@ -36,6 +36,8 @@ pub fn init(
     var map = try environ_map.clone(gpa);
     errdefer map.deinit();
 
+    const env: Env = .extract(&map);
+
     const info: ptypes.ClientInfo = if (maybe_info) |info| info else .empty;
 
     const clone: ptypes.ClientInfoClone = try .clone(gpa, info);
@@ -65,7 +67,7 @@ pub fn init(
         .gbm = null,
         .gl_context = null,
 
-        .env = .from_environ(&map),
+        .env = env,
     };
 }
 
@@ -624,7 +626,12 @@ const Env = struct {
     expect_viewport: bool,
     client_full_id: ?ptypes.ClientFullID,
 
-    pub fn from_environ(map: *const std.process.Environ.Map) Env {
+    pub fn extract(map: *std.process.Environ.Map) Env {
+        defer {
+            _ = map.swapRemove(constants.env_client_full_id);
+            _ = map.swapRemove(constants.env_expect_viewport_key);
+        }
+
         return .{
             .expect_viewport = if (map.get(constants.env_expect_viewport_key)) |value|
                 std.mem.eql(u8, value, constants.env_expect_viewport_true)

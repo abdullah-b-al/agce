@@ -2,10 +2,10 @@ const Viewport = @This();
 
 id: ViewportID,
 window_id: WindowID,
-/// The rect representing the SubViewport position and size
-clipping_rect: ?ptypes.Rect,
+clipping_rect: ptypes.Rect,
 render_size: ptypes.Size,
 vsync: bool,
+parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
 surface: *cwl.Surface,
@@ -17,42 +17,39 @@ sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 pub fn init(
     wl: *Wayland,
     parent_surface: *cwl.Surface,
-    id: ViewportID,
+    key: ViewportKey,
     window_id: WindowID,
-    clipping_rect: ?ptypes.Rect,
+    clipping_rect: ptypes.Rect,
     render_size: ptypes.Size,
     vsync: bool,
+    parent: ?ViewportKey,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
+
+    if (parent) |p| {
+        std.debug.assert(key.viewport_id.is_server_id());
+        std.debug.assert(!std.meta.eql(p, key));
+    }
 
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
     subsurface.setDesync();
     const viewport = try wl.viewporter.getViewport(surface);
 
-    if (clipping_rect) |rect| {
-        viewport.setSource(
-            .fromInt(0),
-            .fromInt(0),
-            .fromInt(@intCast(@min(render_size.width, rect.width))),
-            .fromInt(@intCast(@min(render_size.height, rect.height))),
-        );
+    viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(@min(render_size.width, clipping_rect.width))),
+        .fromInt(@intCast(@min(render_size.height, clipping_rect.height))),
+    );
 
-        subsurface.setPosition(
-            @intCast(rect.x),
-            @intCast(rect.y),
-        );
-    } else {
-        viewport.setSource(
-            .fromInt(0),
-            .fromInt(0),
-            .fromInt(@intCast(render_size.width)),
-            .fromInt(@intCast(render_size.height)),
-        );
-    }
+    subsurface.setPosition(
+        @intCast(clipping_rect.x),
+        @intCast(clipping_rect.y),
+    );
 
     return .{
-        .id = id,
+        .id = key.viewport_id,
         .window_id = window_id,
         .surface = surface,
         .pointer = .init,
@@ -60,6 +57,7 @@ pub fn init(
         .sync_surface = null,
         .viewport = viewport,
         .vsync = vsync,
+        .parent_key = parent,
 
         .clipping_rect = clipping_rect,
         .render_size = render_size,
@@ -78,29 +76,6 @@ pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
     vp.viewport.destroy();
     vp.subsurface.destroy();
     vp.surface.destroy();
-}
-
-pub fn set_source_min(vp: *Viewport, window: *Window, buffer: *Buffer) void {
-    const width = @min(
-        vp.render_size.width,
-        if (vp.clipping_rect) |r| r.width else std.math.maxInt(u32),
-        buffer.width(),
-        window.buffer.width,
-    );
-
-    const height = @min(
-        vp.render_size.height,
-        if (vp.clipping_rect) |r| r.height else std.math.maxInt(u32),
-        buffer.height(),
-        window.buffer.height,
-    );
-
-    vp.viewport.setSource(
-        .fromInt(0),
-        .fromInt(0),
-        .fromInt(@intCast(width)),
-        .fromInt(@intCast(height)),
-    );
 }
 
 pub const AcquireTimeline = struct {

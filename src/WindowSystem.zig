@@ -93,7 +93,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         },
         .client_disconnected => |id| {
             switch (ws.native) {
-                .wayland => |wl| try wl.client_disconnected(id),
+                .wayland => |wl| wl.client_disconnected(id),
                 .win32 => @panic("TODO"),
             }
         },
@@ -185,7 +185,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         },
         .windows_destroy => {
             switch (ws.native) {
-                .wayland => |wl| try wl.windows_destroy(),
+                .wayland => |wl| wl.windows_destroy(),
                 .win32 => @panic("TODO"),
             }
         },
