@@ -6,6 +6,7 @@ render_size: ptypes.Size,
 rect: ptypes.Rect,
 open: bool,
 status: CreateStatus,
+state: ptypes.ViewportDisplayState,
 
 pub fn init(
     id: SubViewportID,
@@ -19,6 +20,7 @@ pub fn init(
         .render_size = .{ .width = 0, .height = 0 },
         .status = .pending,
         .open = false,
+        .state = .shown,
     };
 }
 

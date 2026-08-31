@@ -96,6 +96,7 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
 
         .buffer_released => {
             switch (vp.renderer) {
+                .gl => {}, // relies on timelines
                 inline else => |*r| r.buffer_released(msg.buffer_id),
             }
         },
@@ -129,6 +130,75 @@ pub fn viewport_resize(vp: *Viewport, size: ptypes.Size) void {
     vp.size = .{ .width = width, .height = height };
 }
 
+pub fn buffer_present(vp: *Viewport) !void {
+    defer {
+        vp.current_buffer = null;
+    }
+
+    const buffer: *anyopaque, const message: client_to_server.MessagePayload =
+        blk: switch (vp.renderer) {
+            .cpu => |*cpu| {
+                const buffer = cpu.buffers_collection.available.getPtr(vp.current_buffer.?).?;
+                std.debug.assert(buffer.released);
+
+                break :blk .{
+                    buffer,
+                    .{
+                        .buffer_present = .{
+                            .viewport_id = vp.id,
+                            .buffer_id = buffer.id,
+                            .viewport_size = vp.size,
+                        },
+                    },
+                };
+            },
+            .gl => |*gl| {
+                const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
+                    @panic("Buffer prematurely destroyed");
+                std.debug.assert(buffer.released);
+                buffer.release.point.advance();
+
+                break :blk .{
+                    buffer,
+                    .{
+                        .buffer_present_with_sync = .{
+                            .viewport_id = vp.id,
+                            .buffer_id = buffer.id,
+                            .acquire_point = buffer.acquire.point,
+                            .release_point = buffer.release.point,
+                            .viewport_size = vp.size,
+                        },
+                    },
+                };
+            },
+        };
+
+    try client_to_server.message_send_json(
+        vp.client.io,
+        vp.client.gpa,
+        vp.client.connection,
+        message,
+    );
+
+    switch (vp.renderer) {
+        .cpu => |_, tag| {
+            const b: *Renderer.RendererBuffer(tag) = @ptrCast(@alignCast(buffer));
+            b.released = false;
+        },
+        .gl => |_, tag| {
+            const b: *Renderer.RendererBuffer(tag) = @ptrCast(@alignCast(buffer));
+            b.acquire.point.advance();
+            b.released = false;
+        },
+    }
+
+    if (vp.vsync) {
+        vp.can_render = false;
+    }
+
+    vp.frame_number += 1;
+}
+
 pub const Renderer = union(enum) {
     pub const Tag = std.meta.Tag(Renderer);
 
@@ -147,6 +217,7 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const client_to_server = @import("protocol").client_to_server;
+const server_to_client = @import("protocol").server_to_client;
 const ptypes = @import("protocol").types;
 const c_linux = @import("c_linux");
 const glad = @import("glad");
@@ -156,6 +227,7 @@ const Client = @import("Client.zig");
 const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
+const BufferPresented = server_to_client.MessagePayload.BufferPresented;
 const log = std.log.scoped(.Viewport);
 const RendererGL = @import("RendererGL.zig");
 const RendererCpu = @import("RendererCpu.zig");

@@ -53,32 +53,6 @@ pub fn frame_end(r: *RendererGL, buffer: *Buffer) void {
     std.debug.assert(transfer_result == 0);
 }
 
-pub fn buffer_present(_: *RendererGL, vp: *Viewport, buffer: *Buffer) !void {
-    std.debug.assert(buffer.released);
-    buffer.released = false;
-    vp.frame_number += 1;
-
-    try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
-        .{
-            .buffer_present_with_sync = .{
-                .viewport_id = vp.id,
-                .buffer_id = buffer.id,
-                .acquire_point = buffer.acquire.point,
-                .release_point = buffer.release.point,
-                .viewport_size = vp.size,
-            },
-        },
-    );
-
-    buffer.acquire.point.advance();
-    if (vp.vsync) {
-        vp.can_render = false;
-    }
-}
-
 pub fn buffer_size(r: *const RendererGL) [2]u32 {
     const buffer = r.buffers_collection.available.values()[0];
     return .{ buffer.width, buffer.height };
@@ -124,7 +98,6 @@ pub fn get_buffer(r: *RendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
     std.debug.assert(signaled == 0);
     const buffer = &r.buffers_collection.available.values()[index];
 
-    buffer.release.point.advance();
     buffer.released = true;
 
     return buffer;
@@ -151,20 +124,6 @@ pub fn resize(
             &r.buffers_collection,
             .{ vp.client, new_width, new_height, vp.format },
         );
-    }
-}
-
-pub fn buffer_released(r: *RendererGL, id: BufferID) void {
-    for (r.buffers_collection.old.values()) |*old| {
-        if (old.id == id) {
-            old.released = true;
-        }
-    }
-
-    for (r.buffers_collection.available.values()) |*buffer| {
-        if (buffer.id == id) {
-            buffer.released = true;
-        }
     }
 }
 

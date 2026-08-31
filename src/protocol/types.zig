@@ -234,9 +234,9 @@ pub const WindowCreate = struct {
     size: Size,
 };
 
-pub const ViewportResize = struct {
-    viewport_id: ViewportID,
-    size: Size,
+pub const ViewportDisplayState = enum {
+    shown,
+    hidden,
 };
 
 pub const ScrollAxis = enum(u8) {

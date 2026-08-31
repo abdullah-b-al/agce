@@ -407,6 +407,7 @@ pub fn window_system_event_from_message(
         .cursor_shape_set,
         .sub_viewport_embed,
         .sub_viewport_rect_set,
+        .sub_viewport_display_state_set,
         => |msg, tag| {
             return @unionInit(
                 Dispatch.WindowSystemEvent,

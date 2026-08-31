@@ -10,7 +10,7 @@ pub fn deinit(r: *RendererCpu, gpa: std.mem.Allocator) void {
     r.buffers_collection.deinit(gpa);
 }
 
-pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ptypes.ViewportResize) !void {
+pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ViewportResize) !void {
     std.debug.assert(msg.viewport_id == vp.id);
     std.debug.assert(r.buffers_collection.available.count() > 0);
     const new_width, const new_height = utils.new_dimensions(msg.size.width, msg.size.height);
@@ -43,24 +43,6 @@ pub fn get_buffer(r: *RendererCpu) ?*Buffer {
 
 pub fn has_buffer(r: *RendererCpu, id: BufferID) bool {
     return r.buffers_collection.has(id);
-}
-
-pub fn buffer_present(_: *RendererCpu, vp: *Viewport, buffer: *Buffer) !void {
-    std.debug.assert(buffer.released);
-    buffer.released = false;
-
-    try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
-        .{
-            .buffer_present = .{
-                .viewport_id = vp.id,
-                .buffer_id = buffer.id,
-                .viewport_size = vp.size,
-            },
-        },
-    );
 }
 
 pub fn frame_render(_: *RendererCpu) void {}
@@ -129,6 +111,8 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const client_to_server = @import("protocol").client_to_server;
+const server_to_client = @import("protocol").server_to_client;
+const ViewportResize = server_to_client.MessagePayload.ViewportResize;
 const ptypes = @import("protocol").types;
 const c_linux = @import("c_linux");
 const glad = @import("glad");

@@ -183,6 +183,12 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
+        .sub_viewport_display_state_set => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.sub_viewport_display_state_set(args),
+                .win32 => @panic("TODO"),
+            }
+        },
         .windows_destroy => {
             switch (ws.native) {
                 .wayland => |wl| wl.windows_destroy(),

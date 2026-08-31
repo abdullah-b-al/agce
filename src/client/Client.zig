@@ -259,6 +259,10 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
             }
             vp.render_size = e.render_size;
         },
+        .sub_viewport_display_state => |e| {
+            const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
+            svp.state = e.state;
+        },
 
         .viewport_resize => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
@@ -580,22 +584,24 @@ pub const Gbm = struct {
 };
 
 pub const Event = union(enum) {
-    viewport_resize: ptypes.ViewportResize,
-    viewport_closed: server_to_client.MessagePayload.ViewportClosed,
-    keyboard_char: server_to_client.MessagePayload.KeyboardChar,
-    keyboard_key: server_to_client.MessagePayload.KeyboardKey,
-    mouse_enter: server_to_client.MessagePayload.MouseEnter,
-    mouse_leave: server_to_client.MessagePayload.MouseLeave,
-    mouse_motion: server_to_client.MessagePayload.MouseMotion,
-    mouse_button: server_to_client.MessagePayload.MouseButton,
-    mouse_scroll: server_to_client.MessagePayload.MouseScroll,
+    const Payload = server_to_client.MessagePayload;
+
+    viewport_resize: Payload.ViewportResize,
+    viewport_closed: Payload.ViewportClosed,
+    keyboard_char: Payload.KeyboardChar,
+    keyboard_key: Payload.KeyboardKey,
+    mouse_enter: Payload.MouseEnter,
+    mouse_leave: Payload.MouseLeave,
+    mouse_motion: Payload.MouseMotion,
+    mouse_button: Payload.MouseButton,
+    mouse_scroll: Payload.MouseScroll,
 };
 
 pub const Message = union(enum) {
     pub const Tag = std.meta.Tag(Message);
     const Payload = server_to_client.MessagePayload;
 
-    viewport_resize: ptypes.ViewportResize,
+    viewport_resize: Payload.ViewportResize,
     viewport_closed: Payload.ViewportClosed,
     viewport_created: Payload.ViewportCreated,
     buffer_released: Payload.BufferReleased,

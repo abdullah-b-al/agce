@@ -5,12 +5,13 @@ window_id: WindowID,
 clipping_rect: ptypes.Rect,
 render_size: ptypes.Size,
 vsync: bool,
+state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
 surface: *cwl.Surface,
 pointer: Pointer,
-subsurface: *cwl.Subsurface,
+subsurface: Subsurface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 
@@ -53,11 +54,12 @@ pub fn init(
         .window_id = window_id,
         .surface = surface,
         .pointer = .init,
-        .subsurface = subsurface,
+        .subsurface = .init(subsurface),
         .sync_surface = null,
         .viewport = viewport,
         .vsync = vsync,
         .parent_key = parent,
+        .state = .shown,
 
         .clipping_rect = clipping_rect,
         .render_size = render_size,
@@ -74,7 +76,7 @@ pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
         sync.destroy();
     }
     vp.viewport.destroy();
-    vp.subsurface.destroy();
+    vp.subsurface.subsurface.destroy();
     vp.surface.destroy();
 }
 
@@ -149,6 +151,38 @@ pub const Pointer = struct {
             shaper.setShape(serial, shape);
         }
     }
+};
+
+pub const Subsurface = struct {
+    subsurface: *cwl.Subsurface,
+    placement: Placment,
+    x: i32,
+    y: i32,
+
+    pub fn init(subsurface: *cwl.Subsurface) Subsurface {
+        return .{
+            .subsurface = subsurface,
+            .placement = .above,
+            .x = 0,
+            .y = 0,
+        };
+    }
+
+    pub fn set_position(s: *Subsurface, x: u32, y: u32) void {
+        s.x = @intCast(x);
+        s.y = @intCast(y);
+        s.subsurface.setPosition(s.x, s.y);
+    }
+
+    pub fn place(s: *Subsurface, p: Placment, surface: *cwl.Surface) void {
+        s.placement = p;
+        switch (p) {
+            .above => s.subsurface.placeAbove(surface),
+            .below => s.subsurface.placeBelow(surface),
+        }
+    }
+
+    const Placment = enum { below, above };
 };
 
 const std = @import("std");

@@ -21,6 +21,7 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_create: ViewportCreate,
     sub_viewport_embed: SubViewportEmbed,
     sub_viewport_rect_set: SubViewportRectSet,
+    sub_viewport_display_state_set: SubViewportDisplayStateSet,
 
     cursor_shape_set: CursorShape,
 
@@ -30,6 +31,11 @@ pub const MessagePayload = union(enum(u32)) {
     };
 
     pub const Void = struct { void: u8 = 0 };
+
+    pub const SubViewportDisplayStateSet = struct {
+        sub_viewport_id: types.SubViewportID,
+        state: types.ViewportDisplayState,
+    };
 
     pub const ViewportCreate = struct {
         viewport_id: types.ViewportID,
@@ -144,6 +150,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
         .buffer_destroy,
         .viewport_create,
         .generate_client_full_id,
+        .sub_viewport_display_state_set,
         => {
             var buf: [4096]u8 = undefined;
             var writer = stream.writer(io, &buf);
@@ -242,6 +249,7 @@ fn read_and_parse_data_json_linux(
         .buffer_destroy,
         .viewport_create,
         .generate_client_full_id,
+        .sub_viewport_display_state_set,
         => {
             return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
         },
@@ -269,6 +277,7 @@ fn read_and_parse_data_json(
         .viewport_create,
         .register,
         .generate_client_full_id,
+        .sub_viewport_display_state_set,
         => |tag| {
             const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(

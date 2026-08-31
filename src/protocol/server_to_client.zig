@@ -12,10 +12,11 @@ pub const MessagePayload = union(enum(u32)) {
 
     viewport_create: ViewportCreate,
     viewport_created: ViewportCreated,
-    viewport_resize: types.ViewportResize,
+    viewport_resize: ViewportResize,
     viewport_closed: ViewportClosed,
 
     sub_viewport_embeded: SubviewportCreated,
+    sub_viewport_display_state: SubViewportDisplayState,
 
     client_registered: ClientRegistered,
 
@@ -45,6 +46,11 @@ pub const MessagePayload = union(enum(u32)) {
     }
 
     pub const Void = struct { void: u8 = 0 };
+
+    pub const ViewportResize = struct {
+        viewport_id: types.ViewportID,
+        size: types.Size,
+    };
 
     pub const GeneratedClientFullID = struct {
         full_id: types.ClientFullID,
@@ -83,6 +89,15 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const ViewportClosed = struct {
         viewport_id: types.ViewportID,
+    };
+
+    pub const ViewportShown = struct {
+        viewport_id: types.ViewportID,
+    };
+
+    pub const SubViewportDisplayState = struct {
+        sub_viewport_id: types.SubViewportID,
+        state: types.ViewportDisplayState,
     };
 
     pub const BufferDestroyed = struct {

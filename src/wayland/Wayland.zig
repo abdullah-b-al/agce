@@ -335,48 +335,59 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
     }
 
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
-    const size = wl.viewport_min_source_size_with_buffer(vp, win, buffer);
-    if (size.width <= 0 or size.height <= 0) {
-        // The viewport is outside the parent viewport. Do not render it
-        vp.surface.attach(null, 0, 0);
-
-        // Send the buffer_released message immeditly as to not block the client
-        // that's relying on it
-        try wl.dispatch.server_put(@src(), .{
-            .buffer_released = .{
-                .client_id = rs.client_id,
-                .payload = .{ .viewport_id = vp.id, .buffer_id = buffer_id },
-            },
-        });
-    } else {
-        vp.viewport.setSource(
-            .fromInt(0),
-            .fromInt(0),
-            .fromInt(@intCast(size.width)),
-            .fromInt(@intCast(size.height)),
-        );
-
-        vp.surface.attach(buffer.wl_buffer(), 0, 0);
-        switch (args) {
-            .no_sync => {},
-            .sync => |a| {
-                const sync = a.payload;
-                if (vp.sync_surface) |sync_surface| {
-                    switch (buffer.*) {
-                        .gpu => |gpu| {
-                            gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
-                            gpu.timeline_release.?.set(sync_surface, sync.release_point);
-                        },
-                        .cpu => {},
-                    }
+    vp.surface.attach(buffer.wl_buffer(), 0, 0);
+    switch (args) {
+        .no_sync => {},
+        .sync => |a| {
+            const sync = a.payload;
+            if (vp.sync_surface) |sync_surface| {
+                switch (buffer.*) {
+                    .gpu => |gpu| {
+                        gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
+                        gpu.timeline_release.?.set(sync_surface, sync.release_point);
+                    },
+                    .cpu => {},
                 }
-            },
-        }
+            }
+        },
     }
 
-    vp.surface.commit();
+    const size = wl.viewport_min_source_size_with_buffer(vp, win, buffer);
+    wl.viewport_commit(vp, size);
 
     _ = wl.display.flush();
+}
+
+pub fn viewport_commit(wl: *Wayland, vp: *Viewport, size: ptypes.Size) void {
+    vp.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(@max(1, size.width))),
+        .fromInt(@intCast(@max(1, size.height))),
+    );
+
+    if (vp.parent_key) |parent_key| {
+        const parent = wl.viewport_from_key(parent_key).?;
+        if (size.width <= 0 or size.height <= 0 or vp.state == .hidden) {
+            if (vp.subsurface.placement != .below) {
+                vp.subsurface.set_position(0, 0);
+                vp.subsurface.place(.below, parent.surface);
+            }
+        } else {
+            if (vp.subsurface.x != vp.clipping_rect.x or vp.subsurface.y != vp.clipping_rect.y) {
+                vp.subsurface.set_position(vp.clipping_rect.x, vp.clipping_rect.y);
+            }
+
+            if (vp.subsurface.placement != .above) {
+                vp.subsurface.place(.above, parent.surface);
+            }
+        }
+
+        vp.surface.commit();
+        parent.surface.commit();
+    } else {
+        vp.surface.commit();
+    }
 }
 
 pub fn buffer_destroy(wl: *Wayland, args: Event.TypeOf(.buffer_destroy)) !void {
@@ -458,26 +469,15 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
     vp.clipping_rect = requsted_rect;
 
     if (set_position) {
-        vp.subsurface.setPosition(
-            @intCast(vp.clipping_rect.x),
-            @intCast(vp.clipping_rect.y),
+        vp.subsurface.set_position(
+            vp.clipping_rect.x,
+            vp.clipping_rect.y,
         );
     }
 
     const win = wl.window_from_viewport_key(key);
     const size = wl.viewport_min_source_size(vp, win);
-    if (size.width <= 0 or size.height <= 0) {
-        vp.surface.attach(null, 0, 0);
-    } else {
-        vp.viewport.setSource(
-            .fromInt(0),
-            .fromInt(0),
-            .fromInt(@intCast(size.width)),
-            .fromInt(@intCast(size.height)),
-        );
-    }
-
-    vp.surface.commit();
+    wl.viewport_commit(vp, size);
 
     try wl.dispatch.server_put(@src(), .{
         .viewport_resize = .{
@@ -488,6 +488,43 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
             },
         },
     });
+
+    _ = wl.display.flush();
+}
+
+pub fn sub_viewport_display_state_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_display_state_set)) !void {
+    const key = blk: {
+        const rs = try wl.resources_get(args.client_id);
+        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
+            return error.SubViewportDoesNotExist;
+    };
+
+    std.debug.assert(key.viewport_id.is_server_id());
+
+    const rs = try wl.resources_get(key.client_id);
+    const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
+    const win = wl.windows.get(vp.window_id).?;
+
+    const old = vp.state;
+    vp.state = args.payload.state;
+
+    if (vp.state != old) {
+        const size = wl.viewport_min_source_size(vp, win);
+        wl.viewport_commit(vp, size);
+    }
+
+    try wl.dispatch.server_put(
+        @src(),
+        .{
+            .sub_viewport_display_state = .{
+                .client_id = rs.client_id,
+                .payload = .{
+                    .sub_viewport_id = args.payload.sub_viewport_id,
+                    .state = args.payload.state,
+                },
+            },
+        },
+    );
 
     _ = wl.display.flush();
 }

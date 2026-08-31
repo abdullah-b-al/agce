@@ -10,6 +10,7 @@ pub const ClientInfo = ptypes.ClientInfo;
 pub const ClientID = ptypes.ClientID;
 pub const Rect = ptypes.Rect;
 pub const Size = ptypes.Size;
+pub const ViewportDisplayState = ptypes.ViewportDisplayState;
 
 pub const Key = @import("protocol").input.Key;
 pub const KeyState = @import("protocol").input.KeyState;
@@ -291,16 +292,7 @@ pub const ViewportHandle = opaque {
     }
 
     pub fn gl_frame_present(handle: *ViewportHandle) !void {
-        const vp = handle.cast();
-
-        std.debug.assert(vp.renderer == .gl);
-        const gl = &vp.renderer.gl;
-        defer vp.current_buffer = null;
-
-        const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
-            @panic("Buffer prematurely destroyed");
-
-        try gl.buffer_present(vp, buffer);
+        try handle.cast().buffer_present();
     }
 
     pub fn cpu_frame_begin(handle: *ViewportHandle) !CpuFrameBegin {
@@ -337,13 +329,7 @@ pub const ViewportHandle = opaque {
     pub fn cpu_frame_end(_: *ViewportHandle) void {}
 
     pub fn cpu_frame_present(handle: *ViewportHandle) !void {
-        const vp = handle.cast();
-        std.debug.assert(vp.renderer == .cpu);
-        const cpu = &vp.renderer.cpu;
-        defer vp.current_buffer = null;
-
-        const buffer = cpu.buffers_collection.available.getPtr(vp.current_buffer.?).?;
-        try cpu.buffer_present(vp, buffer);
+        try handle.cast().buffer_present();
     }
 
     pub const CpuFrameBegin = struct {
@@ -395,6 +381,31 @@ pub const SubViewportHandle = opaque {
         );
 
         svp.rect = rect;
+    }
+
+    pub fn display_state_get(handle: *SubViewportHandle) ptypes.ViewportDisplayState {
+        return handle.cast().state;
+    }
+
+    pub fn display_state_set(handle: *SubViewportHandle, state: ptypes.ViewportDisplayState) !void {
+        const svp = handle.cast();
+
+        if (svp.status != .created) return;
+        if (svp.state == state) return;
+
+        try client_to_server.message_send_json(
+            svp.client.io,
+            svp.client.gpa,
+            svp.client.connection,
+            .{
+                .sub_viewport_display_state_set = .{
+                    .sub_viewport_id = svp.id,
+                    .state = state,
+                },
+            },
+        );
+
+        svp.state = state;
     }
 };
 
