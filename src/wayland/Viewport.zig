@@ -69,7 +69,8 @@ pub fn init(
 }
 
 pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
-    // TODO: Deinit the viewport of the sub-viewports
+    // sub-viewports should be closed before calling deinit
+    std.debug.assert(vp.sub_viewports.count() == 0);
     vp.sub_viewports.deinit(gpa);
 
     if (vp.sync_surface) |sync| {
@@ -78,6 +79,16 @@ pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
     vp.viewport.destroy();
     vp.subsurface.subsurface.destroy();
     vp.surface.destroy();
+}
+
+pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubViewportID {
+    for (vp.sub_viewports.keys(), vp.sub_viewports.values()) |id, k| {
+        if (std.meta.eql(key, k)) {
+            return id;
+        }
+    }
+
+    return null;
 }
 
 pub const AcquireTimeline = struct {

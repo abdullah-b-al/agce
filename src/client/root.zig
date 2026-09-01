@@ -351,8 +351,8 @@ pub const SubViewportHandle = opaque {
         return @ptrCast(@alignCast(handle));
     }
 
-    pub fn status(handle: *SubViewportHandle) Client.CreateStatus {
-        return handle.cast().status;
+    pub fn state(handle: *SubViewportHandle) SubViewport.State {
+        return handle.cast().state;
     }
 
     pub fn render_size(handle: *SubViewportHandle) ptypes.Size {
@@ -366,7 +366,10 @@ pub const SubViewportHandle = opaque {
     pub fn rect_set(handle: *SubViewportHandle, rect: Rect) !void {
         const svp = handle.cast();
 
-        if (svp.status != .created) return;
+        switch (svp.state) {
+            .shown, .hidden => {},
+            .pending, .failed, .closed => return,
+        }
 
         try client_to_server.message_send_json(
             svp.client.io,
@@ -387,11 +390,14 @@ pub const SubViewportHandle = opaque {
         return handle.cast().state;
     }
 
-    pub fn display_state_set(handle: *SubViewportHandle, state: ptypes.ViewportDisplayState) !void {
+    pub fn display_state_set(handle: *SubViewportHandle, s: ptypes.ViewportDisplayState) !void {
         const svp = handle.cast();
 
-        if (svp.status != .created) return;
-        if (svp.state == state) return;
+        switch (svp.state) {
+            .shown => if (s == .shown) return,
+            .hidden => if (s == .hidden) return,
+            .pending, .failed, .closed => return,
+        }
 
         try client_to_server.message_send_json(
             svp.client.io,
@@ -400,12 +406,12 @@ pub const SubViewportHandle = opaque {
             .{
                 .sub_viewport_display_state_set = .{
                     .sub_viewport_id = svp.id,
-                    .state = state,
+                    .state = s,
                 },
             },
         );
 
-        svp.state = state;
+        svp.state = .from_display_state(s);
     }
 };
 

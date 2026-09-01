@@ -165,11 +165,11 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
     _ = wl.resources.orderedRemove(id);
 }
 
-pub fn viewport_close(wl: *Wayland, to_close: ViewportKey) void {
-    const rs = wl.resources_get(to_close.client_id) catch unreachable;
-    const vp = rs.viewports.getPtr(to_close.viewport_id).?;
+pub fn viewport_close(wl: *Wayland, key: ViewportKey) void {
+    const rs = wl.resources_get(key.client_id) catch unreachable;
+    const vp = rs.viewports.getPtr(key.viewport_id).?;
 
-    wl.viewport_closed(to_close);
+    wl.sub_viewports_close(key, vp);
 
     wl.dispatch.server_put(@src(), .{
         .viewport_closed = .{
@@ -178,24 +178,56 @@ pub fn viewport_close(wl: *Wayland, to_close: ViewportKey) void {
         },
     }) catch return;
 
+    if (vp.parent_key) |parent| {
+        const p = wl.viewport_from_key(parent).?;
+        const svp_id = p.sub_viewport_id_from_key(key).?;
+        _ = p.sub_viewports.orderedRemove(svp_id);
+        wl.dispatch.server_put(@src(), .{
+            .sub_viewport_closed = .{
+                .client_id = parent.client_id,
+                .payload = .{ .sub_viewport_id = svp_id },
+            },
+        }) catch {};
+    }
+
     log.debug("{f} of {f} closed", .{ vp.id, rs.client_id });
     vp.deinit(wl.gpa);
-    _ = rs.viewports.orderedRemove(to_close.viewport_id);
+    _ = rs.viewports.orderedRemove(key.viewport_id);
 }
 
-fn viewport_closed(wl: *Wayland, closed: ViewportKey) void {
-    for (wl.resources.values()) |*rs| {
-        if (rs.client_id == closed.client_id)
-            continue;
+fn sub_viewports_close(wl: *Wayland, parent_key: ViewportKey, parent: *Viewport) void {
+    for (parent.sub_viewports.keys(), parent.sub_viewports.values()) |svp_id, key| {
+        wl.dispatch.server_put(@src(), .{
+            .sub_viewport_closed = .{
+                .client_id = parent_key.client_id,
+                .payload = .{ .sub_viewport_id = svp_id },
+            },
+        }) catch {};
 
-        var i = rs.viewports.count();
-        while (i > 0) {
-            i -= 1;
-            const vp = &rs.viewports.values()[i];
-            if (vp.parent_key) |parent| if (std.meta.eql(parent, closed)) {
-                wl.viewport_close(.{ .client_id = rs.client_id, .viewport_id = vp.id });
-            };
-        }
+        wl.viewport_close(key);
+    }
+
+    while (parent.sub_viewports.pop()) |_| {}
+}
+
+const SubViewportAndParent = struct {
+    parent_key: ViewportKey,
+    parent: *Viewport,
+    sub_viewport: *Viewport,
+    sub_viewport_id: ptypes.SubViewportID,
+};
+fn collect_sub_viewports_sub_tree(wl: *Wayland, list: *std.ArrayList(SubViewportAndParent), parent_key: ViewportKey) !void {
+    const parent = wl.viewport_from_key(parent_key).?;
+
+    for (parent.sub_viewports.keys(), parent.sub_viewports.values()) |svp_id, k| {
+        const svp = wl.viewport_from_key(k).?;
+        try list.append(wl.gpa, .{
+            .parent_key = parent_key,
+            .parent = parent,
+            .sub_viewport = svp,
+            .sub_viewport_id = svp_id,
+        });
+        try wl.collect_sub_viewports_sub_tree(list, k);
     }
 }
 

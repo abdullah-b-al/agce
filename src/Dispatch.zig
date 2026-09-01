@@ -204,6 +204,7 @@ pub const ServerEvent = union(enum) {
 
     sub_viewport_embeded: WithClientID(Payload.SubviewportCreated),
     sub_viewport_display_state: WithClientID(Payload.SubViewportDisplayState),
+    sub_viewport_closed: WithClientID(Payload.SubviewportClosed),
 
     frame_render: WithClientID(Payload.FrameRender),
 

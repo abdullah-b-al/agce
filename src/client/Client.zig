@@ -254,16 +254,26 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         .sub_viewport_embeded => |e| {
             const vp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
             switch (e.status) {
-                .success => vp.status = .created,
-                .failure => vp.status = .failed,
+                .success => vp.state = .shown,
+                .failure => vp.state = .failed,
             }
             vp.render_size = e.render_size;
         },
         .sub_viewport_display_state => |e| {
             const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
-            svp.state = e.state;
+            switch (svp.state) {
+                .closed, .pending, .failed => return,
+                .shown, .hidden => {},
+            }
+            svp.state = switch (e.state) {
+                .shown => .shown,
+                .hidden => .hidden,
+            };
         },
-
+        .sub_viewport_closed => |e| {
+            const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
+            svp.state = .closed;
+        },
         .viewport_resize => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             vp.event_push(.{ .viewport_resize = e });

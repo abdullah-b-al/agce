@@ -4,9 +4,7 @@ client: *Client,
 id: SubViewportID,
 render_size: ptypes.Size,
 rect: ptypes.Rect,
-open: bool,
-status: CreateStatus,
-state: ptypes.ViewportDisplayState,
+state: State,
 
 pub fn init(
     id: SubViewportID,
@@ -18,11 +16,24 @@ pub fn init(
         .id = id,
         .rect = rect,
         .render_size = .{ .width = 0, .height = 0 },
-        .status = .pending,
-        .open = false,
-        .state = .shown,
+        .state = .pending,
     };
 }
+
+pub const State = enum {
+    shown,
+    hidden,
+    pending,
+    failed,
+    closed,
+
+    pub fn from_display_state(s: ptypes.ViewportDisplayState) State {
+        return switch (s) {
+            .shown => .shown,
+            .hidden => .hidden,
+        };
+    }
+};
 
 const std = @import("std");
 const Io = std.Io;
