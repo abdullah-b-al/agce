@@ -93,9 +93,10 @@ pub fn client_connected(process: *Process) void {
 }
 
 pub const Status = union(enum) {
+    connected: ptypes.ClientID,
     pending_id,
     pending_connection,
-    connected: ptypes.ClientID,
+    disconnected,
     can_spawn,
 };
 

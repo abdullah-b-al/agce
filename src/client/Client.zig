@@ -239,6 +239,18 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
                 p.client_connected();
             }
         },
+        .client_disconnected => |e| {
+            if (client.other_clients.getPtr(e.client_id)) |info| {
+                info.deinit(client.gpa);
+                _ = client.other_clients.orderedRemove(e.client_id);
+            }
+
+            for (client.processes.items) |p| {
+                if (p.full_id) |c| if (c.id == e.client_id) {
+                    p.status = .disconnected;
+                };
+            }
+        },
         .viewport_create => |e| {
 
             // TODO: Maybe these shouldn't trust the server and should error instead of asserting

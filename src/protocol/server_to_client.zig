@@ -20,6 +20,7 @@ pub const MessagePayload = union(enum(u32)) {
     sub_viewport_closed: SubviewportClosed,
 
     client_registered: ClientRegistered,
+    client_disconnected: ClientDisconnected,
 
     buffer_released: BufferReleased,
     buffer_destroyed: BufferDestroyed,
@@ -70,6 +71,10 @@ pub const MessagePayload = union(enum(u32)) {
     pub const ClientRegistered = struct {
         client_id: types.ClientID,
         info: ?types.ClientInfoClone,
+    };
+
+    pub const ClientDisconnected = struct {
+        client_id: types.ClientID,
     };
 
     pub const ViewportCreate = struct {

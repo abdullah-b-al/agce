@@ -438,6 +438,19 @@ fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
         @src(),
         .{ .client_disconnected = client.id },
     ) catch {};
+
+    for (server.clients.known.values()) |c| {
+        if (c.id == id) continue;
+
+        server_to_client.message_send_json(
+            server.io,
+            server.gpa,
+            c.stream,
+            .{
+                .client_disconnected = .{ .client_id = id },
+            },
+        ) catch {};
+    }
 }
 
 fn close_unknown_client_with(server: *Server, index: usize, err: anyerror) void {
