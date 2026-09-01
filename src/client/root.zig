@@ -444,6 +444,21 @@ pub const ProcessHandle = opaque {
     pub fn spawn(handle: *ProcessHandle, options: Process.SpawnOptions) !void {
         return handle.cast().spawn(options);
     }
+
+    pub fn kill(handle: *ProcessHandle) void {
+        const process = handle.cast();
+        if (process.child) |*child| {
+            child.kill(process.io);
+        }
+        process.child = null;
+    }
+
+    pub fn wait(handle: *ProcessHandle) std.process.Child.WaitError!std.process.Child.Term {
+        const process = handle.cast();
+        std.debug.assert(process.child != null);
+        defer process.child = null;
+        return try process.child.?.wait(process.io);
+    }
 };
 
 const std = @import("std");
