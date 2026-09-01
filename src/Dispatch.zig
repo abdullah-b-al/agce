@@ -127,7 +127,7 @@ pub const WindowSystemEvent = union(enum) {
 
     pub const ClientRegistered = struct {
         client_id: ClientID,
-        info: ?ptypes.ClientInfoCloneManaged,
+        info: ?ptypes.ClientInfo,
     };
 
     pub const WindowResize = struct {

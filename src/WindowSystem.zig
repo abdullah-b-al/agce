@@ -80,12 +80,7 @@ pub fn destroy(ws: *WindowSystem) void {
 pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
     switch (event) {
         .exit => return error.Exit,
-        .client_registered => {
-            var e = event.client_registered;
-            defer if (e.info) |*info| {
-                info.deinit();
-            };
-
+        .client_registered => |e| {
             switch (ws.native) {
                 .wayland => |wl| try wl.client_registered(e.client_id, e.info),
                 .win32 => @panic("TODO"),

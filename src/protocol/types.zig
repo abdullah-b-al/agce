@@ -285,72 +285,30 @@ pub const CursorShape = enum {
 
 pub const ClientInfo = struct {
     pub const empty: ClientInfo = .{
-        .name = &.{},
+        .name = .empty,
     };
 
-    name: []const u8,
-};
+    name: String(64),
 
-pub const ClientInfoCloneManaged = struct {
-    gpa: std.mem.Allocator,
-    unmanaged: ClientInfoClone,
+    pub fn String(comptime buffer_len: usize) type {
+        return struct {
+            buffer: [buffer_len]u8,
+            len: usize,
 
-    pub fn clone(gpa: std.mem.Allocator, info: ClientInfo) !ClientInfoCloneManaged {
-        return .{ .gpa = gpa, .unmanaged = try .clone(gpa, info) };
-    }
+            pub const empty: @This() = .{ .buffer = undefined, .len = 0 };
 
-    pub fn deinit(managed: *ClientInfoCloneManaged) void {
-        managed.unmanaged.deinit(managed.gpa);
-    }
-};
+            pub fn from_slice(string: []const u8) @This() {
+                std.debug.assert(string.len <= buffer_len);
+                var buffer: [buffer_len]u8 = undefined;
+                std.mem.copyForwards(u8, &buffer, string);
+                return .{ .buffer = buffer, .len = string.len };
+            }
 
-pub const ClientInfoClone = struct {
-    strings: []const u8,
-
-    name: String,
-
-    pub fn clone(gpa: std.mem.Allocator, info: ClientInfo) !ClientInfoClone {
-        const len = info.name.len;
-        const strings = try gpa.alloc(u8, len);
-        errdefer comptime unreachable;
-
-        var builder: StringsBuilder = .{ .buffer = strings, .i = 0 };
-
-        const result: ClientInfoClone = .{
-            .strings = strings,
-            .name = builder.copy(info.name),
-        };
-
-        std.debug.assert(builder.i == strings.len);
-
-        return result;
-    }
-
-    pub fn dupe(gpa: std.mem.Allocator, info: ClientInfoClone) error{OutOfMemory}!ClientInfoClone {
-        return .{
-            .strings = try gpa.dupe(u8, info.strings),
-            .name = info.name,
+            pub fn slice(self: @This()) []const u8 {
+                return self.buffer[0..self.len];
+            }
         };
     }
-
-    pub fn deinit(info: *ClientInfoClone, gpa: std.mem.Allocator) void {
-        gpa.free(info.strings);
-        info.strings = undefined;
-    }
-
-    pub const String = struct { offset: u32, len: u32 };
-
-    const StringsBuilder = struct {
-        buffer: []u8,
-        i: u32,
-
-        pub fn copy(builder: *StringsBuilder, string: []const u8) String {
-            const result: String = .{ .offset = builder.i, .len = @intCast(string.len) };
-            std.mem.copyForwards(u8, builder.buffer[builder.i..], string);
-            builder.i += @intCast(string.len);
-            return result;
-        }
-    };
 };
 
 pub fn MessageHeaderGeneric(comptime MessageTag: type) type {

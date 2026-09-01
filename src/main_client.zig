@@ -22,7 +22,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const handle = try api.init(init.io, init.gpa, init.environ_map, .{
-        .name = "main_client",
+        .name = .from_slice("main_client"),
     });
     defer handle.deinit();
 

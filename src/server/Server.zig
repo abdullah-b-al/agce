@@ -329,14 +329,8 @@ fn handle_message_from_unknown(
         .{ .registered = .{} },
     );
 
-    const dupe: ?ptypes.ClientInfoCloneManaged =
-        if (register.info) |info|
-            .{ .gpa = server.gpa, .unmanaged = try .dupe(server.gpa, info) }
-        else
-            null;
-
     try server.dispatch.window_system_put(@src(), .{
-        .client_registered = .{ .client_id = id, .info = dupe },
+        .client_registered = .{ .client_id = id, .info = register.info },
     });
 
     errdefer comptime unreachable;

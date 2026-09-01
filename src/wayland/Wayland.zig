@@ -128,19 +128,12 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn client_registered(wl: *Wayland, id: ClientID, maybe_info: ?ptypes.ClientInfoCloneManaged) !void {
+pub fn client_registered(wl: *Wayland, id: ClientID, maybe_info: ?ptypes.ClientInfo) !void {
     try wl.resources.putNoClobber(wl.gpa, id, .init(id));
 
     if (maybe_info) |info| {
-        const clone: ptypes.ClientInfoClone = try .dupe(wl.gpa, info.unmanaged);
-
         const rs = wl.resources_get(id) catch unreachable;
-
-        if (rs.info) |*i| {
-            i.deinit(wl.gpa);
-        }
-
-        rs.info = clone;
+        rs.info = info;
     }
 }
 

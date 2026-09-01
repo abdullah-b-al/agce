@@ -1,7 +1,7 @@
 const ClientResources = @This();
 
 client_id: ClientID,
-info: ?ptypes.ClientInfoClone,
+info: ?ptypes.ClientInfo,
 wl_buffers_pending: std.array_hash_map.Auto(BufferID, void),
 
 buffers_commited: std.array_hash_map.Auto(BufferID, ViewportID),
@@ -28,10 +28,6 @@ pub fn init(id: ClientID) ClientResources {
 }
 
 pub fn deinit(rs: *ClientResources, wl: *Wayland) void {
-    if (rs.info) |*info| {
-        info.deinit(wl.gpa);
-    }
-
     for (rs.buffers.values()) |*buffer| {
         _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wl_buffer()));
         buffer.destroy();

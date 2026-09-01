@@ -6,9 +6,9 @@ environ_map: std.process.Environ.Map,
 connection: net.Stream,
 registered: bool,
 
-info: ptypes.ClientInfoClone,
+info: ptypes.ClientInfo,
 
-other_clients: std.array_hash_map.Auto(ptypes.ClientID, ptypes.ClientInfoClone),
+other_clients: std.array_hash_map.Auto(ptypes.ClientID, ptypes.ClientInfo),
 
 next_viewport_id: ptypes.ViewportID,
 next_buffer_id: ptypes.BufferID,
@@ -40,8 +40,6 @@ pub fn init(
 
     const info: ptypes.ClientInfo = if (maybe_info) |info| info else .empty;
 
-    const clone: ptypes.ClientInfoClone = try .clone(gpa, info);
-
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
@@ -54,7 +52,7 @@ pub fn init(
         .environ_map = map,
         .connection = stream,
         .registered = false,
-        .info = clone,
+        .info = info,
         .other_clients = .empty,
         .messages_arena = .init(gpa),
         .next_viewport_id = .first_for_client,
@@ -95,12 +93,6 @@ pub fn deinit(client: *Client) void {
     if (client.gbm) |gbm| {
         gbm.dri.close(client.io);
         c_linux.gbm_device_destroy(gbm.device);
-    }
-
-    client.info.deinit(client.gpa);
-
-    for (client.other_clients.values()) |*info| {
-        info.deinit(client.gpa);
     }
 
     const containers = .{
@@ -207,12 +199,6 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         timeout,
     );
 
-    const empty_client_info: ptypes.ClientInfoClone = try .clone(client.gpa, .empty);
-    const client_info_dupe: ?ptypes.ClientInfoClone = switch (message) {
-        .client_registered => |e| if (e.info) |info| try .dupe(client.gpa, info) else empty_client_info,
-        else => empty_client_info,
-    };
-
     errdefer comptime unreachable;
 
     switch (message) {
@@ -231,11 +217,9 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         .client_registered => |e| {
             const gop = client.other_clients.getOrPutAssumeCapacity(e.client_id);
 
-            if (gop.found_existing) {
-                gop.value_ptr.deinit(client.gpa);
+            if (e.info) |i| {
+                gop.value_ptr.* = i;
             }
-
-            gop.value_ptr.* = client_info_dupe orelse empty_client_info;
 
             const process = blk: for (client.processes.items) |process| {
                 const full_id = process.full_id orelse continue;
@@ -247,10 +231,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
             }
         },
         .client_disconnected => |e| {
-            if (client.other_clients.getPtr(e.client_id)) |info| {
-                info.deinit(client.gpa);
-                _ = client.other_clients.orderedRemove(e.client_id);
-            }
+            _ = client.other_clients.orderedRemove(e.client_id);
 
             for (client.processes.items) |p| {
                 if (p.full_id) |c| if (c.id == e.client_id) {
