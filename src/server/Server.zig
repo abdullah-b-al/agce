@@ -434,7 +434,7 @@ fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
     ) catch {};
 
     for (server.clients.known.values()) |c| {
-        if (c.id == id) continue;
+        if (c.id == id or c.closed) continue;
 
         server_to_client.message_send_json(
             server.io,
