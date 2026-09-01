@@ -2,6 +2,7 @@ const Process = @This();
 
 io: Io,
 arena: std.heap.ArenaAllocator,
+deinited: bool,
 argv: []const []const u8,
 environ: std.process.Environ.Map,
 
@@ -32,6 +33,7 @@ pub fn create(
     process.* = .{
         .io = io,
         .arena = process.arena,
+        .deinited = false,
         .argv = argv,
         .full_id = null,
         .child = null,
@@ -47,7 +49,11 @@ pub fn deinit(process: *Process) void {
     if (process.child) |*child| {
         child.kill(process.io);
     }
-    process.arena.deinit();
+    if (!process.deinited) {
+        process.arena.deinit();
+    }
+
+    process.deinited = true;
 }
 
 pub fn destroy(process: *Process, gpa: std.mem.Allocator) void {
