@@ -1,6 +1,8 @@
 const Viewport = @This();
 
 client: *Client,
+deinited: bool,
+
 id: ViewportID,
 frame_number: usize,
 size: ptypes.Size,
@@ -28,6 +30,7 @@ pub fn init(
 ) Viewport {
     return .{
         .client = client,
+        .deinited = false,
         .id = id,
         .size = size,
         .format = format,
@@ -48,12 +51,15 @@ pub fn init(
 }
 
 pub fn deinit(vp: *Viewport) void {
+    std.debug.assert(!vp.deinited);
+
     switch (vp.renderer) {
         inline else => |*r| r.deinit(vp.client.gpa),
     }
     vp.messages.deinit(vp.client.gpa);
     vp.events.deinit(vp.client.gpa);
     vp.buffers_status.deinit(vp.client.gpa);
+    vp.deinited = true;
 }
 
 pub fn has_buffer(vp: *Viewport, buffer_id: BufferID) bool {

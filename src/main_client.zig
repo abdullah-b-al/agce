@@ -31,8 +31,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const size: api.Size = .{ .width = 1280, .height = 720 };
-    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try .create(handle, .gl, size, vsync) else null;
-    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try .create(handle, .cpu, size, vsync) else null;
+    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try handle.viewport_create(.gl, size, vsync) else null;
+    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try handle.viewport_create(.cpu, size, vsync) else null;
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();

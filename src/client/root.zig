@@ -109,6 +109,61 @@ pub const ClientHandle = opaque {
         }
     }
 
+    pub fn viewport_create(
+        handle: *ClientHandle,
+        renderer: Renderer,
+        s: Size,
+        vsync: bool,
+    ) !*ViewportHandle {
+        const vp = try handle.cast().viewport_create(renderer, s, vsync);
+        return @ptrCast(vp);
+    }
+
+    pub fn viewport_create_from_pending(
+        handle: *ClientHandle,
+        renderer: Renderer,
+        viewport_id: ViewportID,
+        s: Size,
+        vsync: bool,
+    ) !*ViewportHandle {
+        const vp = try handle.cast().viewport_create_from_pending(
+            renderer,
+            viewport_id,
+            vsync,
+            s,
+        );
+        return @ptrCast(vp);
+    }
+
+    pub fn process_create(handle: *ClientHandle, argv: []const []const u8) !*ProcessHandle {
+        const client = handle.cast();
+
+        const process: *Process = try .create(client.io, client.gpa, argv, &client.environ_map);
+        errdefer process.destroy(client.gpa);
+        try client.processes.append(client.gpa, process);
+
+        try client_to_server.message_send_json(
+            client.io,
+            client.gpa,
+            client.connection,
+            .{ .generate_client_full_id = .{} },
+        );
+
+        return @ptrCast(process);
+    }
+
+    pub fn sub_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, client_id_to_embed: ClientID, rect: Rect) !*SubViewportHandle {
+        const client = handle.cast();
+        const vp = viewport.cast();
+        return @ptrCast(
+            try client.sub_viewport_embed(
+                vp.id,
+                client_id_to_embed,
+                rect,
+            ),
+        );
+    }
+
     pub fn update(handle: *ClientHandle) !void {
         const client = handle.cast();
         for (client.viewports.values()) |vp| {
@@ -196,30 +251,15 @@ pub const ViewportHandle = opaque {
         return @ptrCast(@alignCast(handle));
     }
 
-    pub fn create(
-        handle: *ClientHandle,
-        renderer: Renderer,
-        s: Size,
-        vsync: bool,
-    ) !*ViewportHandle {
-        const vp = try handle.cast().viewport_create(renderer, s, vsync);
-        return @ptrCast(vp);
-    }
+    pub fn destroy(handle: *ViewportHandle) void {
+        const vp = handle.cast();
 
-    pub fn create_from_pending(
-        handle: *ClientHandle,
-        renderer: Renderer,
-        viewport_id: ViewportID,
-        s: Size,
-        vsync: bool,
-    ) !*ViewportHandle {
-        const vp = try handle.cast().viewport_create_from_pending(
-            renderer,
-            viewport_id,
-            vsync,
-            s,
-        );
-        return @ptrCast(vp);
+        if (vp.deinited) {
+            log.err("{f} double free", .{vp.id});
+            return;
+        }
+
+        vp.deinit();
     }
 
     pub fn id(handle: *ViewportHandle) ViewportID {
@@ -246,13 +286,6 @@ pub const ViewportHandle = opaque {
     pub fn frame_wait_for_vsync(handle: *ViewportHandle) !void {
         const vp = handle.cast();
         try vp.client.frame_wait_for_vsync(vp);
-    }
-
-    pub fn sub_viewport_embed(handle: *ViewportHandle, client_id_to_embed: ClientID, rect: Rect) !*SubViewportHandle {
-        const vp = handle.cast();
-        return @ptrCast(
-            try vp.client.sub_viewport_embed(vp.id, client_id_to_embed, rect),
-        );
     }
 
     pub fn resize(handle: *ViewportHandle, s: ptypes.Size) void {
@@ -351,6 +384,17 @@ pub const SubViewportHandle = opaque {
         return @ptrCast(@alignCast(handle));
     }
 
+    pub fn destroy(handle: *SubViewportHandle) void {
+        const svp = handle.cast();
+
+        if (svp.deinited) {
+            std.log.err("{f} double free", .{svp.id});
+            return;
+        }
+
+        svp.deinit();
+    }
+
     pub fn state(handle: *SubViewportHandle) SubViewport.State {
         return handle.cast().state;
     }
@@ -420,23 +464,6 @@ pub const ProcessHandle = opaque {
         return @ptrCast(@alignCast(handle));
     }
 
-    pub fn create(handle: *ClientHandle, argv: []const []const u8) !*ProcessHandle {
-        const client = handle.cast();
-
-        const process: *Process = try .create(client.io, client.gpa, argv, &client.environ_map);
-        errdefer process.destroy(client.gpa);
-        try client.processes.append(client.gpa, process);
-
-        try client_to_server.message_send_json(
-            client.io,
-            client.gpa,
-            client.connection,
-            .{ .generate_client_full_id = .{} },
-        );
-
-        return @ptrCast(process);
-    }
-
     pub fn status(handle: *ProcessHandle) Process.Status {
         return handle.cast().status;
     }
@@ -447,8 +474,8 @@ pub const ProcessHandle = opaque {
 
     pub fn kill(handle: *ProcessHandle) void {
         const process = handle.cast();
-        if (process.child) |*child| {
-            child.kill(process.io);
+        if (process.child) |_| {
+            process.deinit();
         }
         process.child = null;
     }
@@ -456,8 +483,12 @@ pub const ProcessHandle = opaque {
     pub fn wait(handle: *ProcessHandle) std.process.Child.WaitError!std.process.Child.Term {
         const process = handle.cast();
         std.debug.assert(process.child != null);
-        defer process.child = null;
-        return try process.child.?.wait(process.io);
+        const result = process.child.?.wait(process.io);
+
+        process.child = null;
+        process.deinit();
+
+        return result;
     }
 };
 
@@ -474,3 +505,4 @@ const SubViewport = @import("SubViewport.zig");
 const buffers = @import("buffers.zig");
 const Process = @import("Process.zig");
 const constants = @import("constants");
+const log = std.log.scoped(.agce);

@@ -43,11 +43,15 @@ pub fn create(
     return process;
 }
 
-pub fn destroy(process: *Process, gpa: std.mem.Allocator) void {
+pub fn deinit(process: *Process) void {
     if (process.child) |*child| {
         child.kill(process.io);
     }
     process.arena.deinit();
+}
+
+pub fn destroy(process: *Process, gpa: std.mem.Allocator) void {
+    process.deinit();
     gpa.destroy(process);
 }
 

@@ -77,11 +77,18 @@ pub fn deinit(client: *Client) void {
     }
 
     for (client.viewports.values()) |vp| {
-        vp.deinit();
+        if (!vp.deinited) {
+            vp.deinit();
+            log.err("{f} leaked", .{vp.id});
+        }
         client.gpa.destroy(vp);
     }
 
     for (client.sub_viewports.values()) |svp| {
+        if (!svp.deinited) {
+            svp.deinit();
+            log.err("{f} leaked", .{svp.id});
+        }
         client.gpa.destroy(svp);
     }
 

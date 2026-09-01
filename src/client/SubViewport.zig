@@ -1,6 +1,7 @@
 const SubViewport = @This();
 
 client: *Client,
+deinited: bool,
 id: SubViewportID,
 render_size: ptypes.Size,
 rect: ptypes.Rect,
@@ -13,11 +14,16 @@ pub fn init(
 ) SubViewport {
     return .{
         .client = client,
+        .deinited = false,
         .id = id,
         .rect = rect,
         .render_size = .{ .width = 0, .height = 0 },
         .state = .pending,
     };
+}
+pub fn deinit(svp: *SubViewport) void {
+    std.debug.assert(!svp.deinited);
+    svp.deinited = true;
 }
 
 pub const State = enum {
