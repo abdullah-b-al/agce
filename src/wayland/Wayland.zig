@@ -128,13 +128,8 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn client_registered(wl: *Wayland, id: ClientID, maybe_info: ?ptypes.ClientInfo) !void {
+pub fn client_registered(wl: *Wayland, id: ClientID) !void {
     try wl.resources.putNoClobber(wl.gpa, id, .init(id));
-
-    if (maybe_info) |info| {
-        const rs = wl.resources_get(id) catch unreachable;
-        rs.info = info;
-    }
 }
 
 pub fn client_disconnected(wl: *Wayland, id: ClientID) void {

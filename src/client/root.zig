@@ -6,7 +6,6 @@ pub const ViewportID = ptypes.ViewportID;
 pub const SubViewportID = ptypes.SubViewportID;
 pub const BufferID = ptypes.BufferID;
 pub const CursorShape = ptypes.CursorShape;
-pub const ClientInfo = ptypes.ClientInfo;
 pub const ClientID = ptypes.ClientID;
 pub const Rect = ptypes.Rect;
 pub const Size = ptypes.Size;
@@ -20,12 +19,11 @@ pub fn init(
     io: std.Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
-    info: ?ClientInfo,
 ) !*ClientHandle {
     const client = try gpa.create(Client);
     errdefer gpa.destroy(client);
 
-    client.* = try .init(io, gpa, environ_map, info);
+    client.* = try .init(io, gpa, environ_map);
     errdefer client.deinit();
 
     try client_to_server.message_send_json(
@@ -33,7 +31,7 @@ pub fn init(
         gpa,
         client.connection,
         .{
-            .register = .{ .full_id = client.env.client_full_id, .info = client.info },
+            .register = .{ .full_id = client.env.client_full_id },
         },
     );
 
@@ -196,41 +194,6 @@ pub const ClientHandle = opaque {
             },
         );
     }
-
-    pub fn client_info_iterator(handle: *ClientHandle) ClientInfoIterator {
-        return .{
-            .handle = handle,
-            .i = 0,
-        };
-    }
-
-    pub const ClientInfoIterator = struct {
-        handle: *ClientHandle,
-        i: usize,
-
-        pub fn next(iter: *ClientInfoIterator) ?Result {
-            const client = iter.handle.cast();
-            if (iter.i >= client.other_clients.count()) return null;
-            defer iter.i += 1;
-
-            const id, const clone = .{
-                client.other_clients.keys()[iter.i],
-                client.other_clients.values()[iter.i],
-            };
-
-            return .{
-                .client_id = id,
-                .info = .{
-                    .name = clone.strings[clone.name.offset..][0..clone.name.len],
-                },
-            };
-        }
-
-        pub const Result = struct {
-            client_id: ptypes.ClientID,
-            info: ptypes.ClientInfo,
-        };
-    };
 };
 
 pub const ViewportHandle = opaque {

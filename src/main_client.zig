@@ -21,9 +21,7 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     }
 
-    const handle = try api.init(init.io, init.gpa, init.environ_map, .{
-        .name = .from_slice("main_client"),
-    });
+    const handle = try api.init(init.io, init.gpa, init.environ_map);
     defer handle.deinit();
 
     if (use_gl) {

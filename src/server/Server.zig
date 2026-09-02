@@ -330,12 +330,12 @@ fn handle_message_from_unknown(
     );
 
     try server.dispatch.window_system_put(@src(), .{
-        .client_registered = .{ .client_id = id, .info = register.info },
+        .client_registered = .{ .client_id = id },
     });
 
     errdefer comptime unreachable;
 
-    // broadcast the new client's info
+    // broadcast the new client
     for (server.clients.known.values()) |other| {
         if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
 
@@ -343,7 +343,7 @@ fn handle_message_from_unknown(
             server.io,
             server.gpa,
             other.stream,
-            .{ .client_registered = .{ .client_id = client.id, .info = register.info } },
+            .{ .client_registered = .{ .client_id = client.id } },
         ) catch |err| log.err("{} from {f} during broadcast", .{ err, other.id });
     }
 }

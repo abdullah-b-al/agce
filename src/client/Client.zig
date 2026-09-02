@@ -6,10 +6,6 @@ environ_map: std.process.Environ.Map,
 connection: net.Stream,
 registered: bool,
 
-info: ptypes.ClientInfo,
-
-other_clients: std.array_hash_map.Auto(ptypes.ClientID, ptypes.ClientInfo),
-
 next_viewport_id: ptypes.ViewportID,
 next_buffer_id: ptypes.BufferID,
 next_sub_viewport_id: ptypes.SubViewportID,
@@ -31,14 +27,11 @@ pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
-    maybe_info: ?ptypes.ClientInfo,
 ) !Client {
     var map = try environ_map.clone(gpa);
     errdefer map.deinit();
 
     const env: Env = .extract(&map);
-
-    const info: ptypes.ClientInfo = if (maybe_info) |info| info else .empty;
 
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const path = utils.unix_address_path(environ_map, &path_buf);
@@ -52,8 +45,6 @@ pub fn init(
         .environ_map = map,
         .connection = stream,
         .registered = false,
-        .info = info,
-        .other_clients = .empty,
         .messages_arena = .init(gpa),
         .next_viewport_id = .first_for_client,
         .next_buffer_id = .first,
@@ -99,7 +90,6 @@ pub fn deinit(client: *Client) void {
         &client.viewports,
         &client.sub_viewports,
         &client.viewports_from_server,
-        &client.other_clients,
         &client.processes,
     };
 
@@ -177,7 +167,6 @@ pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag
 pub fn poll(client: *Client, timeout: Io.Timeout) !void {
     defer _ = client.messages_arena.reset(.{ .retain_with_limit = 1024 * 1024 });
 
-    try client.other_clients.ensureUnusedCapacity(client.gpa, 1);
     try client.viewports_from_server.ensureUnusedCapacity(client.gpa, 1);
     for (client.viewports.values()) |vp| {
         try vp.messages.ensureUnusedCapacity(client.gpa, 1);
@@ -213,12 +202,6 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             } else unreachable;
         },
         .client_registered => |e| {
-            const gop = client.other_clients.getOrPutAssumeCapacity(e.client_id);
-
-            if (e.info) |i| {
-                gop.value_ptr.* = i;
-            }
-
             const process = blk: for (client.processes.items) |process| {
                 const full_id = process.full_id orelse continue;
                 if (full_id.id == e.client_id) break :blk process;
@@ -229,8 +212,6 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             }
         },
         .client_disconnected => |e| {
-            _ = client.other_clients.orderedRemove(e.client_id);
-
             for (client.processes.items) |p| {
                 if (p.full_id) |c| if (c.id == e.client_id) {
                     p.status = .disconnected;
@@ -624,11 +605,6 @@ pub fn WithViewportID(comptime T: type) type {
         message: T,
     };
 }
-
-pub const ClientsInfo = struct {
-    arena: std.heap.ArenaAllocator,
-    infos: []const server_to_client.MessagePayload.ClientInfo,
-};
 
 pub const CreateStatus = enum {
     created,

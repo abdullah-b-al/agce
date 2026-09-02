@@ -127,7 +127,6 @@ pub const WindowSystemEvent = union(enum) {
 
     pub const ClientRegistered = struct {
         client_id: ClientID,
-        info: ?ptypes.ClientInfo,
     };
 
     pub const WindowResize = struct {
@@ -223,11 +222,6 @@ pub const ServerEvent = union(enum) {
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
     }
-
-    pub const ClientInfo = struct {
-        client_id: ptypes.ClientID,
-        managed: ptypes.ClientInfoCloneManaged,
-    };
 };
 
 pub fn WithClientID(comptime T: type) type {

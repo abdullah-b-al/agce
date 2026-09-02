@@ -82,7 +82,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         .exit => return error.Exit,
         .client_registered => |e| {
             switch (ws.native) {
-                .wayland => |wl| try wl.client_registered(e.client_id, e.info),
+                .wayland => |wl| try wl.client_registered(e.client_id),
                 .win32 => @panic("TODO"),
             }
         },

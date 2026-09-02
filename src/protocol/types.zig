@@ -283,34 +283,6 @@ pub const CursorShape = enum {
     zoom_out,
 };
 
-pub const ClientInfo = struct {
-    pub const empty: ClientInfo = .{
-        .name = .empty,
-    };
-
-    name: String(64),
-
-    pub fn String(comptime buffer_len: usize) type {
-        return struct {
-            buffer: [buffer_len]u8,
-            len: usize,
-
-            pub const empty: @This() = .{ .buffer = undefined, .len = 0 };
-
-            pub fn from_slice(string: []const u8) @This() {
-                std.debug.assert(string.len <= buffer_len);
-                var buffer: [buffer_len]u8 = undefined;
-                std.mem.copyForwards(u8, &buffer, string);
-                return .{ .buffer = buffer, .len = string.len };
-            }
-
-            pub fn slice(self: @This()) []const u8 {
-                return self.buffer[0..self.len];
-            }
-        };
-    }
-};
-
 pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
     return extern struct {
         const Header = @This();

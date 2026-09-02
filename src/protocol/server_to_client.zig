@@ -70,7 +70,6 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const ClientRegistered = struct {
         client_id: types.ClientID,
-        info: ?types.ClientInfo,
     };
 
     pub const ClientDisconnected = struct {

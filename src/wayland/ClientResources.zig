@@ -1,7 +1,6 @@
 const ClientResources = @This();
 
 client_id: ClientID,
-info: ?ptypes.ClientInfo,
 wl_buffers_pending: std.array_hash_map.Auto(BufferID, void),
 
 buffers_commited: std.array_hash_map.Auto(BufferID, ViewportID),
@@ -16,7 +15,6 @@ sub_viewports_pending: std.array_hash_map.Auto(SubViewportID, SubViewportPending
 pub fn init(id: ClientID) ClientResources {
     return .{
         .client_id = id,
-        .info = null,
         .wl_buffers_pending = .empty,
         .buffers_commited = .empty,
         .buffers = .empty,

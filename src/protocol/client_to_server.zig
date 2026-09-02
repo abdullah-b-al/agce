@@ -27,7 +27,6 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const Register = struct {
         full_id: ?types.ClientFullID,
-        info: ?types.ClientInfo,
     };
 
     pub const Void = struct { void: u8 = 0 };
