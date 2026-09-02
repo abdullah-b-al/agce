@@ -62,7 +62,11 @@ pub fn init(
 
 pub fn deinit(client: *Client) void {
     for (client.processes.items) |p| {
-        p.destroy(client.gpa);
+        if (!p.deinited) {
+            p.deinit();
+            log.err("Process {*} leaked", .{p});
+        }
+        client.gpa.destroy(p);
     }
 
     for (client.viewports.values()) |vp| {

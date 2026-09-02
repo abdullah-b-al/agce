@@ -49,16 +49,12 @@ pub fn deinit(process: *Process) void {
     if (process.child) |*child| {
         child.kill(process.io);
     }
+
     if (!process.deinited) {
         process.arena.deinit();
     }
 
     process.deinited = true;
-}
-
-pub fn destroy(process: *Process, gpa: std.mem.Allocator) void {
-    process.deinit();
-    gpa.destroy(process);
 }
 
 pub fn spawn(

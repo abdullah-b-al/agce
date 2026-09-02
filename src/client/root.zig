@@ -124,7 +124,11 @@ pub const ClientHandle = opaque {
         const client = handle.cast();
 
         const process: *Process = try .create(client.io, client.gpa, argv, &client.environ_map);
-        errdefer process.destroy(client.gpa);
+        errdefer {
+            process.deinit();
+            client.gpa.destroy(process);
+        }
+
         try client.processes.append(client.gpa, process);
 
         try client_to_server.message_send_json(
@@ -423,10 +427,9 @@ pub const ProcessHandle = opaque {
 
     pub fn kill(handle: *ProcessHandle) void {
         const process = handle.cast();
-        if (process.child) |_| {
+        if (!process.deinited) {
             process.deinit();
         }
-        process.child = null;
     }
 
     pub fn wait(handle: *ProcessHandle) std.process.Child.WaitError!std.process.Child.Term {
