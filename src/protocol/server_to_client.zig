@@ -165,7 +165,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     defer gpa.free(json);
 
     const header: MessageHeader = .{
-        .len = @intCast(@sizeOf(MessageHeader) + json.len),
+        .payload_len = @intCast(json.len),
         .format = .json,
         .message_tag = payload,
     };
@@ -179,38 +179,55 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     try writer.interface.flush();
 }
 
-pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !MessagePayload {
-    var buf: [@sizeOf(MessageHeader)]u8 = undefined;
-    const peek = try common.operation_net_receive_peek(MessageHeader, io, stream, timeout, &buf);
+pub fn message_receive_all(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) ![]MessagePayload {
+    const buf = try arena.alloc(u8, 1024 * 1024); // 1MB
 
-    if (peek.data.len == 0) {
-        return error.ConnectionClosed;
-    }
+    var msg_buf: [128]net.IncomingMessage = undefined;
 
-    const header = try common.parse_message_header(MessageHeader, peek.data);
-
-    const message_buf = try arena.alloc(u8, header.len);
-    switch (header.format) {
-        .json => {
-            const message = try read_and_parse_data_json(io, arena, stream, header, message_buf);
-            return message;
+    const op: Io.Operation = .{
+        .net_receive = .{
+            .socket_handle = stream.socket.handle,
+            .message_buffer = &msg_buf,
+            .data_buffer = buf,
+            .flags = .{},
         },
+    };
+
+    const err, const len = (try io.operateTimeout(op, timeout)).net_receive;
+    if (err) |e| {
+        return e;
     }
+
+    var list: std.ArrayList(MessagePayload) = .empty;
+    for (msg_buf[0..len]) |msg| {
+        if (msg.data.len == 0) {
+            return error.ConnectionClosed;
+        }
+
+        const header = try common.parse_message_header(MessageHeader, msg.data);
+        switch (header.format) {
+            .json => {
+                const message = try parse_data_json(arena, msg.data, header);
+                try list.append(arena, message);
+            },
+        }
+    }
+
+    return try list.toOwnedSlice(arena);
 }
 
-fn read_and_parse_data_json(io: Io, arena: std.mem.Allocator, stream: net.Stream, header: MessageHeader, receive_buf: []u8) !MessagePayload {
+fn parse_data_json(arena: std.mem.Allocator, raw_data: []const u8, header: MessageHeader) !MessagePayload {
+    if (header.payload_len + @sizeOf(MessageHeader) > raw_data.len) {
+        return error.IncompleteMessage;
+    }
+
     switch (header.message_tag) {
         inline else => |tag| {
             const T = utils.TypeOfField(MessagePayload, @tagName(tag));
-            const parsed = try common.read_and_parse_data_json(
-                MessageHeader,
-                T,
-                io,
-                arena,
-                stream,
-                header,
-                receive_buf,
-            );
+            const data = raw_data[@sizeOf(MessageHeader)..][0..header.payload_len];
+            const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                .allocate = .alloc_if_needed,
+            });
 
             return @unionInit(MessagePayload, @tagName(tag), parsed);
         },

@@ -121,7 +121,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     defer gpa.free(json);
 
     const header: MessageHeader = .{
-        .len = @intCast(@sizeOf(MessageHeader) + json.len),
+        .payload_len = @intCast(json.len),
         .format = .json,
         .message_tag = payload,
     };
@@ -183,7 +183,7 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
 
     const header = try common.parse_message_header(MessageHeader, peek.data);
 
-    const message_buf = try arena.alloc(u8, header.len);
+    const message_buf = try arena.alloc(u8, header.payload_len + @sizeOf(MessageHeader));
     switch (header.format) {
         .json => {
             return switch (os_tag) {
@@ -201,8 +201,7 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
 }
 
 fn message_send_json_with_fd(stream: net.Stream, message: Message, comptime Fd: type, fd: Fd) !void {
-    const total_len = message.payload.len + @sizeOf(MessageHeader);
-    std.debug.assert(message.header.len == total_len);
+    std.debug.assert(message.header.payload_len == message.payload.len);
 
     const header = std.mem.toBytes(message.header);
 
@@ -225,7 +224,7 @@ fn read_and_parse_data_json_linux(
     receive_buf: []u8,
 ) !MessagePayload {
     std.debug.assert(header.format == .json);
-    std.debug.assert(receive_buf.len == header.len);
+    std.debug.assert(receive_buf.len == header.payload_len + @sizeOf(MessageHeader));
 
     switch (header.message_tag) {
         inline .buffer_create_cpu_with_fd,

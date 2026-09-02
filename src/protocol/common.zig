@@ -33,10 +33,10 @@ pub fn read_and_parse_data_json(
     receive_buf: []u8,
 ) !Message {
     std.debug.assert(header.format == .json);
-    std.debug.assert(receive_buf.len == header.len);
+    std.debug.assert(receive_buf.len == header.payload_len + @sizeOf(MessageHeader));
 
     const msg = try stream.socket.receive(io, receive_buf);
-    const data = msg.data[@sizeOf(MessageHeader)..];
+    const data = msg.data[@sizeOf(MessageHeader)..][0..header.payload_len];
     const parsed = try std.json.parseFromSliceLeaky(Message, arena, data, .{
         .allocate = .alloc_if_needed,
     });

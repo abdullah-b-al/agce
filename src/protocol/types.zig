@@ -315,7 +315,7 @@ pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
     return extern struct {
         const Header = @This();
 
-        len: u32,
+        payload_len: u32,
         format: MessageFormat,
         message_tag: MessageTag,
 
@@ -328,19 +328,19 @@ pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
         pub fn parse(data: []const u8) !Header {
             std.debug.assert(@sizeOf(Header) == data.len);
 
-            const header_len = parse_len(data);
+            const head_payload_len = parse_len(data);
             const header_format = try parse_format(data);
             const header_message_tag = try parse_message_tag(data);
 
             return .{
-                .len = header_len,
+                .payload_len = head_payload_len,
                 .format = header_format,
                 .message_tag = header_message_tag,
             };
         }
 
-        fn parse_len(data: []const u8) @FieldType(Header, "len") {
-            return parse_int_of("len", data);
+        fn parse_len(data: []const u8) @FieldType(Header, "payload_len") {
+            return parse_int_of("payload_len", data);
         }
 
         fn parse_format(data: []const u8) error{HeaderInvalidFormat}!@FieldType(Header, "format") {

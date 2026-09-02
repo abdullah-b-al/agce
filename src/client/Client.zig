@@ -153,13 +153,6 @@ pub fn update_by_tag(client: *Client, viewport_id: ViewportID, comptime tag: Mes
     }
 }
 
-pub fn poll_for_events(client: *Client, timeout: Io.Timeout) !void {
-    // In a loop to ignore messages that are not events
-    while (client.events.items.len == 0) {
-        try client.poll_once(timeout);
-    }
-}
-
 pub fn wait_for(client: *Client, viewport_id: ViewportID, tag: Message.Tag) !void {
     try client.wait_for_count(viewport_id, tag, 1);
 }
@@ -167,7 +160,7 @@ pub fn wait_for(client: *Client, viewport_id: ViewportID, tag: Message.Tag) !voi
 pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag, min_count: usize) !void {
     const vp = client.viewports.get(viewport_id) orelse return error.ViewportDoesNotExist;
     while (true) {
-        try client.poll_once(.none);
+        try client.poll(.none);
 
         var count: usize = 0;
         for (vp.messages.items) |message| {
@@ -181,9 +174,8 @@ pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag
     }
 }
 
-// TODO: Poll all available messages
-pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
-    defer _ = client.messages_arena.reset(.{ .retain_with_limit = 4096 });
+pub fn poll(client: *Client, timeout: Io.Timeout) !void {
+    defer _ = client.messages_arena.reset(.{ .retain_with_limit = 1024 * 1024 });
 
     try client.other_clients.ensureUnusedCapacity(client.gpa, 1);
     try client.viewports_from_server.ensureUnusedCapacity(client.gpa, 1);
@@ -192,7 +184,7 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
         try vp.events.ensureUnusedCapacity(client.gpa, 1);
     }
 
-    const message = try server_to_client.message_receive(
+    const messages = try server_to_client.message_receive_all(
         client.io,
         client.messages_arena.allocator(),
         client.connection,
@@ -201,6 +193,12 @@ pub fn poll_once(client: *Client, timeout: Io.Timeout) !void {
 
     errdefer comptime unreachable;
 
+    for (messages) |message| {
+        client.poll_process_message(message);
+    }
+}
+
+fn poll_process_message(client: *Client, message: server_to_client.MessagePayload) void {
     switch (message) {
         .registered => {
             client.registered = true;
