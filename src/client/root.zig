@@ -137,15 +137,14 @@ pub const ClientHandle = opaque {
         return @ptrCast(process);
     }
 
-    pub fn sub_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, client_id_to_embed: ClientID, rect: Rect) !*SubViewportHandle {
+    pub fn sub_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, process: *ProcessHandle, rect: Rect) !*SubViewportHandle {
+        std.debug.assert(process.status() == .connected);
         const client = handle.cast();
         const vp = viewport.cast();
+        const client_id = process.status().connected;
+
         return @ptrCast(
-            try client.sub_viewport_embed(
-                vp.id,
-                client_id_to_embed,
-                rect,
-            ),
+            try client.sub_viewport_embed(vp.id, client_id, rect),
         );
     }
 
