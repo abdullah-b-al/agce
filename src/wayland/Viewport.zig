@@ -69,8 +69,11 @@ pub fn init(
 }
 
 pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
-    // sub-viewports should be closed before calling deinit
+    // Sub-viewports should be closed before calling deinit
     std.debug.assert(vp.sub_viewports.count() == 0);
+    // If the viewport is a sub-viewport we must inform the parent then set to null
+    std.debug.assert(vp.parent_key == null);
+
     vp.sub_viewports.deinit(gpa);
 
     if (vp.sync_surface) |sync| {

@@ -166,6 +166,16 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 },
             }
         },
+        .viewport_destroy => |args| {
+            const key: ViewportKey = .{
+                .client_id = args.client_id,
+                .viewport_id = args.payload.viewport_id,
+            };
+            switch (ws.native) {
+                .wayland => |wl| try wl.viewport_destroy(key),
+                .win32 => @panic("TODO"),
+            }
+        },
         .sub_viewport_embed => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.sub_viewport_embed(args),
@@ -181,12 +191,6 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         .sub_viewport_display_state_set => |args| {
             switch (ws.native) {
                 .wayland => |wl| try wl.sub_viewport_display_state_set(args),
-                .win32 => @panic("TODO"),
-            }
-        },
-        .windows_destroy => {
-            switch (ws.native) {
-                .wayland => |wl| wl.windows_destroy(),
                 .win32 => @panic("TODO"),
             }
         },

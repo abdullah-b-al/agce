@@ -213,14 +213,31 @@ pub const ViewportHandle = opaque {
         }
 
         vp.deinit();
+
+        client_to_server.message_send_json(
+            vp.client.io,
+            vp.client.gpa,
+            vp.client.connection,
+            .{
+                .viewport_destroy = .{ .viewport_id = vp.id },
+            },
+        ) catch {};
     }
 
     pub fn id(handle: *ViewportHandle) ViewportID {
         return handle.cast().id;
     }
 
-    pub fn is_open(handle: *ViewportHandle) bool {
-        return handle.cast().open;
+    pub fn destroyed(handle: *ViewportHandle) bool {
+        return handle.cast().deinited;
+    }
+
+    pub fn should_close_set(handle: *ViewportHandle, value: bool) void {
+        handle.cast().should_close = value;
+    }
+
+    pub fn should_close(handle: *ViewportHandle) bool {
+        return handle.cast().should_close;
     }
 
     pub fn size(handle: *ViewportHandle) Size {
@@ -246,12 +263,12 @@ pub const ViewportHandle = opaque {
     }
 
     pub fn gl_frame_begin(handle: *ViewportHandle) !GlFrameBegin {
+        std.debug.assert(!handle.destroyed());
+
         const vp = handle.cast();
 
         std.debug.assert(vp.renderer == .gl);
         const gl = &vp.renderer.gl;
-
-        if (!vp.open) return error.ViewportClosed;
 
         std.debug.assert(vp.current_buffer == null);
 
@@ -282,12 +299,13 @@ pub const ViewportHandle = opaque {
     }
 
     pub fn cpu_frame_begin(handle: *ViewportHandle) !CpuFrameBegin {
+        std.debug.assert(!handle.destroyed());
+
         const vp = handle.cast();
+
         const client = vp.client;
         std.debug.assert(vp.renderer == .cpu);
         const cpu = &vp.renderer.cpu;
-
-        if (!vp.open) return error.ViewportClosed;
 
         std.debug.assert(vp.current_buffer == null);
 

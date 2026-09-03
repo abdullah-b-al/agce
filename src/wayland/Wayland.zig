@@ -138,37 +138,28 @@ pub fn client_disconnected(wl: *Wayland, id: ClientID) void {
         return;
     };
 
-    for (wl.windows.values()) |win| {
-        if (win.viewport_key.client_id == id) {
-            win.running = false;
-        }
-    }
-    wl.windows_destroy();
-
     for (rs.viewports.values()) |vp| {
-        wl.viewport_close(.{ .client_id = rs.client_id, .viewport_id = vp.id });
+        wl.viewport_destroy(.{ .client_id = rs.client_id, .viewport_id = vp.id }) catch |err|
+            switch (err) {
+                error.ClientDoesNotExist => unreachable,
+            };
     }
 
     rs.deinit(wl);
     _ = wl.resources.orderedRemove(id);
+
+    wl.windows_destroy_if_closed();
 }
 
-pub fn viewport_close(wl: *Wayland, key: ViewportKey) void {
-    const rs = wl.resources_get(key.client_id) catch unreachable;
-    const vp = rs.viewports.getPtr(key.viewport_id).?;
-
-    wl.sub_viewports_close(key, vp);
-
-    wl.dispatch.server_put(@src(), .{
-        .viewport_closed = .{
-            .client_id = rs.client_id,
-            .payload = .{ .viewport_id = vp.id },
-        },
-    }) catch return;
+pub fn viewport_destroy(wl: *Wayland, key: ViewportKey) !void {
+    const rs = try wl.resources_get(key.client_id);
+    const vp = rs.viewports.getPtr(key.viewport_id) orelse return;
 
     if (vp.parent_key) |parent| {
         const p = wl.viewport_from_key(parent).?;
+
         const svp_id = p.sub_viewport_id_from_key(key).?;
+
         _ = p.sub_viewports.orderedRemove(svp_id);
         wl.dispatch.server_put(@src(), .{
             .sub_viewport_closed = .{
@@ -176,47 +167,22 @@ pub fn viewport_close(wl: *Wayland, key: ViewportKey) void {
                 .payload = .{ .sub_viewport_id = svp_id },
             },
         }) catch {};
+
+        vp.parent_key = null;
     }
 
-    log.debug("{f} of {f} closed", .{ vp.id, rs.client_id });
+    for (vp.sub_viewports.values()) |svp_key| {
+        const svp = wl.viewport_from_key(svp_key).?;
+        svp.parent_key = null;
+    }
+    vp.sub_viewports.clearRetainingCapacity();
+
     vp.deinit(wl.gpa);
-    _ = rs.viewports.orderedRemove(key.viewport_id);
-}
+    _ = rs.viewports.orderedRemove(vp.id);
 
-fn sub_viewports_close(wl: *Wayland, parent_key: ViewportKey, parent: *Viewport) void {
-    for (parent.sub_viewports.keys(), parent.sub_viewports.values()) |svp_id, key| {
-        wl.dispatch.server_put(@src(), .{
-            .sub_viewport_closed = .{
-                .client_id = parent_key.client_id,
-                .payload = .{ .sub_viewport_id = svp_id },
-            },
-        }) catch {};
+    log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_id });
 
-        wl.viewport_close(key);
-    }
-
-    while (parent.sub_viewports.pop()) |_| {}
-}
-
-const SubViewportAndParent = struct {
-    parent_key: ViewportKey,
-    parent: *Viewport,
-    sub_viewport: *Viewport,
-    sub_viewport_id: ptypes.SubViewportID,
-};
-fn collect_sub_viewports_sub_tree(wl: *Wayland, list: *std.ArrayList(SubViewportAndParent), parent_key: ViewportKey) !void {
-    const parent = wl.viewport_from_key(parent_key).?;
-
-    for (parent.sub_viewports.keys(), parent.sub_viewports.values()) |svp_id, k| {
-        const svp = wl.viewport_from_key(k).?;
-        try list.append(wl.gpa, .{
-            .parent_key = parent_key,
-            .parent = parent,
-            .sub_viewport = svp,
-            .sub_viewport_id = svp_id,
-        });
-        try wl.collect_sub_viewports_sub_tree(list, k);
-    }
+    wl.windows_destroy_if_closed();
 }
 
 pub fn resources_get(wl: *Wayland, id: ClientID) error{ClientDoesNotExist}!*ClientResources {
@@ -549,18 +515,18 @@ pub fn sub_viewport_display_state_set(wl: *Wayland, args: Event.TypeOf(.sub_view
     _ = wl.display.flush();
 }
 
-pub fn windows_destroy(wl: *Wayland) void {
+pub fn windows_destroy_if_closed(wl: *Wayland) void {
     var removed = false;
     var i: usize = wl.windows.count();
     while (i > 0) {
         i -= 1;
         const win = wl.windows.values()[i];
-        if (win.configured and !win.running) {
-            wl.viewport_close(win.viewport_key);
-
+        std.debug.assert(win.configured);
+        const should_close = wl.viewport_from_key(win.viewport_key) == null;
+        if (should_close) {
             const id = win.id;
-            _ = wl.windows.orderedRemove(id);
             win.destroy(wl.gpa);
+            _ = wl.windows.orderedRemove(id);
             removed = true;
         }
     }
@@ -1017,7 +983,7 @@ pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
 pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *WindowSystem) void {
     const wl = ws.native.wayland;
     const window_id = wl.window_id_from_toplevel(tl);
-    const window = wl.windows.get(window_id).?;
+    const win = wl.windows.get(window_id).?;
 
     switch (event) {
         .configure => |configure| {
@@ -1035,8 +1001,14 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
         },
 
         .close => {
-            window.running = false;
-            ws.dispatch.window_system_put(@src(), .windows_destroy) catch {};
+            ws.dispatch.server_put(@src(), .{
+                .viewport_close = .{
+                    .client_id = win.input_focus_keyboard.client_id,
+                    .payload = .{
+                        .viewport_id = win.input_focus_keyboard.viewport_id,
+                    },
+                },
+            }) catch {};
         },
     }
 }

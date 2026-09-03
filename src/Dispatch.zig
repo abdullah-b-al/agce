@@ -92,11 +92,11 @@ pub const WindowSystemEvent = union(enum) {
     buffer_destroy: WithClientID(Payload.BufferDestroy),
 
     viewport_create: WithClientID(Payload.ViewportCreate),
+    viewport_destroy: WithClientID(Payload.ViewportDestroy),
     sub_viewport_embed: WithClientID(Payload.SubViewportEmbed),
     sub_viewport_rect_set: WithClientID(Payload.SubViewportRectSet),
     sub_viewport_display_state_set: WithClientID(Payload.SubViewportDisplayStateSet),
 
-    windows_destroy,
     window_resize_by_display_server: WindowResize,
     wayland_dispatch: struct {
         signal: *Io.Event,
@@ -199,7 +199,7 @@ pub const ServerEvent = union(enum) {
     viewport_create: WithClientID(Payload.ViewportCreate),
     viewport_created: WithClientID(Payload.ViewportCreated),
     viewport_resize: WithClientID(Payload.ViewportResize),
-    viewport_closed: WithClientID(Payload.ViewportClosed),
+    viewport_close: WithClientID(Payload.ViewportClose),
 
     sub_viewport_embeded: WithClientID(Payload.SubviewportCreated),
     sub_viewport_display_state: WithClientID(Payload.SubViewportDisplayState),

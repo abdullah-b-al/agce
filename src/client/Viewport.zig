@@ -1,13 +1,13 @@
 const Viewport = @This();
 
-client: *Client,
 deinited: bool,
 
+client: *Client,
 id: ViewportID,
 frame_number: usize,
 size: ptypes.Size,
 format: ptypes.BufferFormat,
-open: bool,
+should_close: bool,
 vsync: bool,
 can_render: bool,
 current_buffer: ?BufferID,
@@ -36,7 +36,7 @@ pub fn init(
         .format = format,
         .vsync = vsync,
 
-        .open = true,
+        .should_close = false,
         .can_render = true,
         .frame_number = 0,
         .current_buffer = null,
@@ -95,9 +95,6 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
                 .gl => |*gl| try gl.resize(vp, msg.size),
                 .cpu => |*cpu| try cpu.resize(vp, msg),
             }
-        },
-        .viewport_closed => {
-            vp.open = false;
         },
 
         .buffer_released => {

@@ -262,10 +262,9 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             vp.event_push(.{ .viewport_resize = e });
             vp.message_push(.{ .viewport_resize = e });
         },
-        .viewport_closed => |e| {
+        .viewport_close => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
-            vp.event_push(.{ .viewport_closed = e });
-            vp.message_push(.{ .viewport_closed = e });
+            vp.event_push(.{ .viewport_close = e });
         },
 
         inline .mouse_enter,
@@ -580,7 +579,7 @@ pub const Event = union(enum) {
     const Payload = server_to_client.MessagePayload;
 
     viewport_resize: Payload.ViewportResize,
-    viewport_closed: Payload.ViewportClosed,
+    viewport_close: Payload.ViewportClose,
     keyboard_char: Payload.KeyboardChar,
     keyboard_key: Payload.KeyboardKey,
     mouse_enter: Payload.MouseEnter,
@@ -595,7 +594,6 @@ pub const Message = union(enum) {
     const Payload = server_to_client.MessagePayload;
 
     viewport_resize: Payload.ViewportResize,
-    viewport_closed: Payload.ViewportClosed,
     viewport_created: Payload.ViewportCreated,
     buffer_released: Payload.BufferReleased,
     buffer_destroyed: WithViewportID(Payload.BufferDestroyed),

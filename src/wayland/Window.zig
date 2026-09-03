@@ -13,7 +13,6 @@ input_focus_mouse: ViewportKey,
 
 commited_once: bool,
 configured: bool,
-running: bool,
 
 buffer_pixels: []align(std.heap.page_size_min) u8,
 buffer: ClientResources.CpuBuffer,
@@ -82,7 +81,6 @@ pub fn create(
         .xdg_toplevel = xdg_toplevel,
         .commited_once = false,
         .configured = false,
-        .running = true,
         .buffer_pixels = pixels,
         .buffer = buffer,
     };
