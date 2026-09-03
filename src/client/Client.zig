@@ -169,13 +169,7 @@ pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag
 }
 
 pub fn poll(client: *Client, timeout: Io.Timeout) !void {
-    defer _ = client.messages_arena.reset(.{ .retain_with_limit = 1024 * 1024 });
-
-    try client.viewports_from_server.ensureUnusedCapacity(client.gpa, 1);
-    for (client.viewports.values()) |vp| {
-        try vp.messages.ensureUnusedCapacity(client.gpa, 1);
-        try vp.events.ensureUnusedCapacity(client.gpa, 1);
-    }
+    defer _ = client.messages_arena.reset(.{ .retain_with_limit = 1024 * 4 });
 
     const messages = try server_to_client.message_receive_all(
         client.io,
@@ -184,7 +178,11 @@ pub fn poll(client: *Client, timeout: Io.Timeout) !void {
         timeout,
     );
 
-    errdefer comptime unreachable;
+    try client.viewports_from_server.ensureUnusedCapacity(client.gpa, messages.len);
+    for (client.viewports.values()) |vp| {
+        try vp.messages.ensureUnusedCapacity(client.gpa, messages.len);
+        try vp.events.ensureUnusedCapacity(client.gpa, messages.len);
+    }
 
     for (messages) |message| {
         client.poll_process_message(message);
