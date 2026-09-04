@@ -398,7 +398,8 @@ pub fn window_system_event_from_message(
         .viewport_create,
         .cursor_shape_set,
         .sub_viewport_embed,
-        .sub_viewport_rect_set,
+        .sub_viewport_pos_set,
+        .sub_viewport_size_set,
         .sub_viewport_display_state_set,
         .viewport_destroy,
         => |msg, tag| {

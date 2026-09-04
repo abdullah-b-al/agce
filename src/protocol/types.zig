@@ -195,14 +195,31 @@ pub const Rect = struct {
     width: i32,
     height: i32,
 
+    pub fn init(p: Pos, s: Size) Rect {
+        return .{ .x = p.x, .y = p.y, .width = s.width, .height = s.height };
+    }
+
     pub fn size(r: Rect) Size {
         return .{ .width = r.width, .height = r.height };
+    }
+};
+
+pub const Pos = struct {
+    x: i32,
+    y: i32,
+
+    pub fn from_rect(r: Rect) Pos {
+        return .{ .x = r.x, .y = r.y };
     }
 };
 
 pub const Size = struct {
     width: i32,
     height: i32,
+
+    pub fn from_rect(r: Rect) Size {
+        return .{ .width = r.width, .height = r.height };
+    }
 };
 
 pub const BufferFormat = enum {

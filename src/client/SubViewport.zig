@@ -4,7 +4,8 @@ client: *Client,
 deinited: bool,
 id: SubViewportID,
 render_size: ptypes.Size,
-rect: ptypes.Rect,
+pos: ptypes.Pos,
+size: ptypes.Size,
 state: State,
 
 pub fn init(
@@ -16,7 +17,8 @@ pub fn init(
         .client = client,
         .deinited = false,
         .id = id,
-        .rect = rect,
+        .pos = .from_rect(rect),
+        .size = .from_rect(rect),
         .render_size = .{ .width = 0, .height = 0 },
         .state = .pending,
     };

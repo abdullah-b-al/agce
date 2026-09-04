@@ -411,7 +411,7 @@ pub fn sub_viewport_embed(wl: *Wayland, args: Event.TypeOf(.sub_viewport_embed))
     });
 }
 
-pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect_set)) !void {
+pub fn sub_viewport_pos_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_pos_set)) !void {
     const key = blk: {
         const rs = try wl.resources_get(args.client_id);
         break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
@@ -420,21 +420,17 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
 
     std.debug.assert(key.viewport_id.is_server_id());
 
-    const requsted_rect = args.payload.rect;
+    const pos = args.payload.pos;
     const rs = try wl.resources_get(key.client_id);
     const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
-    const win = wl.window_from_viewport_key(key) orelse return error.ViewportHasNoWindow;
 
-    if (requsted_rect.x < 0 or
-        requsted_rect.y < 0 or
-        requsted_rect.width <= 0 or
-        requsted_rect.height <= 0)
-    {
-        return error.InvalidRect;
+    if (pos.x < 0 or pos.y < 0) {
+        return error.InvalidPosition;
     }
 
-    const set_position = requsted_rect.x != vp.clipping_rect.x or requsted_rect.y != vp.clipping_rect.y;
-    vp.clipping_rect = requsted_rect;
+    const set_position = pos.x != vp.clipping_rect.x or pos.y != vp.clipping_rect.y;
+    vp.clipping_rect.x = pos.x;
+    vp.clipping_rect.y = pos.y;
 
     if (set_position) {
         vp.subsurface.set_position(
@@ -443,12 +439,36 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
         );
     }
 
-    const size = vp.min_source_size(win);
+    _ = wl.display.flush();
+}
+
+pub fn sub_viewport_size_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_size_set)) !void {
+    const key = blk: {
+        const rs = try wl.resources_get(args.client_id);
+        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
+            return error.SubViewportDoesNotExist;
+    };
+
+    std.debug.assert(key.viewport_id.is_server_id());
+
+    const size = args.payload.size;
+    const rs = try wl.resources_get(key.client_id);
+    const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
+    const win = wl.window_from_viewport_key(key) orelse return error.ViewportHasNoWindow;
+
+    if (size.width <= 0 or size.height <= 0) {
+        return error.InvalidSize;
+    }
+
+    vp.clipping_rect.width = size.width;
+    vp.clipping_rect.height = size.height;
+
+    const min_size = vp.min_source_size(win);
     vp.viewport.setSource(
         .fromInt(0),
         .fromInt(0),
-        .fromInt(@intCast(size.width)),
-        .fromInt(@intCast(size.height)),
+        .fromInt(@intCast(min_size.width)),
+        .fromInt(@intCast(min_size.height)),
     );
     vp.surface.commit();
 
@@ -464,7 +484,6 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
 
     _ = wl.display.flush();
 }
-
 pub fn sub_viewport_display_state_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_display_state_set)) !void {
     const key = blk: {
         const rs = try wl.resources_get(args.client_id);

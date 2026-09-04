@@ -22,7 +22,8 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_destroy: ViewportDestroy,
 
     sub_viewport_embed: SubViewportEmbed,
-    sub_viewport_rect_set: SubViewportRectSet,
+    sub_viewport_pos_set: SubViewportPosSet,
+    sub_viewport_size_set: SubViewportSizeSet,
     sub_viewport_display_state_set: SubViewportDisplayStateSet,
 
     cursor_shape_set: CursorShape,
@@ -56,9 +57,14 @@ pub const MessagePayload = union(enum(u32)) {
         embeder_viewport_id: types.ViewportID,
     };
 
-    pub const SubViewportRectSet = struct {
+    pub const SubViewportPosSet = struct {
         sub_viewport_id: types.SubViewportID,
-        rect: types.Rect,
+        pos: types.Pos,
+    };
+
+    pub const SubViewportSizeSet = struct {
+        sub_viewport_id: types.SubViewportID,
+        size: types.Size,
     };
 
     pub const BufferCreateCpuWithFd = struct {
@@ -143,18 +149,7 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
             );
         },
 
-        .register,
-        .sub_viewport_embed,
-        .sub_viewport_rect_set,
-        .cursor_shape_set,
-        .buffer_present,
-        .buffer_present_with_sync,
-        .buffer_destroy,
-        .viewport_create,
-        .generate_client_full_id,
-        .sub_viewport_display_state_set,
-        .viewport_destroy,
-        => {
+        inline else => {
             var buf: [4096]u8 = undefined;
             var writer = stream.writer(io, &buf);
 
@@ -242,18 +237,7 @@ fn read_and_parse_data_json_linux(
             return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
 
-        .register,
-        .sub_viewport_embed,
-        .sub_viewport_rect_set,
-        .cursor_shape_set,
-        .buffer_present,
-        .buffer_present_with_sync,
-        .buffer_destroy,
-        .viewport_create,
-        .generate_client_full_id,
-        .sub_viewport_display_state_set,
-        .viewport_destroy,
-        => {
+        inline else => {
             return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
         },
     }
@@ -276,7 +260,8 @@ fn read_and_parse_data_json(
         .buffer_destroy,
         .cursor_shape_set,
         .sub_viewport_embed,
-        .sub_viewport_rect_set,
+        .sub_viewport_pos_set,
+        .sub_viewport_size_set,
         .viewport_create,
         .register,
         .generate_client_full_id,

@@ -182,9 +182,15 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                 .win32 => @panic("TODO"),
             }
         },
-        .sub_viewport_rect_set => |args| {
+        .sub_viewport_pos_set => |args| {
             switch (ws.native) {
-                .wayland => |wl| try wl.sub_viewport_rect_set(args),
+                .wayland => |wl| try wl.sub_viewport_pos_set(args),
+                .win32 => @panic("TODO"),
+            }
+        },
+        .sub_viewport_size_set => |args| {
+            switch (ws.native) {
+                .wayland => |wl| try wl.sub_viewport_size_set(args),
                 .win32 => @panic("TODO"),
             }
         },

@@ -94,7 +94,8 @@ pub const WindowSystemEvent = union(enum) {
     viewport_create: WithClientID(Payload.ViewportCreate),
     viewport_destroy: WithClientID(Payload.ViewportDestroy),
     sub_viewport_embed: WithClientID(Payload.SubViewportEmbed),
-    sub_viewport_rect_set: WithClientID(Payload.SubViewportRectSet),
+    sub_viewport_pos_set: WithClientID(Payload.SubViewportPosSet),
+    sub_viewport_size_set: WithClientID(Payload.SubViewportSizeSet),
     sub_viewport_display_state_set: WithClientID(Payload.SubViewportDisplayStateSet),
 
     window_resize_by_display_server: WindowResize,

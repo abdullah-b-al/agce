@@ -9,6 +9,7 @@ pub const CursorShape = ptypes.CursorShape;
 pub const ClientID = ptypes.ClientID;
 pub const Rect = ptypes.Rect;
 pub const Size = ptypes.Size;
+pub const Pos = ptypes.Pos;
 pub const ViewportDisplayState = ptypes.ViewportDisplayState;
 
 pub const Key = @import("protocol").input.Key;
@@ -374,11 +375,20 @@ pub const SubViewportHandle = opaque {
         return handle.cast().render_size;
     }
 
-    pub fn rect_get(handle: *SubViewportHandle) Rect {
-        return handle.cast().rect;
+    pub fn pos_get(handle: *SubViewportHandle) Pos {
+        return handle.cast().pos;
     }
 
-    pub fn rect_set(handle: *SubViewportHandle, rect: Rect) !void {
+    pub fn size_get(handle: *SubViewportHandle) Size {
+        return handle.cast().size;
+    }
+
+    pub fn rect_get(handle: *SubViewportHandle) Rect {
+        const svp = handle.cast();
+        return .init(svp.pos, svp.size);
+    }
+
+    pub fn pos_set(handle: *SubViewportHandle, pos: Pos) !void {
         const svp = handle.cast();
 
         switch (svp.state) {
@@ -386,19 +396,51 @@ pub const SubViewportHandle = opaque {
             .pending, .failed, .closed => return,
         }
 
-        try client_to_server.message_send_json(
-            svp.client.io,
-            svp.client.gpa,
-            svp.client.connection,
-            .{
-                .sub_viewport_rect_set = .{
-                    .rect = rect,
-                    .sub_viewport_id = svp.id,
+        if (pos.x != svp.pos.x or pos.y != svp.pos.y) {
+            try client_to_server.message_send_json(
+                svp.client.io,
+                svp.client.gpa,
+                svp.client.connection,
+                .{
+                    .sub_viewport_pos_set = .{
+                        .pos = pos,
+                        .sub_viewport_id = svp.id,
+                    },
                 },
-            },
-        );
+            );
+        }
 
-        svp.rect = rect;
+        svp.pos = pos;
+    }
+
+    pub fn size_set(handle: *SubViewportHandle, size: Size) !void {
+        const svp = handle.cast();
+
+        switch (svp.state) {
+            .shown, .hidden => {},
+            .pending, .failed, .closed => return,
+        }
+
+        if (size.width != svp.size.width or size.height != svp.size.height) {
+            try client_to_server.message_send_json(
+                svp.client.io,
+                svp.client.gpa,
+                svp.client.connection,
+                .{
+                    .sub_viewport_size_set = .{
+                        .size = size,
+                        .sub_viewport_id = svp.id,
+                    },
+                },
+            );
+        }
+
+        svp.size = size;
+    }
+
+    pub fn rect_set(handle: *SubViewportHandle, rect: Rect) !void {
+        try handle.pos_set(.from_rect(rect));
+        try handle.size_set(.from_rect(rect));
     }
 
     pub fn display_state_get(handle: *SubViewportHandle) ptypes.ViewportDisplayState {
