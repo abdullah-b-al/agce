@@ -51,7 +51,6 @@ pub fn viewport_create(
     rect: ptypes.Rect,
     render_size: ptypes.Size,
     create_sync_timeline: bool,
-    vsync: bool,
     parent: ?ViewportKey,
 ) !void {
     try rs.viewports.ensureUnusedCapacity(wl.gpa, 1);
@@ -62,7 +61,6 @@ pub fn viewport_create(
         window_id,
         rect,
         render_size,
-        vsync,
         parent,
     );
 
@@ -71,6 +69,8 @@ pub fn viewport_create(
         std.debug.assert(vp.sync_surface == null);
         vp.sync_surface = sync_surface;
     }
+
+    try wl.frame_listener_set(vp.surface, .{ .client_id = rs.client_id, .viewport_id = viewport_id });
 
     rs.viewports.putAssumeCapacity(viewport_id, vp);
 }

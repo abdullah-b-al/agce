@@ -41,7 +41,6 @@ pub const MessagePayload = union(enum(u32)) {
     pub const ViewportCreate = struct {
         viewport_id: types.ViewportID,
         create_sync_timeline: bool,
-        vsync: bool,
 
         size: types.Size,
     };

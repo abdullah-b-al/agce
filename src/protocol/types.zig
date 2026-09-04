@@ -230,7 +230,6 @@ pub const BufferAndTimelineFds = extern struct {
 pub const WindowCreate = struct {
     viewport_id: ViewportID,
     create_sync_timeline: bool,
-    vsync: bool,
     size: Size,
 };
 

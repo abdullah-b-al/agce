@@ -312,13 +312,13 @@ pub fn viewport_create(
     client: *Client,
     tag: Viewport.Renderer.Tag,
     size: ptypes.Size,
-    vsync: bool,
+    throttle: bool,
 ) !*Viewport {
     const id = client.next_viewport_id.increment_for_client();
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, size, vsync),
-        .cpu => try client.viewport_create_with_id(.cpu, id, size, vsync),
+        .gl => try client.viewport_create_with_id(.gl, id, size, throttle),
+        .cpu => try client.viewport_create_with_id(.cpu, id, size, throttle),
     };
 
     return vp;
@@ -328,7 +328,7 @@ pub fn viewport_create_from_pending(
     client: *Client,
     tag: Viewport.Renderer.Tag,
     id: ViewportID,
-    vsync: bool,
+    throttle: bool,
     size: ptypes.Size,
 ) !*Viewport {
     std.debug.assert(
@@ -336,8 +336,8 @@ pub fn viewport_create_from_pending(
     );
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, size, vsync),
-        .cpu => try client.viewport_create_with_id(.cpu, id, size, vsync),
+        .gl => try client.viewport_create_with_id(.gl, id, size, throttle),
+        .cpu => try client.viewport_create_with_id(.cpu, id, size, throttle),
     };
 
     _ = client.viewports_from_server.orderedRemove(id);
@@ -350,7 +350,7 @@ pub fn viewport_create_with_id(
     tag: Viewport.Renderer.Tag,
     id: ViewportID,
     requested_size: ptypes.Size,
-    vsync: bool,
+    throttle: bool,
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
 
@@ -365,7 +365,7 @@ pub fn viewport_create_with_id(
             client,
             requested_size,
             .argb8888,
-            vsync,
+            throttle,
             renderer,
         );
         break :blk vp;
@@ -406,15 +406,15 @@ pub fn viewport_create_with_id(
     return vp;
 }
 
-pub fn frame_wait_for_vsync_if_enabled(client: *Client, vp: *Viewport) !void {
-    if (!vp.vsync) return;
-    try frame_wait_for_vsync(client, vp);
+pub fn throttle_frames_if_enabled(client: *Client, vp: *Viewport) !void {
+    if (!vp.throttle_frames) return;
+    try throttle_frames(client, vp);
 }
 
-pub fn frame_wait_for_vsync(client: *Client, vp: *Viewport) !void {
-    std.debug.assert(vp.vsync);
+pub fn throttle_frames(client: *Client, vp: *Viewport) !void {
+    std.debug.assert(vp.throttle_frames);
 
-    while (!vp.can_render) {
+    while (vp.last_presented_refresh_cycle > vp.refresh_cycle) {
         try client.wait_for(vp.id, .frame_render);
         try client.update_by_tag(vp.id, .frame_render);
     }
@@ -438,8 +438,6 @@ pub fn send_viewport_create(
         .viewport_create = .{
             .viewport_id = viewport_id,
             .create_sync_timeline = create_sync_timeline,
-            .vsync = vp.vsync,
-
             .size = size,
         },
     });

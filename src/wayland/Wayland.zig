@@ -316,9 +316,6 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
     };
 
     try rs.viewport_mark_commit(wl.gpa, buffer_id, viewport_id);
-    if (vp.vsync) {
-        try wl.frame_listener_set(vp.surface, viewport_key);
-    }
 
     vp.surface.damage(0, 0, buffer.width(), buffer.height());
     vp.surface.attach(buffer.wl_buffer(), 0, 0);
@@ -571,7 +568,6 @@ fn viewport_create_with_sub_viewport(
         sub_viewport_data.clip_rect,
         args.payload.size,
         args.payload.create_sync_timeline,
-        args.payload.vsync,
         .{ .client_id = embeder.client_id, .viewport_id = embeder_viewport.id },
     );
 
@@ -631,7 +627,6 @@ fn viewport_create_with_window(wl: *Wayland, ws: *WindowSystem, args: Event.Type
         .{ .x = 0, .y = 0, .width = args.payload.size.width, .height = args.payload.size.height },
         args.payload.size,
         args.payload.create_sync_timeline,
-        args.payload.vsync,
         null,
     );
 
@@ -1314,22 +1309,27 @@ fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
 }
 
 fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, wl: *Wayland) void {
-    const vp_key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
+    const key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
+    cb.destroy();
 
-    const rs = wl.resources.get(vp_key.client_id) orelse return;
-    const vp = rs.viewports.get(vp_key.viewport_id) orelse return;
+    const rs = wl.resources.get(key.client_id) orelse return;
+    const vp = rs.viewports.getPtr(key.viewport_id) orelse return;
+    vp.refresh_cycle += 1;
 
     wl.dispatch.server_put(
         @src(),
         .{
             .frame_render = .{
-                .client_id = vp_key.client_id,
+                .client_id = key.client_id,
                 .payload = .{
                     .viewport_id = vp.id,
+                    .refresh_cycle = vp.refresh_cycle,
                 },
             },
         },
     ) catch {};
+
+    wl.frame_listener_set(vp.surface, key) catch {};
 }
 
 pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDeviceV1.Shape {

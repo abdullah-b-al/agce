@@ -4,10 +4,10 @@ id: ViewportID,
 window_id: WindowID,
 clipping_rect: ptypes.Rect,
 render_size: ptypes.Size,
-vsync: bool,
 state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
+refresh_cycle: u32,
 
 surface: *cwl.Surface,
 pointer: Pointer,
@@ -22,7 +22,6 @@ pub fn init(
     window_id: WindowID,
     clipping_rect: ptypes.Rect,
     render_size: ptypes.Size,
-    vsync: bool,
     parent: ?ViewportKey,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
@@ -57,9 +56,9 @@ pub fn init(
         .subsurface = .init(subsurface),
         .sync_surface = null,
         .viewport = viewport,
-        .vsync = vsync,
         .parent_key = parent,
         .state = .shown,
+        .refresh_cycle = 0,
 
         .clipping_rect = clipping_rect,
         .render_size = render_size,

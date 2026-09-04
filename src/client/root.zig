@@ -98,9 +98,9 @@ pub const ClientHandle = opaque {
         handle: *ClientHandle,
         renderer: Renderer,
         s: Size,
-        vsync: bool,
+        throttle: bool,
     ) !*ViewportHandle {
-        const vp = try handle.cast().viewport_create(renderer, s, vsync);
+        const vp = try handle.cast().viewport_create(renderer, s, throttle);
         return @ptrCast(vp);
     }
 
@@ -109,12 +109,12 @@ pub const ClientHandle = opaque {
         renderer: Renderer,
         viewport_id: ViewportID,
         s: Size,
-        vsync: bool,
+        throttle: bool,
     ) !*ViewportHandle {
         const vp = try handle.cast().viewport_create_from_pending(
             renderer,
             viewport_id,
-            vsync,
+            throttle,
             s,
         );
         return @ptrCast(vp);
@@ -248,14 +248,14 @@ pub const ViewportHandle = opaque {
         return handle.cast().event_pop();
     }
 
-    pub fn frame_wait_for_vsync_if_enabled(handle: *ViewportHandle) !void {
+    pub fn throttle_frames_if_enabled(handle: *ViewportHandle) !void {
         const vp = handle.cast();
-        try vp.client.frame_wait_for_vsync_if_enabled(vp);
+        try vp.client.throttle_frames_if_enabled(vp);
     }
 
-    pub fn frame_wait_for_vsync(handle: *ViewportHandle) !void {
+    pub fn throttle_frames(handle: *ViewportHandle) !void {
         const vp = handle.cast();
-        try vp.client.frame_wait_for_vsync(vp);
+        try vp.client.throttle_frames(vp);
     }
 
     pub fn resize(handle: *ViewportHandle, s: ptypes.Size) void {

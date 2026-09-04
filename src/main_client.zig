@@ -6,14 +6,14 @@ pub fn main(init: std.process.Init) !void {
 
     var use_cpu = false;
     var use_gl = false;
-    var vsync = false;
+    var throttle_frames = false;
     var iter = try init.minimal.args.iterateAllocator(init.gpa);
     defer iter.deinit();
     _ = iter.skip();
     while (iter.next()) |arg| {
         if (std.mem.eql(u8, arg, "use_cpu")) use_cpu = true;
         if (std.mem.eql(u8, arg, "use_gl")) use_gl = true;
-        if (std.mem.eql(u8, arg, "vsync")) vsync = true;
+        if (std.mem.eql(u8, arg, "throttle_frames")) throttle_frames = true;
     }
 
     if (!use_gl and !use_cpu) {
@@ -29,8 +29,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const size: api.Size = .{ .width = 1280, .height = 720 };
-    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try handle.viewport_create(.gl, size, vsync) else null;
-    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try handle.viewport_create(.cpu, size, vsync) else null;
+    const viewport_gl: ?*api.ViewportHandle = if (use_gl) try handle.viewport_create(.gl, size, throttle_frames) else null;
+    const viewport_cpu: ?*api.ViewportHandle = if (use_cpu) try handle.viewport_create(.cpu, size, throttle_frames) else null;
 
     var rand: std.Random.DefaultPrng = .init(0);
     const random = rand.random();

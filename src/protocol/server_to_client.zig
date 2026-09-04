@@ -94,6 +94,7 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const FrameRender = struct {
         viewport_id: types.ViewportID,
+        refresh_cycle: u32,
     };
 
     pub const ViewportClose = struct {

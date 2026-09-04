@@ -8,8 +8,9 @@ frame_number: usize,
 size: ptypes.Size,
 format: ptypes.BufferFormat,
 should_close: bool,
-vsync: bool,
-can_render: bool,
+throttle_frames: bool,
+refresh_cycle: u32,
+last_presented_refresh_cycle: u32,
 current_buffer: ?BufferID,
 
 status: Client.CreateStatus,
@@ -25,7 +26,7 @@ pub fn init(
     client: *Client,
     size: ptypes.Size,
     format: ptypes.BufferFormat,
-    vsync: bool,
+    throttle: bool,
     renderer: Renderer,
 ) Viewport {
     return .{
@@ -34,10 +35,11 @@ pub fn init(
         .id = id,
         .size = size,
         .format = format,
-        .vsync = vsync,
+        .throttle_frames = throttle,
 
         .should_close = false,
-        .can_render = true,
+        .refresh_cycle = 0,
+        .last_presented_refresh_cycle = 0,
         .frame_number = 0,
         .current_buffer = null,
 
@@ -117,7 +119,7 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
             }
         },
         .frame_render => {
-            vp.can_render = true;
+            vp.refresh_cycle = msg.refresh_cycle;
         },
     }
 }
@@ -195,9 +197,7 @@ pub fn buffer_present(vp: *Viewport) !void {
         },
     }
 
-    if (vp.vsync) {
-        vp.can_render = false;
-    }
+    vp.last_presented_refresh_cycle = vp.refresh_cycle;
 
     vp.frame_number += 1;
 }
