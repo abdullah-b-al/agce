@@ -4,13 +4,12 @@ deinited: bool,
 
 client: *Client,
 id: ViewportID,
-frame_number: usize,
 size: ptypes.Size,
 format: ptypes.BufferFormat,
 should_close: bool,
 throttle_frames: bool,
 refresh_cycle: u32,
-last_presented_refresh_cycle: u32,
+frame_number: usize,
 current_buffer: ?BufferID,
 
 status: Client.CreateStatus,
@@ -39,7 +38,6 @@ pub fn init(
 
         .should_close = false,
         .refresh_cycle = 0,
-        .last_presented_refresh_cycle = 0,
         .frame_number = 0,
         .current_buffer = null,
 
@@ -196,8 +194,6 @@ pub fn buffer_present(vp: *Viewport) !void {
             b.released = false;
         },
     }
-
-    vp.last_presented_refresh_cycle = vp.refresh_cycle;
 
     vp.frame_number += 1;
 }
