@@ -349,19 +349,14 @@ pub fn viewport_commit(wl: *Wayland, vp: *Viewport, size: ptypes.Size) void {
 
     if (vp.parent_key) |parent_key| {
         const parent = wl.viewport_from_key(parent_key).?;
-        if (size.width <= 0 or size.height <= 0 or vp.state == .hidden) {
-            if (vp.subsurface.placement != .below) {
-                vp.subsurface.set_position(0, 0);
-                vp.subsurface.place(.below, parent.surface);
-            }
-        } else {
-            if (vp.subsurface.x != vp.clipping_rect.x or vp.subsurface.y != vp.clipping_rect.y) {
-                vp.subsurface.set_position(vp.clipping_rect.x, vp.clipping_rect.y);
-            }
+        const hide = size.width <= 0 or size.height <= 0 or vp.state == .hidden;
+        vp.subsurface.set_position(vp.clipping_rect.x, vp.clipping_rect.y);
 
-            if (vp.subsurface.placement != .above) {
-                vp.subsurface.place(.above, parent.surface);
-            }
+        if (hide) {
+            vp.subsurface.set_position(0, 0);
+            vp.subsurface.place(.below, parent.surface);
+        } else {
+            vp.subsurface.place(.above, parent.surface);
         }
 
         vp.surface.commit();

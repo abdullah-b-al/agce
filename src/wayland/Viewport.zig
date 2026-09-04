@@ -169,22 +169,16 @@ pub const Pointer = struct {
 pub const Subsurface = struct {
     subsurface: *cwl.Subsurface,
     placement: Placment,
-    x: i32,
-    y: i32,
 
     pub fn init(subsurface: *cwl.Subsurface) Subsurface {
         return .{
             .subsurface = subsurface,
             .placement = .above,
-            .x = 0,
-            .y = 0,
         };
     }
 
     pub fn set_position(s: *Subsurface, x: i32, y: i32) void {
-        s.x = @max(0, x);
-        s.y = @max(0, y);
-        s.subsurface.setPosition(s.x, s.y);
+        s.subsurface.setPosition(x, y);
     }
 
     pub fn place(s: *Subsurface, p: Placment, surface: *cwl.Surface) void {
