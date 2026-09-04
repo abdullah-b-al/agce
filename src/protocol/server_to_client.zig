@@ -78,8 +78,7 @@ pub const MessagePayload = union(enum(u32)) {
 
     pub const ViewportCreate = struct {
         viewport_id: types.ViewportID,
-        width: u32,
-        height: u32,
+        size: types.Size,
     };
 
     pub const ViewportCreated = struct {

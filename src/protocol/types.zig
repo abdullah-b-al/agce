@@ -190,10 +190,10 @@ pub const ReleaseTimelinePoint = enum(u64) {
 };
 
 pub const Rect = struct {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 
     pub fn size(r: Rect) Size {
         return .{ .width = r.width, .height = r.height };
@@ -201,8 +201,8 @@ pub const Rect = struct {
 };
 
 pub const Size = struct {
-    width: u32,
-    height: u32,
+    width: i32,
+    height: i32,
 };
 
 pub const BufferFormat = enum {

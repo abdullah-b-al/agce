@@ -53,9 +53,12 @@ pub fn frame_end(r: *RendererGL, buffer: *Buffer) void {
     std.debug.assert(transfer_result == 0);
 }
 
-pub fn buffer_size(r: *const RendererGL) [2]u32 {
+pub fn buffer_size(r: *const RendererGL) ptypes.Size {
     const buffer = r.buffers_collection.available.values()[0];
-    return .{ buffer.width, buffer.height };
+    return .{
+        .width = buffer.width,
+        .height = buffer.height,
+    };
 }
 
 pub fn get_buffer(r: *RendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
@@ -145,8 +148,8 @@ pub const Buffer = struct {
     gl_context: opengl.ContextLinux,
     fbo: glad.GLuint,
 
-    width: u32,
-    height: u32,
+    width: i32,
+    height: i32,
 
     format: ptypes.BufferFormat,
     id: ptypes.BufferID,
@@ -154,7 +157,7 @@ pub const Buffer = struct {
     acquire: AcquireTimeline,
     release: ReleaseTimeline,
 
-    pub fn init(client: *Client, width: u32, height: u32, format: ptypes.BufferFormat) !Buffer {
+    pub fn init(client: *Client, width: i32, height: i32, format: ptypes.BufferFormat) !Buffer {
         const gbm = client.gbm.?;
         const bo = try gbm.bo_create(width, height);
         const gbm_texture = try opengl.egl_image_from_gbm_bo(client.gl_context.?, bo);
@@ -171,8 +174,8 @@ pub const Buffer = struct {
             .gl_context = client.gl_context.?,
             .fbo = fbo,
             .id = id,
-            .width = c_linux.gbm_bo_get_width(bo),
-            .height = c_linux.gbm_bo_get_height(bo),
+            .width = @intCast(c_linux.gbm_bo_get_width(bo)),
+            .height = @intCast(c_linux.gbm_bo_get_height(bo)),
             .format = format,
             .released = true,
             .acquire = .init(gbm),

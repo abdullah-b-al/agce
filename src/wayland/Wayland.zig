@@ -234,8 +234,7 @@ pub fn buffer_create_gpu_with_fds(wl: *Wayland, dispatch: *Dispatch, args: Event
         wl,
         args.payload.buffer_id,
         args.payload.fds,
-        @intCast(args.payload.width),
-        @intCast(args.payload.height),
+        args.payload.size,
         args.payload.format,
         args.payload.gbm_bo_modifier,
     );
@@ -250,8 +249,7 @@ pub fn buffer_create_cpu_with_fd(wl: *Wayland, args: Event.TypeOf(.buffer_create
         wl,
         args.payload.buffer_id,
         args.payload.fd,
-        @intCast(args.payload.width),
-        @intCast(args.payload.height),
+        args.payload.size,
         args.payload.format,
     );
 
@@ -391,6 +389,10 @@ pub fn buffer_destroy(wl: *Wayland, args: Event.TypeOf(.buffer_destroy)) !void {
 }
 
 pub fn viewport_create(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !WindowSystem.ViewportCreateResult {
+    if (args.payload.size.width <= 0 or args.payload.size.height <= 0) {
+        return error.InvalidSize;
+    }
+
     if (args.payload.viewport_id.is_server_id()) {
         return try wl.viewport_create_with_sub_viewport(ws, args);
     } else {
@@ -427,8 +429,7 @@ pub fn sub_viewport_embed(wl: *Wayland, args: Event.TypeOf(.sub_viewport_embed))
             .client_id = args.payload.client_id_to_embed,
             .payload = .{
                 .viewport_id = viewport_id,
-                .width = args.payload.rect.width,
-                .height = args.payload.rect.height,
+                .size = args.payload.rect.size(),
             },
         },
     });
@@ -447,8 +448,15 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
     const rs = try wl.resources_get(key.client_id);
     const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    const set_position = requsted_rect.x != vp.clipping_rect.x or requsted_rect.y != vp.clipping_rect.y;
+    if (requsted_rect.x < 0 or
+        requsted_rect.y < 0 or
+        requsted_rect.width <= 0 or
+        requsted_rect.height <= 0)
+    {
+        return error.InvalidRect;
+    }
 
+    const set_position = requsted_rect.x != vp.clipping_rect.x or requsted_rect.y != vp.clipping_rect.y;
     vp.clipping_rect = requsted_rect;
 
     if (set_position) {
@@ -1256,13 +1264,13 @@ fn viewport_min_source_size(wl: *Wayland, vp: *const Viewport, window: *Window) 
     var width = @min(
         vp.render_size.width,
         vp.clipping_rect.width,
-        window.buffer.width,
+        window.buffer.size.width,
     );
 
     var height = @min(
         vp.render_size.height,
         vp.clipping_rect.height,
-        window.buffer.height,
+        window.buffer.size.height,
     );
     const rect_bottom = vp.clipping_rect.y + vp.clipping_rect.height;
     const rect_right = vp.clipping_rect.x + vp.clipping_rect.width;

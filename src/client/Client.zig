@@ -228,7 +228,7 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             );
             client.viewports_from_server.putAssumeCapacityNoClobber(
                 e.viewport_id,
-                .{ .width = e.width, .height = e.height },
+                e.size,
             );
         },
 
@@ -465,8 +465,10 @@ pub fn send_buffer_create_gpu_with_fds(
         .{
             .buffer_create_gpu_with_fds = .{
                 .buffer_id = buffer.id,
-                .width = c_linux.gbm_bo_get_width(buffer.bo),
-                .height = c_linux.gbm_bo_get_height(buffer.bo),
+                .size = .{
+                    .width = buffer.width,
+                    .height = buffer.height,
+                },
                 .format = buffer.format,
                 .gbm_bo_modifier = c_linux.gbm_bo_get_modifier(buffer.bo),
                 .fds = .{
@@ -492,8 +494,10 @@ pub fn send_buffer_create_cpu_with_fd(
         .{
             .buffer_create_cpu_with_fd = .{
                 .buffer_id = buffer.id,
-                .width = buffer.width,
-                .height = buffer.height,
+                .size = .{
+                    .width = buffer.width,
+                    .height = buffer.height,
+                },
                 .format = buffer.format,
                 .fd = buffer.fd,
             },
@@ -546,11 +550,11 @@ pub const Gbm = struct {
     dri: Io.File,
     device: *c_linux.struct_gbm_device,
 
-    pub fn bo_create(gbm: Gbm, width: u32, height: u32) !*c_linux.struct_gbm_bo {
+    pub fn bo_create(gbm: Gbm, width: i32, height: i32) !*c_linux.struct_gbm_bo {
         return c_linux.gbm_bo_create(
             gbm.device,
-            width,
-            height,
+            @intCast(width),
+            @intCast(height),
             c_linux.GBM_BO_FORMAT_ARGB8888,
             c_linux.GBM_BO_USE_RENDERING,
         ) orelse error.FailedToGbmBoCreate;

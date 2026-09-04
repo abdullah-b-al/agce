@@ -28,9 +28,12 @@ pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ViewportResize) !void {
     }
 }
 
-pub fn buffer_size(r: *const RendererCpu) [2]u32 {
+pub fn buffer_size(r: *const RendererCpu) ptypes.Size {
     const buffer = r.buffers_collection.available.values()[0];
-    return .{ buffer.width, buffer.height };
+    return .{
+        .width = buffer.width,
+        .height = buffer.height,
+    };
 }
 
 pub fn get_buffer(r: *RendererCpu) ?*Buffer {
@@ -58,12 +61,12 @@ pub fn buffer_released(r: *RendererCpu, id: BufferID) void {
 
 pub fn buffer_destroyed(_: *RendererCpu, _: BufferID) void {}
 
-fn create_fd(size: usize) !struct { c_int, []align(std.heap.page_size_min) u8 } {
+fn create_fd(size: i32) !struct { c_int, []align(std.heap.page_size_min) u8 } {
     const fd = try std.posix.memfd_create("agce-buffer", 0);
     if (std.posix.errno(std.posix.system.ftruncate(fd, @intCast(size))) != .SUCCESS) return error.FtruncateFailed;
     const buffer = try std.posix.mmap(
         null,
-        size,
+        @intCast(size),
         .{ .READ = true, .WRITE = true },
         .{ .TYPE = .SHARED },
         fd,
@@ -78,11 +81,11 @@ pub const Buffer = struct {
     fd: ptypes.CpuBufferFd,
     data: []align(std.heap.page_size_min) u8,
     released: bool,
-    width: u32,
-    height: u32,
+    width: i32,
+    height: i32,
     format: ptypes.BufferFormat,
 
-    pub fn init(client: *Client, width: u32, height: u32, format: ptypes.BufferFormat) !Buffer {
+    pub fn init(client: *Client, width: i32, height: i32, format: ptypes.BufferFormat) !Buffer {
         const s = width * height * format.bytes_per_pixel();
         const fd, const buffer = try create_fd(s);
 

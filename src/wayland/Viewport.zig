@@ -181,9 +181,9 @@ pub const Subsurface = struct {
         };
     }
 
-    pub fn set_position(s: *Subsurface, x: u32, y: u32) void {
-        s.x = @intCast(x);
-        s.y = @intCast(y);
+    pub fn set_position(s: *Subsurface, x: i32, y: i32) void {
+        s.x = @max(0, x);
+        s.y = @max(0, y);
         s.subsurface.setPosition(s.x, s.y);
     }
 

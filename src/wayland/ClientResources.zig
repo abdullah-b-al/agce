@@ -80,14 +80,13 @@ pub fn buffer_create_and_register_cpu(
     wl: *Wayland,
     id: BufferID,
     fd: CpuBufferFd,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
     format: BufferFormat,
 ) !void {
     try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
     try wl.buffer_set_listener_prepare();
 
-    const cpu = try buffer_create_cpu(wl.shm, fd, width, height, format);
+    const cpu = try buffer_create_cpu(wl.shm, fd, size, format);
     std.debug.assert(std.os.linux.close(@intFromEnum(fd)) == 0);
     wl.buffer_set_listener(rs, cpu.wl_buffer, id);
 
@@ -97,25 +96,23 @@ pub fn buffer_create_and_register_cpu(
 pub fn buffer_create_cpu(
     shm: *cwl.Shm,
     fd: CpuBufferFd,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
     format: BufferFormat,
 ) !CpuBuffer {
-    const stride = width * format.bytes_per_pixel();
-    const size = width * height * format.bytes_per_pixel();
-    const pool = try shm.createPool(@intFromEnum(fd), size);
+    const stride = size.width * format.bytes_per_pixel();
+    const byte_size = size.width * size.height * format.bytes_per_pixel();
+    const pool = try shm.createPool(@intFromEnum(fd), byte_size);
     defer pool.destroy();
 
     const wl_format: cwl.Shm.Format = switch (format) {
         .argb8888 => .argb8888,
     };
 
-    const buffer = try pool.createBuffer(0, width, height, stride, wl_format);
+    const buffer = try pool.createBuffer(0, size.width, size.height, stride, wl_format);
 
     return .{
         .wl_buffer = buffer,
-        .width = width,
-        .height = height,
+        .size = size,
         .format = format,
     };
 }
@@ -126,14 +123,13 @@ pub fn buffer_create_and_register_gpu_async(
     wl: *Wayland,
     id: BufferID,
     fds: BufferAndTimelineFds,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
     b_format: BufferFormat,
     modifier: u64,
 ) !void {
     const mod_lo: u32 = @intCast(modifier & 0xFF_FF_FF_FF);
     const mod_hi: u32 = @intCast(modifier >> 32);
-    const stride: u32 = @intCast(width * b_format.bytes_per_pixel());
+    const stride: u32 = @intCast(size.width * b_format.bytes_per_pixel());
     const format = switch (b_format) {
         .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
     };
@@ -161,13 +157,12 @@ pub fn buffer_create_and_register_gpu_async(
         .wl_buffer = undefined,
         .timeline_acquire = timeline_acquire,
         .timeline_release = timeline_release,
-        .width = width,
-        .height = height,
+        .size = size,
     };
 
     data.* = .{ .buffer_id = id, .client_id = rs.client_id, .wl = wl, .dispatch = dispatch, .gpu = gpu };
     params.add(@intFromEnum(fds.buffer), 0, 0, stride, mod_hi, mod_lo);
-    params.create(width, height, format, .{});
+    params.create(size.width, size.height, format, .{});
     params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
 
     std.debug.assert(std.os.linux.close(@intFromEnum(fds.buffer)) == 0);
@@ -246,13 +241,13 @@ pub const Buffer = union(enum) {
 
     pub fn width(b: Buffer) i32 {
         return switch (b) {
-            inline else => |v| v.width,
+            inline else => |v| v.size.width,
         };
     }
 
     pub fn height(b: Buffer) i32 {
         return switch (b) {
-            inline else => |v| v.height,
+            inline else => |v| v.size.height,
         };
     }
 };
@@ -261,8 +256,7 @@ pub const GpuBuffer = struct {
     wl_buffer: *cwl.Buffer,
     timeline_acquire: ?Viewport.AcquireTimeline,
     timeline_release: ?Viewport.ReleaseTimeline,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
 
     pub fn destroy(gpu: GpuBuffer) void {
         gpu.wl_buffer.destroy();
@@ -273,8 +267,7 @@ pub const GpuBuffer = struct {
 
 pub const CpuBuffer = struct {
     wl_buffer: *cwl.Buffer,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
     format: BufferFormat,
 
     pub fn destroy(cpu: CpuBuffer) void {
@@ -310,8 +303,7 @@ pub const RegisterGpuBuffer = struct {
                     .{
                         .gpu = .{
                             .wl_buffer = result.buffer,
-                            .width = data.gpu.width,
-                            .height = data.gpu.height,
+                            .size = data.gpu.size,
                             .timeline_acquire = data.gpu.timeline_acquire,
                             .timeline_release = data.gpu.timeline_release,
                         },

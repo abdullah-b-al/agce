@@ -129,8 +129,8 @@ pub fn viewport_resize(vp: *Viewport, size: ptypes.Size) void {
         inline else => |r| r.buffer_size(),
     };
 
-    const width = @min(buffer_size[0], size.width);
-    const height = @min(buffer_size[1], size.height);
+    const width = @min(buffer_size.width, size.width);
+    const height = @min(buffer_size.height, size.height);
 
     vp.size = .{ .width = width, .height = height };
 }

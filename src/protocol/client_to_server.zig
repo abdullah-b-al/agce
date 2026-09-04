@@ -66,8 +66,7 @@ pub const MessagePayload = union(enum(u32)) {
 
         fd: types.CpuBufferFd,
 
-        width: u32,
-        height: u32,
+        size: types.Size,
         format: types.BufferFormat,
     };
 
@@ -76,8 +75,7 @@ pub const MessagePayload = union(enum(u32)) {
 
         fds: types.BufferAndTimelineFds,
 
-        width: u32,
-        height: u32,
+        size: types.Size,
         format: types.BufferFormat,
 
         gbm_bo_modifier: u64,

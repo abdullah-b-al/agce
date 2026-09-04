@@ -372,8 +372,7 @@ pub fn window_system_event_from_message(
                     .payload = .{
                         .buffer_id = msg.buffer_id,
                         .fd = msg.fd,
-                        .width = msg.width,
-                        .height = msg.height,
+                        .size = msg.size,
                         .format = msg.format,
                     },
                 },
@@ -382,8 +381,7 @@ pub fn window_system_event_from_message(
                     .payload = .{
                         .buffer_id = msg.buffer_id,
                         .fds = msg.fds,
-                        .width = msg.width,
-                        .height = msg.height,
+                        .size = msg.size,
                         .format = msg.format,
                         .gbm_bo_modifier = msg.gbm_bo_modifier,
                     },

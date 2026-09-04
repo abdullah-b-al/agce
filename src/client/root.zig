@@ -338,8 +338,8 @@ pub const ViewportHandle = opaque {
 
     pub const CpuFrameBegin = struct {
         buffer: []u8,
-        width: u32,
-        height: u32,
+        width: i32,
+        height: i32,
         bytes_per_pixel: u8,
         viewport_size: Size,
     };

@@ -65,8 +65,7 @@ pub fn create(
     const buffer = try ClientResources.buffer_create_cpu(
         wl.shm,
         fd,
-        @intCast(width),
-        @intCast(height),
+        .{ .width = width, .height = height },
         format,
     );
 
@@ -105,7 +104,7 @@ pub fn destroy(window: *Window, gpa: std.mem.Allocator) void {
 
 pub fn commit(win: *Window) void {
     win.commited_once = true;
-    win.surface.damage(0, 0, win.buffer.width, win.buffer.height);
+    win.surface.damage(0, 0, win.buffer.size.width, win.buffer.size.height);
     win.surface.attach(win.buffer.wl_buffer, 0, 0);
     win.surface.commit();
 }
@@ -116,12 +115,12 @@ pub fn viewport_bound(win: *Window, wl: *Wayland) void {
 
     const width = @min(
         vp.render_size.width,
-        win.buffer.width,
+        win.buffer.size.width,
     );
 
     const height = @min(
         vp.render_size.height,
-        win.buffer.height,
+        win.buffer.size.height,
     );
     win.viewport.setSource(
         .fromInt(0),
@@ -137,7 +136,7 @@ pub fn resize(win: *Window, wl: *Wayland, requested_size: ptypes.Size) !void {
         @intCast(requested_size.height),
     );
 
-    if (width <= win.buffer.width and height <= win.buffer.height) {
+    if (width <= win.buffer.size.width and height <= win.buffer.size.height) {
         return;
     }
 
@@ -160,8 +159,7 @@ pub fn resize(win: *Window, wl: *Wayland, requested_size: ptypes.Size) !void {
     const new_buffer = try ClientResources.buffer_create_cpu(
         wl.shm,
         fd,
-        @intCast(width),
-        @intCast(height),
+        .{ .width = width, .height = height },
         win.buffer.format,
     );
 
