@@ -93,6 +93,39 @@ pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubView
     return null;
 }
 
+pub fn min_source_size(vp: *const Viewport, window: *Window) ptypes.Size {
+    const width = @min(
+        vp.render_size.width,
+        vp.clipping_rect.width,
+        window.buffer.size.width,
+    );
+
+    const height = @min(
+        vp.render_size.height,
+        vp.clipping_rect.height,
+        window.buffer.size.height,
+    );
+
+    return .{
+        .width = @max(1, width),
+        .height = @max(1, height),
+    };
+}
+
+pub fn min_source_size_with_buffer(vp: *const Viewport, window: *Window, buffer: *Buffer) ptypes.Size {
+    const size = vp.min_source_size(window);
+    return .{
+        .width = @max(
+            1,
+            @min(size.width, buffer.width()),
+        ),
+        .height = @max(
+            1,
+            @min(size.height, buffer.height()),
+        ),
+    };
+}
+
 pub const AcquireTimeline = struct {
     acquire: *wp.LinuxDrmSyncobjTimelineV1,
 

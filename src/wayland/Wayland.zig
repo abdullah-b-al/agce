@@ -295,6 +295,7 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
     const rs = try wl.resources_get(client_id);
 
     vp.render_size = viewport_size;
+
     if (vp.parent_key == null) {
         vp.clipping_rect = .{
             .x = 0,
@@ -333,37 +334,17 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
         },
     }
 
-    const size = wl.viewport_min_source_size_with_buffer(vp, win, buffer);
-    wl.viewport_commit(vp, size);
-
-    _ = wl.display.flush();
-}
-
-pub fn viewport_commit(wl: *Wayland, vp: *Viewport, size: ptypes.Size) void {
+    const size = vp.min_source_size_with_buffer(win, buffer);
     vp.viewport.setSource(
         .fromInt(0),
         .fromInt(0),
-        .fromInt(@intCast(@max(1, size.width))),
-        .fromInt(@intCast(@max(1, size.height))),
+        .fromInt(@intCast(size.width)),
+        .fromInt(@intCast(size.height)),
     );
 
-    if (vp.parent_key) |parent_key| {
-        const parent = wl.viewport_from_key(parent_key).?;
-        const hide = size.width <= 0 or size.height <= 0 or vp.state == .hidden;
-        vp.subsurface.set_position(vp.clipping_rect.x, vp.clipping_rect.y);
+    vp.surface.commit();
 
-        if (hide) {
-            vp.subsurface.set_position(0, 0);
-            vp.subsurface.place(.below, parent.surface);
-        } else {
-            vp.subsurface.place(.above, parent.surface);
-        }
-
-        vp.surface.commit();
-        parent.surface.commit();
-    } else {
-        vp.surface.commit();
-    }
+    _ = wl.display.flush();
 }
 
 pub fn buffer_destroy(wl: *Wayland, args: Event.TypeOf(.buffer_destroy)) !void {
@@ -462,8 +443,14 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
         );
     }
 
-    const size = wl.viewport_min_source_size(vp, win);
-    wl.viewport_commit(vp, size);
+    const size = vp.min_source_size(win);
+    vp.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(size.width)),
+        .fromInt(@intCast(size.height)),
+    );
+    vp.surface.commit();
 
     try wl.dispatch.server_put(@src(), .{
         .viewport_resize = .{
@@ -494,10 +481,31 @@ pub fn sub_viewport_display_state_set(wl: *Wayland, args: Event.TypeOf(.sub_view
     const old = vp.state;
     vp.state = args.payload.state;
 
-    if (vp.state != old) {
-        const size = wl.viewport_min_source_size(vp, win);
-        wl.viewport_commit(vp, size);
+    if (vp.state == old) return;
+
+    const size = vp.min_source_size(win);
+    vp.viewport.setSource(
+        .fromInt(0),
+        .fromInt(0),
+        .fromInt(@intCast(size.width)),
+        .fromInt(@intCast(size.height)),
+    );
+
+    const parent_key = vp.parent_key.?;
+    const parent = wl.viewport_from_key(parent_key).?;
+    switch (vp.state) {
+        .hidden => {
+            vp.subsurface.set_position(0, 0);
+            vp.subsurface.place(.below, parent.surface);
+        },
+        .shown => {
+            vp.subsurface.set_position(vp.clipping_rect.x, vp.clipping_rect.y);
+            vp.subsurface.place(.above, parent.surface);
+        },
     }
+
+    vp.surface.commit();
+    parent.surface.commit();
 
     try wl.dispatch.server_put(
         @src(),
@@ -1249,65 +1257,17 @@ pub fn frame_listener_set(wl: *Wayland, surface: *cwl.Surface, key: ViewportKey)
     wl.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
 }
 
-fn viewport_min_source_size(wl: *Wayland, vp: *const Viewport, window: *Window) ptypes.Size {
-    const parent_rect = if (vp.parent_key) |key| blk: {
-        const rs = wl.resources_get(key.client_id) catch unreachable;
-        const p = rs.viewports.getPtr(key.viewport_id).?;
-        break :blk wl.viewport_min_source_size(p, window);
-    } else null;
-
-    var width = @min(
-        vp.render_size.width,
-        vp.clipping_rect.width,
-        window.buffer.size.width,
-    );
-
-    var height = @min(
-        vp.render_size.height,
-        vp.clipping_rect.height,
-        window.buffer.size.height,
-    );
-    const rect_bottom = vp.clipping_rect.y + vp.clipping_rect.height;
-    const rect_right = vp.clipping_rect.x + vp.clipping_rect.width;
-
-    if (parent_rect) |p| {
-        if (rect_right >= p.width) {
-            width -= @intCast(rect_right - p.width);
-        }
-
-        if (rect_bottom >= p.height) {
-            height -= @intCast(rect_bottom - p.height);
-        }
-    }
-
-    return .{ .width = @max(0, width), .height = @max(0, height) };
-}
-
-fn viewport_min_source_size_with_buffer(wl: *Wayland, vp: *const Viewport, window: *Window, buffer: *Buffer) ptypes.Size {
-    const size = wl.viewport_min_source_size(vp, window);
-    return .{
-        .width = @max(
-            0,
-            @min(size.width, buffer.width()),
-        ),
-        .height = @max(
-            0,
-            @min(size.height, buffer.height()),
-        ),
-    };
-}
-
 fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
     const parent_key = vp.parent_key orelse return vp.clipping_rect;
     const rs = wl.resources_get(parent_key.client_id) catch unreachable;
     const p = rs.viewports.getPtr(parent_key.viewport_id).?;
 
-    const gp = wl.find_real_clip_rect(p);
+    const parent_rect = wl.find_real_clip_rect(p);
     return .{
-        .x = vp.clipping_rect.x + p.clipping_rect.x + gp.x,
-        .y = vp.clipping_rect.y + p.clipping_rect.y + gp.y,
-        .width = @min(vp.clipping_rect.width, p.clipping_rect.width, gp.width),
-        .height = @min(vp.clipping_rect.height, p.clipping_rect.height, gp.height),
+        .x = vp.clipping_rect.x + parent_rect.x,
+        .y = vp.clipping_rect.y + parent_rect.y,
+        .width = @min(vp.clipping_rect.width, parent_rect.width),
+        .height = @min(vp.clipping_rect.height, parent_rect.height),
     };
 }
 
