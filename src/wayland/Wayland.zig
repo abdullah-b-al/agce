@@ -290,7 +290,7 @@ pub fn buffer_present(wl: *Wayland, args: BufferPresent) !void {
         return;
     };
 
-    const win = wl.window_from_viewport_key(viewport_key);
+    const win = wl.window_from_viewport_key(viewport_key) orelse return error.ViewportHasNoWindow;
 
     const rs = try wl.resources_get(client_id);
 
@@ -442,6 +442,7 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
     const requsted_rect = args.payload.rect;
     const rs = try wl.resources_get(key.client_id);
     const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
+    const win = wl.window_from_viewport_key(key) orelse return error.ViewportHasNoWindow;
 
     if (requsted_rect.x < 0 or
         requsted_rect.y < 0 or
@@ -461,7 +462,6 @@ pub fn sub_viewport_rect_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_rect
         );
     }
 
-    const win = wl.window_from_viewport_key(key);
     const size = wl.viewport_min_source_size(vp, win);
     wl.viewport_commit(vp, size);
 
@@ -1185,7 +1185,7 @@ pub fn window_id_from_xdg_surface(wl: *const Wayland, xdg_surface: *xdg.Surface)
     unreachable;
 }
 
-pub fn window_from_viewport_key(wl: *Wayland, key: ViewportKey) *Window {
+pub fn window_from_viewport_key(wl: *Wayland, key: ViewportKey) ?*Window {
     var root = key;
 
     while (true) {
@@ -1200,7 +1200,7 @@ pub fn window_from_viewport_key(wl: *Wayland, key: ViewportKey) *Window {
         }
     }
 
-    unreachable;
+    return null;
 }
 
 pub fn window_id_from_window_surface(wl: *const Wayland, surface: *cwl.Surface) ?WindowID {
