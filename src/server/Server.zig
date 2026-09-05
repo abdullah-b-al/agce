@@ -239,7 +239,47 @@ pub fn handle_event(
     }
 }
 
-fn handle_message_from_known(server: *Server, message: ReceivedMessage) !void {
+const HandleMessageError = error{
+    ConcurrencyUnavailable,
+    Canceled,
+    SystemResources,
+    ConnectionResetByPeer,
+    SocketUnconnected,
+    Unexpected,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    MessageOversize,
+    NetworkDown,
+    PortUnreachable,
+    OutOfMemory,
+    Overflow,
+    InvalidCharacter,
+    ConnectionClosed,
+    HeaderInvalidLen,
+    HeaderInvalidFormat,
+    HeaderInvalidMessageTag,
+    RecvMsgFailed,
+    UnexpectedToken,
+    InvalidNumber,
+    InvalidEnumTag,
+    DuplicateField,
+    UnknownField,
+    MissingField,
+    LengthMismatch,
+    SyntaxError,
+    UnexpectedEndOfInput,
+    BufferUnderrun,
+    ValueTooLong,
+    UnsupportedMessageOnOs,
+    WriteFailed,
+
+    // linux only
+    CmsgNoHeader,
+    CmsgInvalidLevel,
+    CmsgInvalidType,
+};
+
+fn handle_message_from_known(server: *Server, message: ReceivedMessage) HandleMessageError!void {
     std.debug.assert(message.from == .known);
 
     const client_id = message.from.known;

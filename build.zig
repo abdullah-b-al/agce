@@ -110,20 +110,28 @@ pub fn build(b: *std.Build) !void {
     switch (target.result.os.tag) {
         .windows => {
             const win32 = b.dependency("win32", .{});
-            const exe = b.addExecutable(.{
-                .name = "agce",
-                .root_module = b.createModule(.{
-                    .root_source_file = b.path("src/main.zig"),
-                    .target = target,
-                    .optimize = optimize,
-                    .imports = &.{
-                        .{ .name = "win32", .module = win32.module("win32") },
-                    },
-                }),
+            const module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "win32", .module = win32.module("win32") },
+                    .{ .name = "protocol", .module = protocol },
+                    .{ .name = "utils", .module = utils },
+                    .{ .name = "constants", .module = constants },
+                },
             });
 
-            b.installArtifact(exe);
-            check.dependOn(&exe.step);
+            const exe = b.addExecutable(.{ .name = "agce", .root_module = module });
+            step_server.dependOn(&(b.addInstallArtifact(exe, .{}).step));
+
+            const exe_check = b.addExecutable(.{
+                .name = "agce",
+                .root_module = module,
+                .use_llvm = false,
+            });
+
+            check.dependOn(&exe_check.step);
         },
         .linux => {
             const Scanner = @import("wayland").Scanner;

@@ -1,14 +1,8 @@
 const Viewport = @This();
 
-id: ViewportID,
-window_id: WindowID,
-clipping_rect: ptypes.Rect,
-render_size: ptypes.Size,
-state: ptypes.ViewportDisplayState,
-parent_key: ?ViewportKey,
-sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
-refresh_cycle: u32,
+base: *const WindowSystem.Viewport,
 
+refresh_cycle: u32,
 surface: *cwl.Surface,
 pointer: Pointer,
 subsurface: Subsurface,
@@ -16,22 +10,20 @@ viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 
 pub fn init(
+    ws: *WindowSystem,
     wl: *Wayland,
-    parent_surface: *cwl.Surface,
-    key: ViewportKey,
-    window_id: WindowID,
-    clipping_rect: ptypes.Rect,
-    render_size: ptypes.Size,
-    parent: ?ViewportKey,
+    base: *const WindowSystem.Viewport,
+    parent: ParentOfViewport,
+    client_id: ClientID,
+    create_sync_timeline: bool,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
 
-    if (parent) |p| {
-        std.debug.assert(key.viewport_id.is_server_id());
-        std.debug.assert(!std.meta.eql(p, key));
-    }
-
+    const parent_surface = switch (parent) {
+        .window => |win| win.native.wayland.surface,
+        .viewport => |vp| vp.native.wayland.surface,
+    };
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
     subsurface.setDesync();
     const viewport = try wl.viewporter.getViewport(surface);
@@ -39,42 +31,34 @@ pub fn init(
     viewport.setSource(
         .fromInt(0),
         .fromInt(0),
-        .fromInt(@intCast(@min(render_size.width, clipping_rect.width))),
-        .fromInt(@intCast(@min(render_size.height, clipping_rect.height))),
+        .fromInt(@intCast(@min(base.render_size.width, base.clipping_rect.width))),
+        .fromInt(@intCast(@min(base.render_size.height, base.clipping_rect.height))),
     );
 
     subsurface.setPosition(
-        @intCast(clipping_rect.x),
-        @intCast(clipping_rect.y),
+        @intCast(base.clipping_rect.x),
+        @intCast(base.clipping_rect.y),
     );
 
+    const sync_surface = if (create_sync_timeline)
+        try wl.sync_object_manager.getSurface(surface)
+    else
+        null;
+
+    try Wayland.frame_listener_set(ws, surface, .{ .client_id = client_id, .viewport_id = base.id });
+
     return .{
-        .id = key.viewport_id,
-        .window_id = window_id,
+        .base = base,
         .surface = surface,
         .pointer = .init,
         .subsurface = .init(subsurface),
-        .sync_surface = null,
+        .sync_surface = sync_surface,
         .viewport = viewport,
-        .parent_key = parent,
-        .state = .shown,
         .refresh_cycle = 0,
-
-        .clipping_rect = clipping_rect,
-        .render_size = render_size,
-
-        .sub_viewports = .empty,
     };
 }
 
-pub fn deinit(vp: *Viewport, gpa: std.mem.Allocator) void {
-    // Sub-viewports should be closed before calling deinit
-    std.debug.assert(vp.sub_viewports.count() == 0);
-    // If the viewport is a sub-viewport we must inform the parent then set to null
-    std.debug.assert(vp.parent_key == null);
-
-    vp.sub_viewports.deinit(gpa);
-
+pub fn deinit(vp: *Viewport) void {
     if (vp.sync_surface) |sync| {
         sync.destroy();
     }
@@ -95,14 +79,14 @@ pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubView
 
 pub fn min_source_size(vp: *const Viewport, window: *Window) ptypes.Size {
     const width = @min(
-        vp.render_size.width,
-        vp.clipping_rect.width,
+        vp.base.render_size.width,
+        vp.base.clipping_rect.width,
         window.buffer.size.width,
     );
 
     const height = @min(
-        vp.render_size.height,
-        vp.clipping_rect.height,
+        vp.base.render_size.height,
+        vp.base.clipping_rect.height,
         window.buffer.size.height,
     );
 
@@ -231,8 +215,9 @@ const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const ptypes = @import("protocol").types;
-const ClientID = @import("../server/Clients.zig").ClientID;
+const ClientID = ptypes.ClientID;
 const WindowSystem = @import("../WindowSystem.zig");
+const ParentOfViewport = WindowSystem.ParentOfViewport;
 const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
 const ViewportID = ptypes.ViewportID;
@@ -240,5 +225,4 @@ const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");
 const Wayland = @import("Wayland.zig");
 const Window = @import("Window.zig");
-const Buffer = @import("ClientResources.zig").Buffer;
-const SubViewport = @import("SubViewport.zig");
+const Buffer = Wayland.Buffer;

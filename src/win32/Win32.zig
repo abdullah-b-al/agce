@@ -3,11 +3,12 @@ const Win32 = @This();
 gpa: std.mem.Allocator,
 
 instance: foundation.HINSTANCE,
-windows: std.ArrayList(Window),
-cmd_show: c_int,
 class: win.WNDCLASSA,
 
-pub fn init(gpa: std.mem.Allocator, instance: foundation.HINSTANCE, cmd_show: c_int) !Win32 {
+pub fn create(gpa: std.mem.Allocator, instance: foundation.HINSTANCE) !*Win32 {
+    const ptr = try gpa.create(Win32);
+    errdefer gpa.destroy(ptr);
+
     const wc: win.WNDCLASSA = .{
         .style = .{},
         .cbClsExtra = 0,
@@ -27,20 +28,17 @@ pub fn init(gpa: std.mem.Allocator, instance: foundation.HINSTANCE, cmd_show: c_
         return error.FailedToRegisterClass;
     }
 
-    return .{
+    ptr.* = .{
         .gpa = gpa,
         .instance = instance,
-        .windows = .empty,
         .class = wc,
-        .cmd_show = cmd_show,
     };
+
+    return ptr;
 }
 
-pub fn deinit(state: *Win32) void {
-    for (state.windows.items) |*window| {
-        window.deinit(state.gpa);
-    }
-    state.windows.deinit(state.gpa);
+pub fn destroy(state: *Win32) void {
+    state.gpa.destroy(state);
 }
 
 fn window_proc(
@@ -56,6 +54,7 @@ fn window_proc(
         return win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
+    if (true) @panic("TODO");
     const state: *Win32 = @ptrFromInt(long);
     const window = blk: {
         for (state.windows.items) |*window| {

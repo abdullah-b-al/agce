@@ -1,95 +1,62 @@
 var global_dispatch: *Dispatch = undefined;
 
-fn main_common(
-    io: Io,
-    gpa: std.mem.Allocator,
-    environ_map: *std.process.Environ.Map,
-    ws: *WindowSystem,
-) !void {
-    const server = try Server.create(io, environ_map, gpa, global_dispatch);
+pub fn main(init: std.process.Init) !void {
+    global_dispatch = try .create(init.io, init.gpa);
+    defer global_dispatch.destroy();
+
+    const ws: *WindowSystem = blk: switch (WindowSystem.Native) {
+        WindowSystem.Linux => {
+            const sigaction: std.os.linux.Sigaction = .{
+                .handler = .{ .handler = &interrupt_handler },
+                .mask = @splat(0),
+                .flags = 0,
+            };
+            const result = std.os.linux.errno(std.os.linux.sigaction(.INT, &sigaction, null));
+            switch (result) {
+                .SUCCESS => {},
+                else => |e| log.err("{t}: Sigaction interrupt handler failure!", .{e}),
+            }
+
+            break :blk try .create_wayland(init.io, init.gpa, global_dispatch);
+        },
+        WindowSystem.W32 => {
+            const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
+            break :blk try .create_win32(
+                init.io,
+                init.gpa,
+                hinstance,
+                global_dispatch,
+            );
+        },
+        else => @compileError("Unsupported OS"),
+    };
+
+    defer ws.destroy();
+
+    const server = try Server.create(init.io, init.environ_map, init.gpa, global_dispatch);
     defer server.destroy();
 
     var group: Io.Group = .init;
 
-    try group.concurrent(io, main_server, .{server});
+    try group.concurrent(init.io, main_server, .{server});
 
-    switch (ws.native) {
-        .wayland => {
-            if (os_tag == .linux) {
-                try group.concurrent(io, notify_when_wayland_event_arrives, .{
-                    ws.native.wayland.display.getFd(),
-                });
+    switch (WindowSystem.Native) {
+        WindowSystem.Linux => {
+            try group.concurrent(init.io, notify_when_wayland_event_arrives, .{
+                ws.native.wayland.display.getFd(),
+            });
 
-                main_wayland(ws) catch |err| switch (err) {
-                    error.Canceled => {},
-                };
-            }
+            main_wayland(ws) catch |err| switch (err) {
+                error.Canceled => {},
+            };
         },
-        .win32 => {
-            try group.await(io);
+        WindowSystem.W32 => {
+            try group.await(init.io);
         },
+        else => unreachable,
     }
 
-    group.cancel(io);
-}
-
-pub fn main(init: std.process.Init) !void {
-    if (@import("builtin").os.tag != .linux) {
-        @compileError("Unsupported OS");
-    }
-
-    const sigaction: std.os.linux.Sigaction = .{
-        .handler = .{ .handler = &interrupt_handler },
-        .mask = @splat(0),
-        .flags = 0,
-    };
-    const result = std.os.linux.errno(std.os.linux.sigaction(.INT, &sigaction, null));
-    switch (result) {
-        .SUCCESS => {},
-        else => |e| log.err("{t}: Sigaction interrupt handler failure!", .{e}),
-    }
-
-    global_dispatch = try .create(init.io, init.gpa);
-    defer global_dispatch.destroy();
-
-    const ws: *WindowSystem = try .create_wayland(init.io, init.gpa, global_dispatch);
-    defer ws.destroy();
-    try main_common(init.io, init.gpa, init.environ_map, ws);
-}
-
-pub fn wWinMain(
-    instance: @import("win32").foundation.HINSTANCE,
-    _: ?@import("win32").foundation.HINSTANCE,
-    _: @import("win32").foundation.PWSTR,
-    cmd_show: c_int,
-) c_int {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    // defer _ = debug_allocator.deinit();
-    const gpa = debug_allocator.allocator();
-
-    var threaded: Io.Threaded = .init(gpa, .{});
-    const io = threaded.io();
-
-    const environ = threaded.environ.process_environ;
-    var environ_map = std.process.Environ.createMap(environ, gpa) catch return 1;
-    defer environ_map.deinit();
-
-    const dispatch = Dispatch.create(io, gpa) catch return 1;
-    const ws: *WindowSystem = WindowSystem.create_win32(
-        io,
-        gpa,
-        instance,
-        cmd_show,
-        dispatch,
-    ) catch |err| {
-        log.err("{}", .{err});
-        return 1;
-    };
-    defer ws.native.win32.deinit();
-
-    main_common(io, gpa, &environ_map, dispatch, ws) catch return 1;
-
-    return 0;
+    group.cancel(init.io);
 }
 
 fn notify_when_wayland_event_arrives(fd: c_int) error{Canceled}!void {

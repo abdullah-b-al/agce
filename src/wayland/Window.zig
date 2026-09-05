@@ -1,35 +1,28 @@
 const Window = @This();
 
-id: WindowID,
+base: *WindowSystem.Window,
 
 surface: *cwl.Surface,
 viewport: *wp.Viewport,
 xdg_surface: *xdg.Surface,
 xdg_toplevel: *xdg.Toplevel,
 
-viewport_key: ViewportKey,
-input_focus_keyboard: ViewportKey,
-input_focus_mouse: ViewportKey,
-
 commited_once: bool,
 configured: bool,
 
 buffer_pixels: []align(std.heap.page_size_min) u8,
-buffer: ClientResources.CpuBuffer,
+buffer: Wayland.Buffer.Cpu,
 
-pub fn create(
+pub fn init(
     wl: *Wayland,
     ws: *WindowSystem,
-    window_id: WindowID,
-    viewport_key: ViewportKey,
+    base: *WindowSystem.Window,
     requested_size: ptypes.Size,
-) !*Window {
+) !Window {
     const width, const height = utils.new_dimensions(
         @intCast(requested_size.width),
         @intCast(requested_size.height),
     );
-    const window = try wl.gpa.create(Window);
-    errdefer wl.gpa.destroy(window);
 
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
@@ -62,20 +55,18 @@ pub fn create(
         0,
     );
 
-    const buffer = try ClientResources.buffer_create_cpu(
+    const buffer = try Wayland.buffer_create_cpu(
         wl.shm,
         fd,
         .{ .width = width, .height = height },
         format,
     );
 
-    window.* = .{
-        .id = window_id,
+    const window: Window = .{
+        .base = base,
+
         .surface = surface,
         .viewport = viewport,
-        .viewport_key = viewport_key,
-        .input_focus_keyboard = viewport_key,
-        .input_focus_mouse = viewport_key,
         .xdg_surface = xdg_surface,
         .xdg_toplevel = xdg_toplevel,
         .commited_once = false,
@@ -84,13 +75,13 @@ pub fn create(
         .buffer = buffer,
     };
 
-    xdg_surface.setListener(*Wayland, Wayland.xdg_surface_listener, wl);
+    xdg_surface.setListener(*WindowSystem, Wayland.xdg_surface_listener, ws);
     xdg_toplevel.setListener(*WindowSystem, Wayland.xdg_toplevel_listener, ws);
 
     return window;
 }
 
-pub fn destroy(window: *Window, gpa: std.mem.Allocator) void {
+pub fn deinit(window: *Window) void {
     window.xdg_toplevel.destroy();
     window.xdg_surface.destroy();
     window.viewport.destroy();
@@ -98,8 +89,6 @@ pub fn destroy(window: *Window, gpa: std.mem.Allocator) void {
 
     window.buffer.wl_buffer.destroy();
     std.posix.munmap(window.buffer_pixels);
-
-    gpa.destroy(window);
 }
 
 pub fn commit(win: *Window) void {
@@ -109,9 +98,9 @@ pub fn commit(win: *Window) void {
     win.surface.commit();
 }
 
-pub fn viewport_bound(win: *Window, wl: *Wayland) void {
-    const rs = wl.resources_get(win.viewport_key.client_id) catch return;
-    const vp = rs.viewports.get(win.viewport_key.viewport_id) orelse return;
+pub fn viewport_bound(win: *Window, ws: *WindowSystem) void {
+    const rs = ws.resources.getPtr(win.base.viewport_key.client_id) orelse return;
+    const vp = rs.viewports.get(win.base.viewport_key.viewport_id) orelse return;
 
     const width = @min(
         vp.render_size.width,
@@ -156,7 +145,7 @@ pub fn resize(win: *Window, wl: *Wayland, requested_size: ptypes.Size) !void {
     );
     errdefer std.posix.munmap(pixels);
 
-    const new_buffer = try ClientResources.buffer_create_cpu(
+    const new_buffer = try Wayland.buffer_create_cpu(
         wl.shm,
         fd,
         .{ .width = width, .height = height },
@@ -203,4 +192,3 @@ const utils = @import("utils");
 const c_linux = @import("c_linux");
 const Wayland = @import("Wayland.zig");
 const ptypes = @import("protocol").types;
-const ClientResources = @import("ClientResources.zig");
