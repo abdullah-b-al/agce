@@ -69,26 +69,26 @@ pub const ClientHandle = opaque {
         try client.init_gl(major, minor);
     }
 
-    pub fn poll(handle: *ClientHandle, timeout: std.Io.Timeout) !void {
+    pub fn poll(handle: *ClientHandle, timeout_ns: u64) !void {
         const client = handle.cast();
 
+        const timeout: std.Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(timeout_ns), .clock = .awake } };
         client.poll(timeout) catch |err| switch (err) {
             error.Timeout => return,
             else => |e| return e,
         };
     }
 
-    pub fn poll_for_events(handle: *ClientHandle, id: ViewportID, timeout: std.Io.Timeout) !void {
+    pub fn poll_for_events(handle: *ClientHandle, id: ViewportID, timeout_ns: u64) !void {
         const client = handle.cast();
+        const timeout: std.Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(timeout_ns), .clock = .awake } };
         const ts: std.Io.Timestamp = .now(client.io, .awake);
         const vp = client.viewports.get(id) orelse return;
 
         // In a loop to ignore messages that are not events
         while (vp.events.items.len == 0) {
-            if (timeout.toTimestamp(client.io)) |to| {
-                if (ts.untilNow(client.io, .awake).nanoseconds >= to.raw.nanoseconds) {
-                    break;
-                }
+            if (ts.untilNow(client.io, .awake).nanoseconds >= timeout_ns) {
+                break;
             }
 
             try client.poll(timeout);

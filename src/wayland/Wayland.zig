@@ -1311,6 +1311,7 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, wl: *Wayland) void {
         },
     ) catch {};
 
+    // TODO: Handle in case of error
     wl.frame_listener_set(vp.surface, key) catch {};
 }
 

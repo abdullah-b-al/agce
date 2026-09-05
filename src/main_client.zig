@@ -38,10 +38,7 @@ pub fn main(init: std.process.Init) !void {
     var time_gpu = Io.Timestamp.now(init.io, .awake);
     var first_frame = true;
     while (true) {
-        const timeout: Io.Timeout =
-            .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
-
-        try handle.poll(timeout);
+        try handle.poll(1);
         try handle.update();
 
         const should_render_cpu =
