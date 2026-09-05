@@ -201,6 +201,7 @@ pub const ServerEvent = union(enum) {
     viewport_created: WithClientID(Payload.ViewportCreated),
     viewport_resize: WithClientID(Payload.ViewportResize),
     viewport_close: WithClientID(Payload.ViewportClose),
+    viewport_display_state: WithClientID(Payload.ViewportDisplayState),
 
     sub_viewport_embeded: WithClientID(Payload.SubviewportCreated),
     sub_viewport_display_state: WithClientID(Payload.SubViewportDisplayState),

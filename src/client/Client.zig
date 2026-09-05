@@ -211,6 +211,9 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
 
             if (process) |p| {
                 p.client_connected();
+                for (client.viewports.values()) |vp| {
+                    vp.event_push(.wake_up);
+                }
             }
         },
         .client_disconnected => |e| {
@@ -218,6 +221,10 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
                 if (p.full_id) |c| if (c.id == e.client_id) {
                     p.status = .disconnected;
                 };
+            }
+
+            for (client.viewports.values()) |vp| {
+                vp.event_push(.wake_up);
             }
         },
         .viewport_create => |e| {
@@ -233,12 +240,17 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         },
 
         .sub_viewport_embeded => |e| {
-            const vp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
+            const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
             switch (e.status) {
-                .success => vp.state = .shown,
-                .failure => vp.state = .failed,
+                .success => {
+                    if (client.viewports.get(svp.parent)) |vp| {
+                        vp.event_push(.{ .sub_viewport_embeded = svp.id });
+                    }
+                    svp.state = .shown;
+                },
+                .failure => svp.state = .failed,
             }
-            vp.render_size = e.render_size;
+            svp.render_size = e.render_size;
         },
         .sub_viewport_display_state => |e| {
             const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
@@ -254,6 +266,10 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         .sub_viewport_closed => |e| {
             const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
             svp.state = .closed;
+
+            if (client.viewports.get(svp.parent)) |vp| {
+                vp.event_push(.{ .sub_viewport_closed = svp.id });
+            }
         },
         .viewport_resize => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
@@ -263,6 +279,10 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         .viewport_close => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             vp.event_push(.{ .viewport_close = e });
+        },
+        .viewport_display_state => |e| {
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.event_push(.wake_up);
         },
 
         inline .mouse_enter,
@@ -525,7 +545,7 @@ pub fn sub_viewport_embed(
     errdefer client.gpa.destroy(svp);
 
     const id = client.next_sub_viewport_id.increment();
-    svp.* = .init(id, client, rect);
+    svp.* = .init(viewport_id, id, client, rect);
 
     client.sub_viewports.putAssumeCapacityNoClobber(id, svp);
 
@@ -587,6 +607,9 @@ pub const Event = union(enum) {
     mouse_motion: Payload.MouseMotion,
     mouse_button: Payload.MouseButton,
     mouse_scroll: Payload.MouseScroll,
+    sub_viewport_closed: SubViewportID,
+    sub_viewport_embeded: SubViewportID,
+    wake_up,
 };
 
 pub const Message = union(enum) {

@@ -2,6 +2,7 @@ const SubViewport = @This();
 
 client: *Client,
 deinited: bool,
+parent: ViewportID,
 id: SubViewportID,
 render_size: ptypes.Size,
 pos: ptypes.Pos,
@@ -9,6 +10,7 @@ size: ptypes.Size,
 state: State,
 
 pub fn init(
+    parent: ViewportID,
     id: SubViewportID,
     client: *Client,
     rect: ptypes.Rect,
@@ -16,6 +18,7 @@ pub fn init(
     return .{
         .client = client,
         .deinited = false,
+        .parent = parent,
         .id = id,
         .pos = .from_rect(rect),
         .size = .from_rect(rect),
@@ -51,6 +54,7 @@ const ptypes = @import("protocol").types;
 const c_linux = @import("c_linux");
 const glad = @import("glad");
 const SubViewportID = ptypes.SubViewportID;
+const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
 const buffers = @import("buffers.zig");

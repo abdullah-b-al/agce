@@ -485,54 +485,67 @@ pub fn sub_viewport_size_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_size
     _ = wl.display.flush();
 }
 pub fn sub_viewport_display_state_set(wl: *Wayland, args: Event.TypeOf(.sub_viewport_display_state_set)) !void {
-    const key = blk: {
+    const svp_viewport_key = blk: {
         const rs = try wl.resources_get(args.client_id);
         break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
             return error.SubViewportDoesNotExist;
     };
 
-    std.debug.assert(key.viewport_id.is_server_id());
+    std.debug.assert(svp_viewport_key.viewport_id.is_server_id());
 
-    const rs = try wl.resources_get(key.client_id);
-    const vp = rs.viewports.getPtr(key.viewport_id) orelse return error.ViewportDoesNotExist;
-    const win = wl.windows.get(vp.window_id).?;
+    const svp_rs = try wl.resources_get(svp_viewport_key.client_id);
+    const svp = svp_rs.viewports.getPtr(svp_viewport_key.viewport_id) orelse return error.ViewportDoesNotExist;
+    const win = wl.windows.get(svp.window_id) orelse return error.ViewportHasNoWindow;
 
-    const old = vp.state;
-    vp.state = args.payload.state;
+    const old = svp.state;
+    svp.state = args.payload.state;
 
-    if (vp.state == old) return;
+    if (svp.state == old) return;
 
-    const size = vp.min_source_size(win);
-    vp.viewport.setSource(
+    const size = svp.min_source_size(win);
+    svp.viewport.setSource(
         .fromInt(0),
         .fromInt(0),
         .fromInt(@intCast(size.width)),
         .fromInt(@intCast(size.height)),
     );
 
-    const parent_key = vp.parent_key.?;
+    const parent_key = svp.parent_key.?;
     const parent = wl.viewport_from_key(parent_key).?;
-    switch (vp.state) {
+    switch (svp.state) {
         .hidden => {
-            vp.subsurface.set_position(0, 0);
-            vp.subsurface.place(.below, parent.surface);
+            svp.subsurface.set_position(0, 0);
+            svp.subsurface.place(.below, parent.surface);
         },
         .shown => {
-            vp.subsurface.set_position(vp.clipping_rect.x, vp.clipping_rect.y);
-            vp.subsurface.place(.above, parent.surface);
+            svp.subsurface.set_position(svp.clipping_rect.x, svp.clipping_rect.y);
+            svp.subsurface.place(.above, parent.surface);
         },
     }
 
-    vp.surface.commit();
+    svp.surface.commit();
     parent.surface.commit();
 
     try wl.dispatch.server_put(
         @src(),
         .{
             .sub_viewport_display_state = .{
-                .client_id = rs.client_id,
+                .client_id = parent_key.client_id,
                 .payload = .{
                     .sub_viewport_id = args.payload.sub_viewport_id,
+                    .state = args.payload.state,
+                },
+            },
+        },
+    );
+
+    try wl.dispatch.server_put(
+        @src(),
+        .{
+            .viewport_display_state = .{
+                .client_id = svp_viewport_key.client_id,
+                .payload = .{
+                    .viewport_id = svp_viewport_key.viewport_id,
                     .state = args.payload.state,
                 },
             },
