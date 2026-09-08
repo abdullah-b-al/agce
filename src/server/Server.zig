@@ -93,7 +93,7 @@ pub fn arena_release(server: *Server, arena: *std.heap.ArenaAllocator) void {
 fn message_receive(server: *const Server, arena: std.mem.Allocator, client_message: ClientMessage) ReceivedMessage {
     if (client_message.err) |err| {
         return .{
-            .payload = .{ .err = err },
+            .payload = err,
             .from = switch (client_message.client) {
                 .known => |id| .{ .known = id },
                 .unknown => |index| .{ .unknown = index },
@@ -119,10 +119,7 @@ fn message_receive(server: *const Server, arena: std.mem.Allocator, client_messa
     const err_message = client_to_server.message_receive(server.io, arena, stream, timeout);
 
     return .{
-        .payload = if (err_message) |message|
-            .{ .message = message }
-        else |err|
-            .{ .err = err },
+        .payload = err_message,
 
         .from = switch (client_message.client) {
             .known => |id| .{ .known = id },
@@ -283,10 +280,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage) HandleMe
     std.debug.assert(message.from == .known);
 
     const client_id = message.from.known;
-    const msg = switch (message.payload) {
-        .err => |err| return err,
-        .message => |msg| msg orelse return,
-    };
+    const msg = (message.payload catch |err| return err) orelse return;
 
     switch (msg) {
         .generate_client_full_id => {
@@ -327,10 +321,7 @@ fn handle_message_from_unknown(
     std.debug.assert(message.from == .unknown);
 
     const index = message.from.unknown;
-    const msg = switch (message.payload) {
-        .err => |err| return err,
-        .message => |msg| msg orelse return,
-    };
+    const msg = (message.payload catch |err| return err) orelse return;
 
     const register = switch (msg) {
         .register => |r| r,
@@ -685,10 +676,7 @@ const ReceivedMessage = struct {
         unknown: usize,
     },
 
-    const Payload = union(enum) {
-        message: ?client_to_server.MessagePayload,
-        err: ErrorSetOf(client_to_server.message_receive),
-    };
+    const Payload = ErrorSetOf(client_to_server.message_receive)!?client_to_server.MessagePayload;
 };
 
 const std = @import("std");
