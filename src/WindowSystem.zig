@@ -665,7 +665,6 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
 }
 
 pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_pos_set)) !void {
-    std.debug.print("Setting pos {}\n", .{args});
     const key = blk: {
         const rs = ws.resources.getPtr(args.client_id) orelse return;
         break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse

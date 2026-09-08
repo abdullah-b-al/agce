@@ -8,7 +8,9 @@ pub fn init_linux(gbm_device: *c_linux.struct_gbm_device, major: c_int, minor: c
         c_linux.eglGetPlatformDisplay(c_linux.EGL_PLATFORM_GBM_KHR, gbm_device, null) orelse
         return error.CouldNotGetPlatformDisplay;
 
-    if (c_linux.eglInitialize(display, null, null) == c_linux.EGL_FALSE) {
+    var vmajor = major;
+    var vminor = minor;
+    if (c_linux.eglInitialize(display, &vmajor, &vminor) == c_linux.EGL_FALSE) {
         std.log.err("Failed to eglInitialize", .{});
         return error.FailedToEglInitialize;
     }

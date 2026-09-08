@@ -85,9 +85,11 @@ pub fn deinit(client: *Client) void {
         client.gpa.destroy(svp);
     }
 
-    if (client.gbm) |gbm| {
-        gbm.dri.close(client.io);
-        c_linux.gbm_device_destroy(gbm.device);
+    if (constants.os_has_gbm) {
+        if (client.gbm) |gbm| {
+            gbm.dri.close(client.io);
+            c_linux.gbm_device_destroy(gbm.device);
+        }
     }
 
     const containers = .{
@@ -376,7 +378,10 @@ pub fn viewport_create_with_id(
 
     const vp = blk: {
         const renderer: Viewport.Renderer = switch (tag) {
-            .gl => .{ .gl = .init(client.gbm.?, client.gl_context.?) },
+            .gl => if (RendererGL == Viewport.LinuxRendererGL)
+                .{ .gl = .init(client.gbm.?, client.gl_context.?) }
+            else
+                @panic("TODO"),
             .cpu => .{ .cpu = .init() },
         };
         const vp = try client.gpa.create(Viewport);
@@ -566,7 +571,7 @@ pub fn sub_viewport_embed(
     return svp;
 }
 
-pub const Gbm = struct {
+pub const Gbm = if (!constants.os_has_gbm) void else struct {
     dri: Io.File,
     device: *c_linux.struct_gbm_device,
 
@@ -679,6 +684,6 @@ const log = std.log.scoped(.Client);
 const buffers = @import("buffers.zig");
 const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
-const RendererGL = @import("RendererGL.zig");
-const RendererCpu = @import("RendererCpu.zig");
+const RendererGL = Viewport.RendererGL;
+const RendererCpu = Viewport.RendererCpu;
 const Process = @import("Process.zig");

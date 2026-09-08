@@ -2,9 +2,11 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const win32: *std.Build.Dependency = b.dependency("win32", .{});
+
     if (target.result.os.tag == .windows) {
         const meets_minimum_version =
-            target.result.os.version_range.windows.isAtLeast(.win10_rs4) orelse false;
+            target.result.os.version_range.windows.isAtLeast(.win10_cu) orelse false;
         if (!meets_minimum_version) {
             return error.UnsupportedWindowsVersion;
         }
@@ -53,6 +55,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "utils", .module = utils },
+                .{ .name = "constants", .module = constants },
             },
         });
 
@@ -75,6 +78,7 @@ pub fn build(b: *std.Build) !void {
         });
 
         if (c_linux) |c| module.addImport("c_linux", c);
+        if (target.result.os.tag == .windows) module.addImport("win32", win32.module("win32"));
 
         module.linkLibrary(glad.lib);
 
@@ -109,7 +113,6 @@ pub fn build(b: *std.Build) !void {
 
     switch (target.result.os.tag) {
         .windows => {
-            const win32 = b.dependency("win32", .{});
             const module = b.createModule(.{
                 .root_source_file = b.path("src/main.zig"),
                 .target = target,

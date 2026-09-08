@@ -65,8 +65,12 @@ pub const ClientHandle = opaque {
 
     pub fn init_opengl(handle: *ClientHandle, major: c_int, minor: c_int) !void {
         const client = handle.cast();
-        try client.init_gbm();
-        try client.init_gl(major, minor);
+        if (constants.os_has_gbm) {
+            try client.init_gbm();
+            try client.init_gl(major, minor);
+        } else {
+            @panic("TODO");
+        }
     }
 
     pub fn poll(handle: *ClientHandle, timeout_ns: u64) !void {
@@ -510,8 +514,8 @@ const ptypes = @import("protocol").types;
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;
 const Client = @import("Client.zig");
-const RendererGL = @import("RendererGL.zig");
-const RendererCpu = @import("RendererCpu.zig");
+const RendererGL = Viewport.RendererGL;
+const RendererCpu = Viewport.RendererCpu;
 const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
 const buffers = @import("buffers.zig");

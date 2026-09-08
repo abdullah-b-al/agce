@@ -61,5 +61,3 @@ const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.Viewport);
-const RendererGL = @import("RendererGL.zig");
-const RendererCpu = @import("RendererCpu.zig");

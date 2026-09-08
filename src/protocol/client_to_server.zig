@@ -137,10 +137,16 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     switch (payload) {
         .buffer_create_cpu_with_fd,
         => |p| {
+            if (!constants.os_supports_fd) {
+                @panic("OS does not support FD");
+            }
             try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, types.CpuBufferFd, p.fd);
         },
         .buffer_create_gpu_with_fds,
         => |p| {
+            if (!constants.os_supports_fd) {
+                @panic("OS does not support FD");
+            }
             try message_send_json_with_fd(
                 stream,
                 .{ .header = header, .payload = json },
@@ -199,6 +205,10 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
 }
 
 fn message_send_json_with_fd(stream: net.Stream, message: Message, comptime Fd: type, fd: Fd) !void {
+    if (!constants.os_supports_fd) {
+        @compileError("OS does not support FD");
+    }
+
     std.debug.assert(message.header.payload_len == message.payload.len);
 
     const header = std.mem.toBytes(message.header);
@@ -372,3 +382,4 @@ const os_tag = @import("builtin").os.tag;
 const types = @import("types.zig");
 const common = @import("common.zig");
 const utils = @import("utils");
+const constants = @import("constants");

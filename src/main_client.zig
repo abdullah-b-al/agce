@@ -1,9 +1,4 @@
 pub fn main(init: std.process.Init) !void {
-    if (@import("builtin").os.tag == .windows) {
-        // silence compile errors for now
-        return;
-    }
-
     var use_cpu = false;
     var use_gl = false;
     var throttle_frames = false;

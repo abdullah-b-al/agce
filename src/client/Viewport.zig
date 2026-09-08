@@ -198,6 +198,18 @@ pub fn buffer_present(vp: *Viewport) !void {
     vp.frame_number += 1;
 }
 
+pub const RendererGL = switch (os) {
+    .linux => LinuxRendererGL,
+    .windows => Win32RendererGL,
+    else => unreachable,
+};
+
+pub const RendererCpu = switch (os) {
+    .linux => LinuxRendererCpu,
+    .windows => Win32RendererCpu,
+    else => unreachable,
+};
+
 pub const Renderer = union(enum) {
     pub const Tag = std.meta.Tag(Renderer);
 
@@ -211,6 +223,11 @@ pub const Renderer = union(enum) {
         };
     }
 };
+
+pub const LinuxRendererGL = @import("LinuxRendererGL.zig");
+pub const LinuxRendererCpu = @import("LinuxRendererCpu.zig");
+pub const Win32RendererGL = @import("Win32RendererGL.zig");
+pub const Win32RendererCpu = @import("Win32RendererCpu.zig");
 
 const std = @import("std");
 const Io = std.Io;
@@ -228,5 +245,4 @@ const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const BufferPresented = server_to_client.MessagePayload.BufferPresented;
 const log = std.log.scoped(.Viewport);
-const RendererGL = @import("RendererGL.zig");
-const RendererCpu = @import("RendererCpu.zig");
+const os = @import("builtin").os.tag;

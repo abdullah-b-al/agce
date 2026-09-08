@@ -1,16 +1,16 @@
-const RendererCpu = @This();
+const LinuxRendererCpu = @This();
 
 buffers_collection: buffers.Collection(Buffer),
 
-pub fn init() RendererCpu {
+pub fn init() LinuxRendererCpu {
     return .{ .buffers_collection = .empty };
 }
 
-pub fn deinit(r: *RendererCpu, gpa: std.mem.Allocator) void {
+pub fn deinit(r: *LinuxRendererCpu, gpa: std.mem.Allocator) void {
     r.buffers_collection.deinit(gpa);
 }
 
-pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ViewportResize) !void {
+pub fn resize(r: *LinuxRendererCpu, vp: *Viewport, msg: ViewportResize) !void {
     std.debug.assert(msg.viewport_id == vp.id);
     std.debug.assert(r.buffers_collection.available.count() > 0);
     const new_width, const new_height = utils.new_dimensions(msg.size.width, msg.size.height);
@@ -18,7 +18,7 @@ pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ViewportResize) !void {
     const buffer = r.buffers_collection.available.values()[0];
     if (buffer.width < new_width or buffer.height < new_height) {
         try buffers.buffers_resize(
-            RendererCpu.Buffer,
+            LinuxRendererCpu.Buffer,
             2,
             vp,
             vp.client,
@@ -28,7 +28,7 @@ pub fn resize(r: *RendererCpu, vp: *Viewport, msg: ViewportResize) !void {
     }
 }
 
-pub fn buffer_size(r: *const RendererCpu) ptypes.Size {
+pub fn buffer_size(r: *const LinuxRendererCpu) ptypes.Size {
     const buffer = r.buffers_collection.available.values()[0];
     return .{
         .width = buffer.width,
@@ -36,7 +36,7 @@ pub fn buffer_size(r: *const RendererCpu) ptypes.Size {
     };
 }
 
-pub fn get_buffer(r: *RendererCpu) ?*Buffer {
+pub fn get_buffer(r: *LinuxRendererCpu) ?*Buffer {
     for (r.buffers_collection.available.values()) |*buffer| {
         if (buffer.released) return buffer;
     }
@@ -44,13 +44,13 @@ pub fn get_buffer(r: *RendererCpu) ?*Buffer {
     return null;
 }
 
-pub fn has_buffer(r: *RendererCpu, id: BufferID) bool {
+pub fn has_buffer(r: *LinuxRendererCpu, id: BufferID) bool {
     return r.buffers_collection.has(id);
 }
 
-pub fn frame_render(_: *RendererCpu) void {}
+pub fn frame_render(_: *LinuxRendererCpu) void {}
 
-pub fn buffer_released(r: *RendererCpu, id: BufferID) void {
+pub fn buffer_released(r: *LinuxRendererCpu, id: BufferID) void {
     std.debug.assert(r.buffers_collection.available.count() > 0);
     for (r.buffers_collection.available.values()) |*buffer| {
         if (buffer.id == id) {
@@ -59,7 +59,7 @@ pub fn buffer_released(r: *RendererCpu, id: BufferID) void {
     }
 }
 
-pub fn buffer_destroyed(_: *RendererCpu, _: BufferID) void {}
+pub fn buffer_destroyed(_: *LinuxRendererCpu, _: BufferID) void {}
 
 fn create_fd(size: i32) !struct { c_int, []align(std.heap.page_size_min) u8 } {
     const fd = try std.posix.memfd_create("agce-buffer", 0);

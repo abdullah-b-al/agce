@@ -1,10 +1,10 @@
-const RendererGL = @This();
+const LinuxRendererGL = @This();
 
 gbm: Client.Gbm,
 gl: opengl.ContextLinux,
 buffers_collection: buffers.Collection(Buffer),
 
-pub fn init(gbm: Client.Gbm, gl: opengl.ContextLinux) RendererGL {
+pub fn init(gbm: Client.Gbm, gl: opengl.ContextLinux) LinuxRendererGL {
     return .{
         .gbm = gbm,
         .gl = gl,
@@ -12,15 +12,15 @@ pub fn init(gbm: Client.Gbm, gl: opengl.ContextLinux) RendererGL {
     };
 }
 
-pub fn deinit(r: *RendererGL, gpa: std.mem.Allocator) void {
+pub fn deinit(r: *LinuxRendererGL, gpa: std.mem.Allocator) void {
     r.buffers_collection.deinit(gpa);
 }
 
-pub fn has_buffer(r: *RendererGL, id: BufferID) bool {
+pub fn has_buffer(r: *LinuxRendererGL, id: BufferID) bool {
     return r.buffers_collection.has(id);
 }
 
-pub fn frame_end(r: *RendererGL, buffer: *Buffer) void {
+pub fn frame_end(r: *LinuxRendererGL, buffer: *Buffer) void {
     const sync = glad.eglCreateSync(r.gl.egl_display, glad.EGL_SYNC_NATIVE_FENCE_ANDROID, null);
     defer _ = glad.eglDestroySync(r.gl.egl_display, sync);
 
@@ -28,11 +28,7 @@ pub fn frame_end(r: *RendererGL, buffer: *Buffer) void {
 
     std.debug.assert(sync != glad.EGL_NO_SYNC);
 
-    const egl_sync_fd =
-        glad.eglDupNativeFenceFDANDROID(
-            r.gl.egl_display,
-            sync,
-        );
+    const egl_sync_fd = glad.eglDupNativeFenceFDANDROID(r.gl.egl_display, sync);
     std.debug.assert(egl_sync_fd > 0);
 
     const tmp_syncobj = r.gbm.syncobj_create();
@@ -53,7 +49,7 @@ pub fn frame_end(r: *RendererGL, buffer: *Buffer) void {
     std.debug.assert(transfer_result == 0);
 }
 
-pub fn buffer_size(r: *const RendererGL) ptypes.Size {
+pub fn buffer_size(r: *const LinuxRendererGL) ptypes.Size {
     const buffer = r.buffers_collection.available.values()[0];
     return .{
         .width = buffer.width,
@@ -61,7 +57,7 @@ pub fn buffer_size(r: *const RendererGL) ptypes.Size {
     };
 }
 
-pub fn get_buffer(r: *RendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
+pub fn get_buffer(r: *LinuxRendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
     const dri = r.gbm.dri;
 
     std.debug.assert(r.buffers_collection.available.count() > 0);
@@ -107,7 +103,7 @@ pub fn get_buffer(r: *RendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
 }
 
 pub fn resize(
-    r: *RendererGL,
+    r: *LinuxRendererGL,
     vp: *Viewport,
     requested_size: ptypes.Size,
 ) !void {
@@ -120,7 +116,7 @@ pub fn resize(
     const buffer = r.buffers_collection.available.values()[0];
     if (buffer.width < new_width or buffer.height < new_height) {
         try buffers.buffers_resize(
-            RendererGL.Buffer,
+            LinuxRendererGL.Buffer,
             2,
             vp,
             vp.client,
@@ -130,7 +126,7 @@ pub fn resize(
     }
 }
 
-pub fn buffer_destroyed(r: *RendererGL, id: BufferID) void {
+pub fn buffer_destroyed(r: *LinuxRendererGL, id: BufferID) void {
     var i = r.buffers_collection.old.count();
     while (i > 0) {
         i -= 1;
@@ -232,7 +228,7 @@ pub const ReleaseTimeline = struct {
 };
 
 fn query_syncobj(
-    buffer: *RendererGL.Buffer,
+    buffer: *LinuxRendererGL.Buffer,
     dri: Io.File,
 ) void {
     {
