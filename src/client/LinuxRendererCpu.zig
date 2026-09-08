@@ -1,58 +1,33 @@
 const LinuxRendererCpu = @This();
 
-buffers_collection: buffers.Collection(Buffer),
+buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
 pub fn init() LinuxRendererCpu {
-    return .{ .buffers_collection = .empty };
+    return .{ .buffers = .empty };
 }
 
 pub fn deinit(r: *LinuxRendererCpu, gpa: std.mem.Allocator) void {
-    r.buffers_collection.deinit(gpa);
-}
-
-pub fn resize(r: *LinuxRendererCpu, vp: *Viewport, msg: ViewportResize) !void {
-    std.debug.assert(msg.viewport_id == vp.id);
-    std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = utils.new_dimensions(msg.size.width, msg.size.height);
-
-    const buffer = r.buffers_collection.available.values()[0];
-    if (buffer.width < new_width or buffer.height < new_height) {
-        try buffers.buffers_resize(
-            LinuxRendererCpu.Buffer,
-            2,
-            vp,
-            vp.client,
-            &r.buffers_collection,
-            .{ vp.client, new_width, new_height, vp.format },
-        );
-    }
+    r.buffers.deinit(gpa);
 }
 
 pub fn buffer_size(r: *const LinuxRendererCpu) ptypes.Size {
-    const buffer = r.buffers_collection.available.values()[0];
-    return .{
-        .width = buffer.width,
-        .height = buffer.height,
-    };
+    const buffer = r.buffers.values()[0];
+    return buffer.size;
 }
 
 pub fn get_buffer(r: *LinuxRendererCpu) ?*Buffer {
-    for (r.buffers_collection.available.values()) |*buffer| {
+    for (r.buffers.values()) |*buffer| {
         if (buffer.released) return buffer;
     }
 
     return null;
 }
 
-pub fn has_buffer(r: *LinuxRendererCpu, id: BufferID) bool {
-    return r.buffers_collection.has(id);
-}
-
 pub fn frame_render(_: *LinuxRendererCpu) void {}
 
 pub fn buffer_released(r: *LinuxRendererCpu, id: BufferID) void {
-    std.debug.assert(r.buffers_collection.available.count() > 0);
-    for (r.buffers_collection.available.values()) |*buffer| {
+    std.debug.assert(r.buffers.count() > 0);
+    for (r.buffers.values()) |*buffer| {
         if (buffer.id == id) {
             buffer.released = true;
         }
@@ -61,52 +36,36 @@ pub fn buffer_released(r: *LinuxRendererCpu, id: BufferID) void {
 
 pub fn buffer_destroyed(_: *LinuxRendererCpu, _: BufferID) void {}
 
-fn create_fd(size: i32) !struct { c_int, []align(std.heap.page_size_min) u8 } {
-    const fd = try std.posix.memfd_create("agce-buffer", 0);
-    if (std.posix.errno(std.posix.system.ftruncate(fd, @intCast(size))) != .SUCCESS) return error.FtruncateFailed;
-    const buffer = try std.posix.mmap(
-        null,
-        @intCast(size),
-        .{ .READ = true, .WRITE = true },
-        .{ .TYPE = .SHARED },
-        fd,
-        0,
-    );
-
-    return .{ fd, buffer };
-}
-
 pub const Buffer = struct {
     id: ptypes.BufferID,
-    fd: ptypes.CpuBufferFd,
     data: []align(std.heap.page_size_min) u8,
     released: bool,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
     format: ptypes.BufferFormat,
 
-    pub fn init(client: *Client, width: i32, height: i32, format: ptypes.BufferFormat) !Buffer {
-        const s = width * height * format.bytes_per_pixel();
-        const fd, const buffer = try create_fd(s);
+    pub fn init(created: BufferCreatedCpu) !Buffer {
+        const s = created.size.width * created.size.height * created.format.bytes_per_pixel();
+
+        const buffer = try std.posix.mmap(
+            null,
+            @intCast(s),
+            .{ .READ = true, .WRITE = true },
+            .{ .TYPE = .SHARED },
+            @intFromEnum(created.handle),
+            0,
+        );
 
         return .{
-            .id = client.next_buffer_id.increment(),
-            .fd = @enumFromInt(fd),
+            .id = created.buffer_id,
             .data = buffer,
             .released = true,
-            .width = width,
-            .height = height,
-            .format = format,
+            .size = created.size,
+            .format = created.format,
         };
-    }
-
-    pub fn create_on_server(buffer: Buffer, vp: *Viewport, client: *Client) !void {
-        try client.send_buffer_create_cpu_with_fd(vp, buffer);
     }
 
     pub fn deinit(buffer: *Buffer) void {
         std.posix.munmap(buffer.data);
-        _ = std.os.linux.close(@intFromEnum(buffer.fd));
     }
 };
 
@@ -116,13 +75,13 @@ const net = Io.net;
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;
 const ViewportResize = server_to_client.MessagePayload.ViewportResize;
+const BufferCreatedCpu = server_to_client.MessagePayload.BufferCreatedCpu;
 const ptypes = @import("protocol").types;
 const c_linux = @import("c_linux");
 const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
-const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.RendererCpu);

@@ -10,8 +10,8 @@ pub const MessagePayload = union(enum(u32)) {
     register: Register,
     generate_client_full_id: Void,
 
-    buffer_create_cpu_with_fd: BufferCreateCpuWithFd,
-    buffer_create_gpu_with_fds: BufferCreateGpuWithFds,
+    buffer_create_cpu: BufferCreateCpu,
+    buffer_create_gbm_bo: BufferCreateGbmBo,
 
     buffer_destroy: BufferDestroy,
 
@@ -32,7 +32,7 @@ pub const MessagePayload = union(enum(u32)) {
         full_id: ?types.ClientFullID,
     };
 
-    pub const Void = struct { void: u8 = 0 };
+    pub const Void = struct {};
 
     pub const SubViewportDisplayStateSet = struct {
         sub_viewport_id: types.SubViewportID,
@@ -70,21 +70,22 @@ pub const MessagePayload = union(enum(u32)) {
     pub const BufferCreateCpuWithFd = struct {
         buffer_id: types.BufferID,
 
-        fd: types.CpuBufferFd,
+        fd: types.CpuBufferHandle,
 
         size: types.Size,
         format: types.BufferFormat,
     };
 
-    pub const BufferCreateGpuWithFds = struct {
-        buffer_id: types.BufferID,
-
-        fds: types.BufferAndTimelineFds,
-
+    pub const BufferCreateCpu = struct {
+        viewport_id: types.ViewportID,
         size: types.Size,
         format: types.BufferFormat,
+    };
 
-        gbm_bo_modifier: u64,
+    pub const BufferCreateGbmBo = struct {
+        viewport_id: types.ViewportID,
+        size: types.Size,
+        format: types.BufferFormat,
     };
 
     pub const BufferPresent = struct {
@@ -117,10 +118,10 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
             var p = original;
 
             // The fd that's part of the json is wrong.
-            // Set them to .invalid_fd to invalidate their use
+            // Set them to .invalid_handle to invalidate their use
             const T = @TypeOf(p);
             if (comptime common.contains_a_fd(T)) |name| {
-                @field(p, name) = .invalid_fd;
+                @field(p, name) = .invalid_handle;
             }
 
             break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
@@ -135,26 +136,6 @@ pub fn message_send_json(io: Io, gpa: std.mem.Allocator, stream: net.Stream, pay
     };
 
     switch (payload) {
-        .buffer_create_cpu_with_fd,
-        => |p| {
-            if (!constants.os_supports_fd) {
-                @panic("OS does not support FD");
-            }
-            try message_send_json_with_fd(stream, .{ .header = header, .payload = json }, types.CpuBufferFd, p.fd);
-        },
-        .buffer_create_gpu_with_fds,
-        => |p| {
-            if (!constants.os_supports_fd) {
-                @panic("OS does not support FD");
-            }
-            try message_send_json_with_fd(
-                stream,
-                .{ .header = header, .payload = json },
-                @TypeOf(p.fds),
-                p.fds,
-            );
-        },
-
         inline else => {
             var buf: [4096]u8 = undefined;
             var writer = stream.writer(io, &buf);
@@ -188,69 +169,7 @@ pub fn message_receive(io: Io, arena: std.mem.Allocator, stream: net.Stream, tim
     const header = try common.parse_message_header(MessageHeader, peek.data);
 
     const message_buf = try arena.alloc(u8, header.payload_len + @sizeOf(MessageHeader));
-    switch (header.format) {
-        .json => {
-            return switch (os_tag) {
-                .linux => {
-                    const message = try read_and_parse_data_json_linux(io, arena, stream, header, message_buf);
-                    return message;
-                },
-                else => {
-                    const message = try read_and_parse_data_json(io, arena, stream, header, message_buf);
-                    return message;
-                },
-            };
-        },
-    }
-}
-
-fn message_send_json_with_fd(stream: net.Stream, message: Message, comptime Fd: type, fd: Fd) !void {
-    if (!constants.os_supports_fd) {
-        @compileError("OS does not support FD");
-    }
-
-    std.debug.assert(message.header.payload_len == message.payload.len);
-
-    const header = std.mem.toBytes(message.header);
-
-    var buf: [4096]u8 = undefined;
-    std.mem.copyForwards(u8, &buf, &header);
-    std.mem.copyForwards(u8, buf[header.len..], message.payload);
-
-    const len = @sizeOf(MessageHeader) + message.payload.len;
-    const result = send_fd(stream.socket.handle, Fd, fd, buf[0..len]);
-    if (result < 0) {
-        return error.FailedToSendFds;
-    }
-}
-
-fn read_and_parse_data_json_linux(
-    io: Io,
-    arena: std.mem.Allocator,
-    stream: net.Stream,
-    header: MessageHeader,
-    receive_buf: []u8,
-) !MessagePayload {
-    std.debug.assert(header.format == .json);
-    std.debug.assert(receive_buf.len == header.payload_len + @sizeOf(MessageHeader));
-
-    switch (header.message_tag) {
-        inline .buffer_create_cpu_with_fd,
-        .buffer_create_gpu_with_fds,
-        => |tag| {
-            const T = switch (tag) {
-                .buffer_create_cpu_with_fd => MessagePayload.BufferCreateCpuWithFd,
-                .buffer_create_gpu_with_fds => MessagePayload.BufferCreateGpuWithFds,
-                else => comptime unreachable,
-            };
-            const parsed = try parse_message_with_fd(T, io, arena, stream, receive_buf);
-            return @unionInit(MessagePayload, @tagName(tag), parsed);
-        },
-
-        inline else => {
-            return try read_and_parse_data_json(io, arena, stream, header, receive_buf);
-        },
-    }
+    return try read_and_parse_data_json(io, arena, stream, header, message_buf);
 }
 
 fn read_and_parse_data_json(
@@ -261,23 +180,7 @@ fn read_and_parse_data_json(
     receive_buf: []u8,
 ) !MessagePayload {
     switch (header.message_tag) {
-        .buffer_create_gpu_with_fds,
-        .buffer_create_cpu_with_fd,
-        => return error.UnsupportedMessageOnOs,
-
-        inline .buffer_present,
-        .buffer_present_with_sync,
-        .buffer_destroy,
-        .cursor_shape_set,
-        .sub_viewport_embed,
-        .sub_viewport_pos_set,
-        .sub_viewport_size_set,
-        .viewport_create,
-        .register,
-        .generate_client_full_id,
-        .sub_viewport_display_state_set,
-        .viewport_destroy,
-        => |tag| {
+        inline else => |tag| {
             const T = utils.TypeOfField(MessagePayload, @tagName(tag));
             const parsed = try common.read_and_parse_data_json(
                 MessageHeader,
@@ -292,86 +195,6 @@ fn read_and_parse_data_json(
             return @unionInit(MessagePayload, @tagName(tag), parsed);
         },
     }
-}
-
-fn send_fd(socket: c_int, comptime Fd: type, fd: Fd, data_to_send: []const u8) isize {
-    var msg = std.mem.zeroes(c_linux.msghdr);
-
-    var iov: c_linux.iovec = .{ .iov_base = @constCast(data_to_send.ptr), .iov_len = data_to_send.len };
-    msg.msg_iov = @ptrCast(&iov);
-    msg.msg_iovlen = 1;
-
-    var buf: [c_linux.CMSG_SPACE(@sizeOf(Fd))]u8 = undefined;
-    msg.msg_control = &buf;
-    msg.msg_controllen = buf.len;
-
-    const hdr = &c_linux.CMSG_FIRSTHDR(&msg)[0];
-    hdr.cmsg_len = c_linux.CMSG_LEN(@sizeOf(Fd));
-    hdr.cmsg_level = c_linux.SOL_SOCKET;
-    hdr.cmsg_type = c_linux.SCM_RIGHTS;
-
-    const ptr: [*]u8 = hdr.__cmsg_data();
-    const data: *Fd = @ptrCast(@alignCast(ptr));
-    data.* = fd;
-
-    return c_linux.sendmsg(socket, &msg, 0);
-}
-
-fn recv_fd_peek(comptime Fd: type, socket: c_int) !Fd {
-    var msg = std.mem.zeroes(c_linux.msghdr);
-
-    var iov_base = "";
-    var iov: c_linux.iovec = .{ .iov_base = @ptrCast(&iov_base), .iov_len = iov_base.len };
-    msg.msg_iov = @ptrCast(&iov);
-    msg.msg_iovlen = 1;
-
-    var buf: [c_linux.CMSG_SPACE(@sizeOf(Fd))]u8 = undefined;
-    msg.msg_control = &buf;
-    msg.msg_controllen = buf.len;
-
-    const bytes = c_linux.recvmsg(socket, &msg, c_linux.MSG_PEEK);
-    if (bytes < 0) {
-        return error.RecvMsgFailed;
-    }
-
-    const hdr = &c_linux.CMSG_FIRSTHDR(&msg)[0];
-    if (@intFromPtr(hdr) == 0) {
-        return error.CmsgNoHeader;
-    }
-
-    if (hdr.cmsg_level != c_linux.SOL_SOCKET) {
-        return error.CmsgInvalidLevel;
-    }
-
-    if (hdr.cmsg_type != c_linux.SCM_RIGHTS) {
-        return error.CmsgInvalidType;
-    }
-
-    const ptr: [*]u8 = hdr.__cmsg_data();
-    const data: *Fd = @ptrCast(@alignCast(ptr));
-    return data.*;
-}
-
-fn parse_message_with_fd(comptime T: type, io: Io, arena: std.mem.Allocator, stream: net.Stream, receive_buf: []u8) !T {
-    const Fd = switch (T) {
-        MessagePayload.BufferCreateGpuWithFds => types.BufferAndTimelineFds,
-        MessagePayload.BufferCreateCpuWithFd => types.CpuBufferFd,
-        else => unreachable,
-    };
-
-    const fd = try recv_fd_peek(Fd, stream.socket.handle);
-
-    const msg = try stream.socket.receive(io, receive_buf);
-    const data = msg.data[@sizeOf(MessageHeader)..];
-
-    var parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-        .allocate = .alloc_if_needed,
-    });
-
-    const name = comptime common.contains_a_fd(T).?;
-    @field(parsed, name) = fd;
-
-    return parsed;
 }
 
 const std = @import("std");

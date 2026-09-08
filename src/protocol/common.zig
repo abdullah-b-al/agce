@@ -69,7 +69,7 @@ pub fn contains_a_fd(comptime T: type) ?[:0]const u8 {
             }
         },
         .void => {},
-        else => @compileError("Unsupported type"),
+        else => @compileError("Unsupported primitive type"),
     }
 
     return null;

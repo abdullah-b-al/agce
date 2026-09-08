@@ -85,8 +85,8 @@ pub const WindowSystemEvent = union(enum) {
     client_registered: ClientRegistered,
     client_disconnected: ClientID,
 
-    buffer_create_cpu_with_fd: WithClientID(Payload.BufferCreateCpuWithFd),
-    buffer_create_gpu_with_fds: WithClientID(Payload.BufferCreateGpuWithFds),
+    buffer_create_cpu: WithClientID(Payload.BufferCreateCpu),
+    buffer_create_gbm_bo: WithClientID(Payload.BufferCreateGbmBo),
     buffer_present: WithClientID(Payload.BufferPresent),
     buffer_present_with_sync: WithClientID(Payload.BufferPresentWithSync),
     buffer_destroy: WithClientID(Payload.BufferDestroy),
@@ -210,8 +210,8 @@ pub const ServerEvent = union(enum) {
     frame_render: WithClientID(Payload.FrameRender),
 
     buffer_released: WithClientID(Payload.BufferReleased),
-    buffer_destroyed: WithClientID(Payload.BufferDestroyed),
-    buffer_created: WithClientID(Payload.BufferCreated),
+    buffer_created_cpu: WithClientID(Payload.BufferCreatedCpu),
+    buffer_created_gbm_bo: WithClientID(Payload.BufferCreatedGbmBo),
 
     keyboard_key: WithClientID(Payload.KeyboardKey),
     keyboard_char: WithClientID(Payload.KeyboardChar),

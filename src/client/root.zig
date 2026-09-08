@@ -293,7 +293,7 @@ pub const ViewportHandle = opaque {
         std.debug.assert(vp.renderer == .gl);
         const gl = &vp.renderer.gl;
 
-        const buffer = gl.buffers_collection.available.getPtr(vp.current_buffer.?) orelse
+        const buffer = gl.buffers.getPtr(vp.current_buffer.?) orelse
             @panic("Buffer prematurely destroyed");
 
         gl.frame_end(buffer);
@@ -317,7 +317,7 @@ pub const ViewportHandle = opaque {
         var buffer: ?*RendererCpu.Buffer = null;
         while (buffer == null) {
             buffer = cpu.get_buffer() orelse {
-                std.debug.assert(cpu.buffers_collection.available.count() > 0);
+                std.debug.assert(cpu.buffers.count() > 0);
                 try client.wait_for(vp.id, .buffer_released);
                 try client.update_by_tag(vp.id, .buffer_released);
                 continue;
@@ -328,8 +328,8 @@ pub const ViewportHandle = opaque {
 
         return .{
             .buffer = buffer.?.data,
-            .width = buffer.?.width,
-            .height = buffer.?.height,
+            .width = buffer.?.size.width,
+            .height = buffer.?.size.height,
             .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
             .viewport_size = vp.size,
         };

@@ -32,7 +32,7 @@ pub fn create(
                 .wayland = try .init(wl, ws, win, requested_size),
             },
         },
-        else => unreachable,
+        else => comptime unreachable,
     };
 
     return win;
@@ -43,7 +43,7 @@ pub fn destroy(win: *Window, gpa: std.mem.Allocator) void {
         WindowSystem.Linux => switch (win.native) {
             .wayland => |*wl_win| wl_win.deinit(),
         },
-        else => unreachable,
+        else => comptime unreachable,
     }
 
     gpa.destroy(win);

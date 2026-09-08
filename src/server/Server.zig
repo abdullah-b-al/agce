@@ -204,7 +204,7 @@ pub fn handle_message(server: *Server, message: ReceivedMessage) void {
 pub fn handle_event(
     server: *Server,
     event: Dispatch.ServerEvent,
-) error{ Canceled, WriteFailed, OutOfMemory, Exit }!void {
+) error{ Canceled, WriteFailed, OutOfMemory, FailedToSendFds, Exit }!void {
     switch (event) {
         .exit => {
             return error.Exit;
@@ -216,6 +216,56 @@ pub fn handle_event(
             server.clients.new_unknown(server.gpa, stream);
 
             log.info("Unknown client connected", .{});
+        },
+        .buffer_created_cpu => |e, tag| {
+            switch (os) {
+                .linux => {
+                    defer std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.handle)) == 0);
+
+                    const client = server.clients.known.get(e.client_id) orelse return;
+                    const payload = @unionInit(
+                        server_to_client.MessagePayload,
+                        @tagName(tag),
+                        e.payload,
+                    );
+
+                    try server_to_client.message_send_json(
+                        server.io,
+                        server.gpa,
+                        client.stream,
+                        @tagName(tag),
+                        payload,
+                    );
+                },
+                else => comptime unreachable,
+            }
+        },
+        .buffer_created_gbm_bo => |e, tag| {
+            switch (os) {
+                .linux => {
+                    defer {
+                        std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.fds.buffer)) == 0);
+                        std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.fds.acquire_timeline)) == 0);
+                        std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.fds.release_timeline)) == 0);
+                    }
+
+                    const client = server.clients.known.get(e.client_id) orelse return;
+                    const payload = @unionInit(
+                        server_to_client.MessagePayload,
+                        @tagName(tag),
+                        e.payload,
+                    );
+
+                    try server_to_client.message_send_json(
+                        server.io,
+                        server.gpa,
+                        client.stream,
+                        @tagName(tag),
+                        payload,
+                    );
+                },
+                else => comptime unreachable,
+            }
         },
 
         inline else => |e, tag| {
@@ -230,6 +280,7 @@ pub fn handle_event(
                 server.io,
                 server.gpa,
                 client.stream,
+                @tagName(tag),
                 payload,
             );
         },
@@ -295,6 +346,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage) HandleMe
                 server.io,
                 server.gpa,
                 client.stream,
+                "generated_client_full_id",
                 .{ .generated_client_full_id = .{ .full_id = full_id } },
             );
         },
@@ -357,6 +409,7 @@ fn handle_message_from_unknown(
         server.io,
         server.gpa,
         client.stream,
+        "registered",
         .{ .registered = .{} },
     );
 
@@ -374,6 +427,7 @@ fn handle_message_from_unknown(
             server.io,
             server.gpa,
             other.stream,
+            "client_registered",
             .{ .client_registered = .{ .client_id = client.id } },
         ) catch |err| log.err("{} from {f} during broadcast", .{ err, other.id });
     }
@@ -389,40 +443,6 @@ pub fn window_system_event_from_message(
         .generate_client_full_id,
         => @panic("Cannot be turned into a WindowSystemEvent. This is meant for the Server"),
 
-        inline .buffer_create_cpu_with_fd,
-        .buffer_create_gpu_with_fds,
-        => |msg, tag| {
-            if (os_tag != .linux) {
-                return error.UnsupportedMessageOnOs;
-            }
-
-            const T = utils.TypeOfField(Dispatch.WindowSystemEvent, @tagName(tag));
-            const expr: T = switch (tag) {
-                .buffer_create_cpu_with_fd => .{
-                    .client_id = client.id,
-                    .payload = .{
-                        .buffer_id = msg.buffer_id,
-                        .fd = msg.fd,
-                        .size = msg.size,
-                        .format = msg.format,
-                    },
-                },
-                .buffer_create_gpu_with_fds => .{
-                    .client_id = client.id,
-                    .payload = .{
-                        .buffer_id = msg.buffer_id,
-                        .fds = msg.fds,
-                        .size = msg.size,
-                        .format = msg.format,
-                        .gbm_bo_modifier = msg.gbm_bo_modifier,
-                    },
-                },
-                else => comptime unreachable,
-            };
-
-            return @unionInit(Dispatch.WindowSystemEvent, @tagName(tag), expr);
-        },
-
         inline .buffer_present,
         .buffer_present_with_sync,
         .buffer_destroy,
@@ -433,6 +453,8 @@ pub fn window_system_event_from_message(
         .sub_viewport_size_set,
         .sub_viewport_display_state_set,
         .viewport_destroy,
+        .buffer_create_cpu,
+        .buffer_create_gbm_bo,
         => |msg, tag| {
             return @unionInit(
                 Dispatch.WindowSystemEvent,
@@ -471,9 +493,8 @@ fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
             server.io,
             server.gpa,
             c.stream,
-            .{
-                .client_disconnected = .{ .client_id = id },
-            },
+            "client_disconnected",
+            .{ .client_disconnected = .{ .client_id = id } },
         ) catch {};
     }
 }
@@ -694,3 +715,4 @@ const ptypes = @import("protocol").types;
 const ClientID = ptypes.ClientID;
 const Client = Clients.Client;
 const UnknownClient = Clients.UnknownClient;
+const os = @import("builtin").os.tag;

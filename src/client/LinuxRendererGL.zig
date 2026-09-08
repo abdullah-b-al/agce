@@ -2,22 +2,18 @@ const LinuxRendererGL = @This();
 
 gbm: Client.Gbm,
 gl: opengl.ContextLinux,
-buffers_collection: buffers.Collection(Buffer),
+buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
 pub fn init(gbm: Client.Gbm, gl: opengl.ContextLinux) LinuxRendererGL {
     return .{
         .gbm = gbm,
         .gl = gl,
-        .buffers_collection = .empty,
+        .buffers = .empty,
     };
 }
 
 pub fn deinit(r: *LinuxRendererGL, gpa: std.mem.Allocator) void {
-    r.buffers_collection.deinit(gpa);
-}
-
-pub fn has_buffer(r: *LinuxRendererGL, id: BufferID) bool {
-    return r.buffers_collection.has(id);
+    r.buffers.deinit(gpa);
 }
 
 pub fn frame_end(r: *LinuxRendererGL, buffer: *Buffer) void {
@@ -31,7 +27,13 @@ pub fn frame_end(r: *LinuxRendererGL, buffer: *Buffer) void {
     const egl_sync_fd = glad.eglDupNativeFenceFDANDROID(r.gl.egl_display, sync);
     std.debug.assert(egl_sync_fd > 0);
 
-    const tmp_syncobj = r.gbm.syncobj_create();
+    const tmp_syncobj = blk: {
+        var syncobj: u32 = undefined;
+        const create_result = c_linux.drmSyncobjCreate(r.gbm.dri.handle, 0, &syncobj);
+        std.debug.assert(create_result == 0);
+        break :blk syncobj;
+    };
+
     defer _ = c_linux.drmSyncobjDestroy(r.gbm.dri.handle, tmp_syncobj);
 
     const import_result =
@@ -50,7 +52,7 @@ pub fn frame_end(r: *LinuxRendererGL, buffer: *Buffer) void {
 }
 
 pub fn buffer_size(r: *const LinuxRendererGL) ptypes.Size {
-    const buffer = r.buffers_collection.available.values()[0];
+    const buffer = r.buffers.values()[0];
     return .{
         .width = buffer.width,
         .height = buffer.height,
@@ -60,21 +62,21 @@ pub fn buffer_size(r: *const LinuxRendererGL) ptypes.Size {
 pub fn get_buffer(r: *LinuxRendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
     const dri = r.gbm.dri;
 
-    std.debug.assert(r.buffers_collection.available.count() > 0);
+    std.debug.assert(r.buffers.count() > 0);
 
-    for (r.buffers_collection.available.values()) |*buffer| {
+    for (r.buffers.values()) |*buffer| {
         if (buffer.released) return buffer;
     }
 
     const buffer_len = 2;
-    std.debug.assert(buffer_len >= r.buffers_collection.available.count());
+    std.debug.assert(buffer_len >= r.buffers.count());
 
     var timelines_buffer: [buffer_len]u32 = undefined;
     var points_buffer: [buffer_len]u64 = undefined;
     var timelines: std.ArrayList(u32) = .initBuffer(&timelines_buffer);
     var points: std.ArrayList(u64) = .initBuffer(&points_buffer);
 
-    for (r.buffers_collection.available.values()) |buffer| {
+    for (r.buffers.values()) |buffer| {
         timelines.appendBounded(@intFromEnum(buffer.release.handle)) catch unreachable;
         points.appendBounded(@intFromEnum(buffer.release.point)) catch unreachable;
     }
@@ -95,47 +97,11 @@ pub fn get_buffer(r: *LinuxRendererGL, timeout_ns: i64) error{Timeout}!*Buffer {
     }
 
     std.debug.assert(signaled == 0);
-    const buffer = &r.buffers_collection.available.values()[index];
+    const buffer = &r.buffers.values()[index];
 
     buffer.released = true;
 
     return buffer;
-}
-
-pub fn resize(
-    r: *LinuxRendererGL,
-    vp: *Viewport,
-    requested_size: ptypes.Size,
-) !void {
-    std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = utils.new_dimensions(
-        requested_size.width,
-        requested_size.height,
-    );
-
-    const buffer = r.buffers_collection.available.values()[0];
-    if (buffer.width < new_width or buffer.height < new_height) {
-        try buffers.buffers_resize(
-            LinuxRendererGL.Buffer,
-            2,
-            vp,
-            vp.client,
-            &r.buffers_collection,
-            .{ vp.client, new_width, new_height, vp.format },
-        );
-    }
-}
-
-pub fn buffer_destroyed(r: *LinuxRendererGL, id: BufferID) void {
-    var i = r.buffers_collection.old.count();
-    while (i > 0) {
-        i -= 1;
-        const old = &r.buffers_collection.old.values()[i];
-        if (old.id == id) {
-            old.deinit();
-            _ = r.buffers_collection.old.orderedRemove(old.id);
-        }
-    }
 }
 
 pub const Buffer = struct {
@@ -153,34 +119,42 @@ pub const Buffer = struct {
     acquire: AcquireTimeline,
     release: ReleaseTimeline,
 
-    pub fn init(client: *Client, width: i32, height: i32, format: ptypes.BufferFormat) !Buffer {
-        const gbm = client.gbm.?;
-        const bo = try gbm.bo_create(width, height);
-        const gbm_texture = try opengl.egl_image_from_gbm_bo(client.gl_context.?, bo);
+    pub fn init(gbm: Client.Gbm, gl_context: opengl.ContextLinux, created: BufferCreatedGbmBo) !Buffer {
+        var import_data: c_linux.gbm_import_fd_data = .{
+            .fd = @intFromEnum(created.fds.buffer),
+            .width = @intCast(created.size.width),
+            .height = @intCast(created.size.height),
+            .stride = created.stride,
+            .format = switch (created.format) {
+                .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
+            },
+        };
+
+        // FIXME: Handle null
+        const bo = c_linux.gbm_bo_import(
+            gbm.device,
+            c_linux.GBM_BO_IMPORT_FD,
+            &import_data,
+            c_linux.GBM_BO_USE_RENDERING,
+        ).?;
+        const gbm_texture = try opengl.egl_image_from_gbm_bo(gl_context, bo);
         const fbo = try opengl.fbo_gen(gbm_texture.texture);
 
-        const bits = c_linux.gbm_bo_get_bpp(bo);
-        const bytes = bits / 8;
-        std.debug.assert(bytes == format.bytes_per_pixel());
+        std.debug.assert(std.os.linux.close(@intFromEnum(created.fds.buffer)) == 0);
 
-        const id = client.next_buffer_id.increment();
         return .{
             .bo = bo,
             .gbm_texture = gbm_texture,
-            .gl_context = client.gl_context.?,
+            .gl_context = gl_context,
             .fbo = fbo,
-            .id = id,
+            .id = created.buffer_id,
             .width = @intCast(c_linux.gbm_bo_get_width(bo)),
             .height = @intCast(c_linux.gbm_bo_get_height(bo)),
-            .format = format,
+            .format = created.format,
             .released = true,
-            .acquire = .init(gbm),
-            .release = .init(gbm),
+            .acquire = .from_fd(gbm, created.fds.acquire_timeline),
+            .release = .from_fd(gbm, created.fds.release_timeline),
         };
-    }
-
-    pub fn create_on_server(buffer: Buffer, vp: *Viewport, client: *Client) !void {
-        try client.send_buffer_create_gpu_with_fds(vp, buffer);
     }
 
     pub fn deinit(buffer: *Buffer) void {
@@ -195,17 +169,17 @@ pub const AcquireTimeline = struct {
     point: ptypes.AcquireTimelinePoint,
     handle: ptypes.AcquireTimelineHandle,
 
-    pub fn init(gbm: Client.Gbm) AcquireTimeline {
+    pub fn from_fd(gbm: Client.Gbm, fd: ptypes.AcquireTimelineFd) AcquireTimeline {
+        var handle: u32 = undefined;
+        const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @intFromEnum(fd), &handle);
+        std.debug.assert(result == 0);
+
+        std.debug.assert(std.os.linux.close(@intFromEnum(fd)) == 0);
+
         return .{
             .point = @enumFromInt(0),
-            .handle = @enumFromInt(gbm.syncobj_create()),
+            .handle = @enumFromInt(handle),
         };
-    }
-
-    pub fn fd(t: AcquireTimeline, gbm: Client.Gbm) ptypes.AcquireTimelineFd {
-        return @enumFromInt(
-            gbm.syncobj_fd_from_handle(@intFromEnum(t.handle)),
-        );
     }
 };
 
@@ -213,17 +187,17 @@ pub const ReleaseTimeline = struct {
     point: ptypes.ReleaseTimelinePoint,
     handle: ptypes.ReleaseTimelineHandle,
 
-    pub fn init(gbm: Client.Gbm) ReleaseTimeline {
+    pub fn from_fd(gbm: Client.Gbm, fd: ptypes.ReleaseTimelineFd) ReleaseTimeline {
+        var handle: u32 = undefined;
+        const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @intFromEnum(fd), &handle);
+        std.debug.assert(result == 0);
+
+        std.debug.assert(std.os.linux.close(@intFromEnum(fd)) == 0);
+
         return .{
             .point = @enumFromInt(0),
-            .handle = @enumFromInt(gbm.syncobj_create()),
+            .handle = @enumFromInt(handle),
         };
-    }
-
-    pub fn fd(t: ReleaseTimeline, gbm: Client.Gbm) ptypes.ReleaseTimelineFd {
-        return @enumFromInt(
-            gbm.syncobj_fd_from_handle(@intFromEnum(t.handle)),
-        );
     }
 };
 
@@ -248,7 +222,7 @@ fn query_syncobj(
             1,
             c_linux.DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED,
         );
-        std.debug.print("acquire: point completed({}) submitted({}) success {}\n", .{
+        log.debug("acquire: point completed({}) submitted({}) success {}", .{
             point,
             submitted_point,
             result == 0 and submitted_result == 0,
@@ -271,7 +245,7 @@ fn query_syncobj(
             1,
             c_linux.DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED,
         );
-        std.debug.print("release: point completed({}) submitted({}) success {}\n", .{
+        log.debug("release: point completed({}) submitted({}) success {}", .{
             point,
             submitted_point,
             result == 0 and submitted_result == 0,
@@ -283,6 +257,8 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const client_to_server = @import("protocol").client_to_server;
+const server_to_client = @import("protocol").server_to_client;
+const BufferCreatedGbmBo = server_to_client.MessagePayload.BufferCreatedGbmBo;
 const ptypes = @import("protocol").types;
 const ViewportID = ptypes.ViewportID;
 const opengl = @import("opengl.zig");
@@ -290,7 +266,6 @@ const c_linux = @import("c_linux");
 const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
-const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.RendererGL);
 const CreateStatus = Client.CreateStatus;

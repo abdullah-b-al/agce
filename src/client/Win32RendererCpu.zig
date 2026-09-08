@@ -1,58 +1,33 @@
 const Win32RendererCpu = @This();
 
-buffers_collection: buffers.Collection(Buffer),
+buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
 pub fn init() Win32RendererCpu {
-    return .{ .buffers_collection = .empty };
+    return .{ .buffers = .empty };
 }
 
 pub fn deinit(r: *Win32RendererCpu, gpa: std.mem.Allocator) void {
-    r.buffers_collection.deinit(gpa);
-}
-
-pub fn resize(r: *Win32RendererCpu, vp: *Viewport, msg: ViewportResize) !void {
-    std.debug.assert(msg.viewport_id == vp.id);
-    std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = utils.new_dimensions(msg.size.width, msg.size.height);
-
-    const buffer = r.buffers_collection.available.values()[0];
-    if (buffer.width < new_width or buffer.height < new_height) {
-        try buffers.buffers_resize(
-            Win32RendererCpu.Buffer,
-            2,
-            vp,
-            vp.client,
-            &r.buffers_collection,
-            .{ vp.client, new_width, new_height, vp.format },
-        );
-    }
+    r.buffers.deinit(gpa);
 }
 
 pub fn buffer_size(r: *const Win32RendererCpu) ptypes.Size {
-    const buffer = r.buffers_collection.available.values()[0];
-    return .{
-        .width = buffer.width,
-        .height = buffer.height,
-    };
+    const buffer = r.buffers.values()[0];
+    return buffer.size;
 }
 
 pub fn get_buffer(r: *Win32RendererCpu) ?*Buffer {
-    for (r.buffers_collection.available.values()) |*buffer| {
+    for (r.buffers.values()) |*buffer| {
         if (buffer.released) return buffer;
     }
 
     return null;
 }
 
-pub fn has_buffer(r: *Win32RendererCpu, id: BufferID) bool {
-    return r.buffers_collection.has(id);
-}
-
 pub fn frame_render(_: *Win32RendererCpu) void {}
 
 pub fn buffer_released(r: *Win32RendererCpu, id: BufferID) void {
-    std.debug.assert(r.buffers_collection.available.count() > 0);
-    for (r.buffers_collection.available.values()) |*buffer| {
+    std.debug.assert(r.buffers.count() > 0);
+    for (r.buffers.values()) |*buffer| {
         if (buffer.id == id) {
             buffer.released = true;
         }
@@ -87,35 +62,17 @@ fn create_pixel_buffer(size: i32) !struct { std.os.windows.HANDLE, []u8 } {
 
 pub const Buffer = struct {
     id: ptypes.BufferID,
-    handle: std.os.windows.HANDLE,
     data: []u8,
     released: bool,
-    width: i32,
-    height: i32,
+    size: ptypes.Size,
     format: ptypes.BufferFormat,
 
-    pub fn init(client: *Client, width: i32, height: i32, format: ptypes.BufferFormat) !Buffer {
-        const s = width * height * format.bytes_per_pixel();
-        const handle, const buffer = try create_pixel_buffer(s);
-
-        return .{
-            .id = client.next_buffer_id.increment(),
-            .handle = handle,
-            .data = buffer,
-            .released = true,
-            .width = width,
-            .height = height,
-            .format = format,
-        };
-    }
-
-    pub fn create_on_server(_: Buffer, _: *Viewport, _: *Client) !void {
-        unreachable;
+    pub fn init(_: BufferCreatedCpu) !Buffer {
+        @panic("TODO");
     }
 
     pub fn deinit(buffer: *Buffer) void {
         _ = win32.system.memory.UnmapViewOfFile(buffer.data.ptr);
-        _ = win32.foundation.CloseHandle(buffer.handle);
     }
 };
 
@@ -131,10 +88,10 @@ const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
-const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.RendererCpu);
 const Viewport = @import("Viewport.zig");
 const utils = @import("utils");
 const win32 = @import("win32");
+const BufferCreatedCpu = server_to_client.MessagePayload.BufferCreatedCpu;

@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
         WindowSystem.W32 => {
             try group.await(init.io);
         },
-        else => unreachable,
+        else => comptime unreachable,
     }
 
     group.cancel(init.io);

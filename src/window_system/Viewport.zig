@@ -53,7 +53,7 @@ pub fn create(
                 ),
             },
         },
-        else => unreachable,
+        else => comptime unreachable,
     };
 
     return vp;
@@ -80,7 +80,7 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
                 },
             }
         },
-        else => unreachable,
+        else => comptime unreachable,
     }
 
     gpa.destroy(vp);

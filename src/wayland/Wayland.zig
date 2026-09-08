@@ -20,6 +20,8 @@ registry: *cwl.Registry,
 wl_buffers: std.array_hash_map.Auto(WlBufferID, BufferKey),
 frame_callbacks: std.array_hash_map.Auto(CallbackID, ViewportKey),
 
+register_gpu_buffer_pool: std.heap.MemoryPool(RegisterGpuBuffer),
+
 xkb_context: *c_linux.struct_xkb_context,
 xkb_keymap: ?*c_linux.struct_xkb_keymap,
 xkb_state: ?*c_linux.struct_xkb_state,
@@ -83,6 +85,7 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
 
         .wl_buffers = .empty,
         .frame_callbacks = .empty,
+        .register_gpu_buffer_pool = .empty,
 
         .xkb_context = xkb_context,
         .xkb_keymap = null,
@@ -113,6 +116,8 @@ pub fn destroy(wl: *Wayland) void {
 
     wl.registry.destroy();
     wl.display.disconnect();
+
+    wl.register_gpu_buffer_pool.deinit(wl.gpa);
 
     wl.gpa.destroy(wl);
 }
@@ -759,7 +764,7 @@ pub fn buffer_create_and_register_cpu(
     ws: *WindowSystem,
     rs: *ClientResources,
     id: BufferID,
-    fd: CpuBufferFd,
+    fd: CpuBufferHandle,
     size: ptypes.Size,
     format: BufferFormat,
 ) !void {
@@ -767,7 +772,6 @@ pub fn buffer_create_and_register_cpu(
     try wl.buffer_set_listener_prepare(ws);
 
     const cpu = try buffer_create_cpu(wl.shm, fd, size, format);
-    std.debug.assert(std.os.linux.close(@intFromEnum(fd)) == 0);
     wl.buffer_set_listener(ws, rs, cpu.wl_buffer, id);
 
     rs.buffers.putAssumeCapacityNoClobber(id, .{ .wayland = .{ .cpu = cpu } });
@@ -775,7 +779,7 @@ pub fn buffer_create_and_register_cpu(
 
 pub fn buffer_create_cpu(
     shm: *cwl.Shm,
-    fd: CpuBufferFd,
+    fd: CpuBufferHandle,
     size: ptypes.Size,
     format: BufferFormat,
 ) !Buffer.Cpu {
@@ -797,60 +801,98 @@ pub fn buffer_create_cpu(
     };
 }
 
+const TimelinePair = struct {
+    acquire: Viewport.AcquireTimeline,
+    acquire_fd: ptypes.AcquireTimelineFd,
+    release: Viewport.ReleaseTimeline,
+    release_fd: ptypes.ReleaseTimelineFd,
+};
+
 pub fn buffer_create_and_register_gpu_async(
     wl: *Wayland,
     rs: *ClientResources,
     ws: *WindowSystem,
-    id: BufferID,
-    fds: BufferAndTimelineFds,
+    viewport_id: ptypes.ViewportID,
+    buffer: *const ClientResources.GbmBo,
     size: ptypes.Size,
     b_format: BufferFormat,
-    modifier: u64,
-) !void {
+) !BufferID {
+    const modifier = c_linux.gbm_bo_get_modifier(buffer.bo);
+
+    std.debug.assert(
+        size.width == c_linux.gbm_bo_get_width(buffer.bo),
+    );
+    std.debug.assert(
+        size.height == c_linux.gbm_bo_get_height(buffer.bo),
+    );
+
     const mod_lo: u32 = @intCast(modifier & 0xFF_FF_FF_FF);
     const mod_hi: u32 = @intCast(modifier >> 32);
-    const stride: u32 = @intCast(size.width * b_format.bytes_per_pixel());
+    const stride: u32 = c_linux.gbm_bo_get_stride(buffer.bo);
     const format = switch (b_format) {
         .argb8888 => c_linux.DRM_FORMAT_ARGB8888,
     };
 
-    const data = try wl.gpa.create(RegisterGpuBuffer);
-    errdefer wl.gpa.destroy(data);
+    if (wl.register_gpu_buffer_pool.free_list.len() == 0)
+        try wl.register_gpu_buffer_pool.addCapacity(wl.gpa, 1);
 
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
     try rs.buffers.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
     try wl.buffer_set_listener_prepare(ws);
 
-    std.debug.assert(@intFromEnum(fds.acquire_timeline) != @intFromEnum(fds.release_timeline));
-    const timeline_acquire: Viewport.AcquireTimeline =
-        try .init(wl.sync_object_manager, fds.acquire_timeline);
-    const timeline_release: Viewport.ReleaseTimeline =
-        try .init(wl.sync_object_manager, fds.release_timeline);
+    const acquire_fd: ptypes.AcquireTimelineFd = buffer.acquire_fd(ws.gbm);
+    const release_fd: ptypes.ReleaseTimelineFd = buffer.release_fd(ws.gbm);
+    const acquire: Viewport.AcquireTimeline = try .init(wl.sync_object_manager, acquire_fd);
+    errdefer {
+        acquire.acquire.destroy();
+        std.debug.assert(std.os.linux.close(@intFromEnum(acquire_fd)) == 0);
+        std.debug.assert(std.os.linux.close(@intFromEnum(release_fd)) == 0);
+    }
+    const release: Viewport.ReleaseTimeline = try .init(wl.sync_object_manager, release_fd);
+    errdefer release.release.destroy();
 
     const params = try wl.dmabuf.createParams();
 
     errdefer comptime unreachable;
 
-    rs.wl_buffers_pending.putAssumeCapacityNoClobber(id, {});
-
+    const buffer_id = rs.next_buffer_id.increment();
+    rs.wl_buffers_pending.putAssumeCapacityNoClobber(buffer_id, {});
     const gpu: Buffer.Gpu = .{
         .wl_buffer = undefined,
-        .timeline_acquire = timeline_acquire,
-        .timeline_release = timeline_release,
+        .timeline_acquire = acquire,
+        .timeline_release = release,
         .size = size,
     };
 
-    data.* = .{ .buffer_id = id, .client_id = rs.client_id, .ws = ws, .gpu = gpu };
-    params.add(@intFromEnum(fds.buffer), 0, 0, stride, mod_hi, mod_lo);
-    params.create(size.width, size.height, format, .{});
-    params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
+    const buffer_fd = c_linux.gbm_bo_get_fd(buffer.bo);
+    std.debug.assert(buffer_fd >= 0);
+    const data = wl.register_gpu_buffer_pool.create(wl.gpa) catch unreachable;
+    data.* = .{
+        .buffer_id = buffer_id,
+        .client_id = rs.client_id,
+        .viewport_id = viewport_id,
+        .wl = wl,
+        .ws = ws,
+        .gpu = gpu,
+        .buffer_fd = @enumFromInt(buffer_fd),
+        .acquire_timeline = acquire_fd,
+        .release_timeline = release_fd,
+        .size = size,
+        .stride = stride,
+        .format = b_format,
+    };
 
-    std.debug.assert(std.os.linux.close(@intFromEnum(fds.buffer)) == 0);
-    std.debug.assert(std.os.linux.close(@intFromEnum(fds.acquire_timeline)) == 0);
-    std.debug.assert(std.os.linux.close(@intFromEnum(fds.release_timeline)) == 0);
+    params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
+    params.add(buffer_fd, 0, 0, stride, mod_hi, mod_lo);
+    params.create(size.width, size.height, format, .{});
 
     log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
+
+    _ = wl.display.flush();
+
+    return buffer_id;
 }
+
 pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDeviceV1.Shape {
     return switch (shape) {
         .default => .default,
@@ -985,22 +1027,34 @@ pub const Buffer = union(enum) {
 };
 
 pub const RegisterGpuBuffer = struct {
+    wl: *Wayland,
     ws: *WindowSystem,
     client_id: ClientID,
     buffer_id: BufferID,
+    viewport_id: ptypes.ViewportID,
+    size: ptypes.Size,
     gpu: Buffer.Gpu,
+    buffer_fd: ptypes.GpuBufferFd,
+    acquire_timeline: ptypes.AcquireTimelineFd,
+    release_timeline: ptypes.ReleaseTimelineFd,
+    stride: u32,
+    format: ptypes.BufferFormat,
 
     pub fn callback(
         p: *zwp.LinuxBufferParamsV1,
         event: zwp.LinuxBufferParamsV1.Event,
         data: *RegisterGpuBuffer,
     ) void {
+        defer {
+            p.destroy();
+            data.wl.register_gpu_buffer_pool.destroy(data);
+        }
+
         switch (event) {
             .created => |result| {
                 const rs = data.ws.resources.getPtr(data.client_id) orelse return;
-                const wl = data.ws.native.wayland;
 
-                wl.buffer_set_listener(
+                data.wl.buffer_set_listener(
                     data.ws,
                     rs,
                     result.buffer,
@@ -1025,21 +1079,31 @@ pub const RegisterGpuBuffer = struct {
                 data.ws.dispatch.server_put(
                     @src(),
                     .{
-                        .buffer_created = .{
+                        .buffer_created_gbm_bo = .{
                             .client_id = data.client_id,
                             .payload = .{
+                                .viewport_id = data.viewport_id,
                                 .buffer_id = data.buffer_id,
-                                .status = .success,
+                                .size = data.size,
+                                .fds = .{
+                                    .buffer = data.buffer_fd,
+                                    .acquire_timeline = data.acquire_timeline,
+                                    .release_timeline = data.release_timeline,
+                                },
+                                .stride = data.stride,
+                                .format = data.format,
                             },
                         },
                     },
                 ) catch {};
             },
-            .failed => @panic("TODO"),
+            .failed => {
+                std.debug.assert(std.os.linux.close(@intFromEnum(data.buffer_fd)) == 0);
+                std.debug.assert(std.os.linux.close(@intFromEnum(data.acquire_timeline)) == 0);
+                std.debug.assert(std.os.linux.close(@intFromEnum(data.release_timeline)) == 0);
+                @panic("TODO: Send failure message");
+            },
         }
-
-        p.destroy();
-        data.ws.gpa.destroy(data);
     }
 };
 
@@ -1098,5 +1162,5 @@ const BufferID = ptypes.BufferID;
 const Event = Dispatch.WindowSystemEvent;
 const input = @import("input.zig");
 const BufferFormat = ptypes.BufferFormat;
-const CpuBufferFd = ptypes.CpuBufferFd;
+const CpuBufferHandle = ptypes.CpuBufferHandle;
 const BufferAndTimelineFds = ptypes.BufferAndTimelineFds;

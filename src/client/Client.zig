@@ -184,6 +184,8 @@ pub fn poll(client: *Client, timeout: Io.Timeout) !void {
     for (client.viewports.values()) |vp| {
         try vp.messages.ensureUnusedCapacity(client.gpa, messages.len);
         try vp.events.ensureUnusedCapacity(client.gpa, messages.len);
+        try vp.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, messages.len);
+        try vp.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, messages.len);
     }
 
     for (messages) |message| {
@@ -300,13 +302,13 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             vp.event_push(event);
         },
 
-        inline .buffer_destroyed, .buffer_created => |e, tag| {
-            const vp = client.viewport_from_buffer_id(e.buffer_id) orelse return;
-            const msg = @unionInit(Message, @tagName(tag), .{
-                .viewport_id = vp.id,
-                .message = e,
-            });
-            vp.message_push(msg);
+        .buffer_created_cpu => |e| {
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.pending_buffers_cpu.appendAssumeCapacity(e);
+        },
+        .buffer_created_gbm_bo => |e| {
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.pending_buffers_gbm_bo.appendAssumeCapacity(e);
         },
 
         inline .frame_render,
@@ -318,16 +320,6 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             vp.message_push(msg);
         },
     }
-}
-
-pub fn viewport_from_buffer_id(client: *Client, buffer_id: BufferID) ?*Viewport {
-    for (client.viewports.values()) |vp| {
-        if (vp.has_buffer(buffer_id)) {
-            return vp;
-        }
-    }
-
-    return null;
 }
 
 pub fn viewport_create(
@@ -397,23 +389,7 @@ pub fn viewport_create_with_id(
     };
     client.viewports.putAssumeCapacityNoClobber(vp.id, vp);
 
-    switch (vp.renderer) {
-        inline else => |*r, t| {
-            const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
-            const array = try buffers.buffers_create(
-                Viewport.Renderer.RendererBuffer(t),
-                2,
-                vp,
-                client,
-                &r.buffers_collection,
-                .{ client, width, height, vp.format },
-            );
-
-            for (array) |b| {
-                r.buffers_collection.available.putAssumeCapacityNoClobber(b.id, b);
-            }
-        },
-    }
+    try vp.buffers_create(requested_size);
 
     try client.send_viewport_create(id, requested_size);
 
@@ -468,68 +444,6 @@ pub fn send_viewport_create(
     });
 }
 
-pub fn send_buffer_create_gpu_with_fds(
-    client: *Client,
-    vp: *Viewport,
-    buffer: RendererGL.Buffer,
-) !void {
-    const acquire = buffer.acquire.fd(client.gbm.?);
-    defer _ = std.os.linux.close(@intFromEnum(acquire));
-
-    const release = buffer.release.fd(client.gbm.?);
-    defer _ = std.os.linux.close(@intFromEnum(release));
-
-    const buffer_fd: ptypes.GpuBufferFd = @enumFromInt(c_linux.gbm_bo_get_fd(buffer.bo));
-    defer _ = std.os.linux.close(@intFromEnum(buffer_fd));
-
-    vp.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .buffer_create_gpu_with_fds = .{
-                .buffer_id = buffer.id,
-                .size = .{
-                    .width = buffer.width,
-                    .height = buffer.height,
-                },
-                .format = buffer.format,
-                .gbm_bo_modifier = c_linux.gbm_bo_get_modifier(buffer.bo),
-                .fds = .{
-                    .buffer = buffer_fd,
-                    .acquire_timeline = acquire,
-                    .release_timeline = release,
-                },
-            },
-        },
-    );
-}
-
-pub fn send_buffer_create_cpu_with_fd(
-    client: *Client,
-    vp: *Viewport,
-    buffer: RendererCpu.Buffer,
-) !void {
-    vp.buffers_status.putAssumeCapacityNoClobber(buffer.id, .pending);
-    try client_to_server.message_send_json(
-        client.io,
-        client.gpa,
-        client.connection,
-        .{
-            .buffer_create_cpu_with_fd = .{
-                .buffer_id = buffer.id,
-                .size = .{
-                    .width = buffer.width,
-                    .height = buffer.height,
-                },
-                .format = buffer.format,
-                .fd = buffer.fd,
-            },
-        },
-    );
-}
-
 pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
     try client_to_server.message_send_json(
         client.io,
@@ -574,30 +488,6 @@ pub fn sub_viewport_embed(
 pub const Gbm = if (!constants.os_has_gbm) void else struct {
     dri: Io.File,
     device: *c_linux.struct_gbm_device,
-
-    pub fn bo_create(gbm: Gbm, width: i32, height: i32) !*c_linux.struct_gbm_bo {
-        return c_linux.gbm_bo_create(
-            gbm.device,
-            @intCast(width),
-            @intCast(height),
-            c_linux.GBM_BO_FORMAT_ARGB8888,
-            c_linux.GBM_BO_USE_RENDERING,
-        ) orelse error.FailedToGbmBoCreate;
-    }
-
-    pub fn syncobj_create(gbm: Gbm) u32 {
-        var syncobj: u32 = undefined;
-        const create_result = c_linux.drmSyncobjCreate(gbm.dri.handle, 0, &syncobj);
-        std.debug.assert(create_result == 0);
-        return syncobj;
-    }
-
-    pub fn syncobj_fd_from_handle(gbm: Gbm, syncobj: u32) c_int {
-        var fd: c_int = undefined;
-        const create_result = c_linux.drmSyncobjHandleToFD(gbm.dri.handle, syncobj, &fd);
-        std.debug.assert(create_result == 0);
-        return fd;
-    }
 };
 
 pub const Event = union(enum) {
@@ -624,8 +514,6 @@ pub const Message = union(enum) {
     viewport_resize: Payload.ViewportResize,
     viewport_created: Payload.ViewportCreated,
     buffer_released: Payload.BufferReleased,
-    buffer_destroyed: WithViewportID(Payload.BufferDestroyed),
-    buffer_created: WithViewportID(Payload.BufferCreated),
     frame_render: Payload.FrameRender,
 };
 

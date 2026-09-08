@@ -130,31 +130,40 @@ pub const BufferID = enum(u32) {
     }
 };
 
-pub const CpuBufferFd = enum(c_int) {
-    pub const is_fd = true;
+const HandleBackingInt = switch (os) {
+    .linux => c_int,
+    .windows => blk: {
+        std.debug.assert(@sizeOf(std.os.windows.HANDLE) == @sizeOf(usize));
+        break :blk usize;
+    },
+    else => unreachable,
+};
 
-    invalid_fd = -1,
+pub const CpuBufferHandle = enum(HandleBackingInt) {
+    pub const is_fd = os == .linux;
+
+    invalid = 0,
     _,
 };
 
 pub const GpuBufferFd = enum(c_int) {
     pub const is_fd = true;
 
-    invalid_fd = -1,
+    invalid = -1,
     _,
 };
 
 pub const AcquireTimelineFd = enum(c_int) {
     pub const is_fd = true;
 
-    invalid_fd = -1,
+    invalid = -1,
     _,
 };
 
 pub const ReleaseTimelineFd = enum(c_int) {
     pub const is_fd = true;
 
-    invalid_fd = -1,
+    invalid = -1,
     _,
 };
 
@@ -233,10 +242,10 @@ pub const BufferFormat = enum {
 };
 
 pub const BufferAndTimelineFds = extern struct {
-    pub const invalid_fd: BufferAndTimelineFds = .{
-        .buffer = .invalid_fd,
-        .acquire_timeline = .invalid_fd,
-        .release_timeline = .invalid_fd,
+    pub const invalid: BufferAndTimelineFds = .{
+        .buffer = .invalid,
+        .acquire_timeline = .invalid,
+        .release_timeline = .invalid,
     };
 
     buffer: GpuBufferFd,
@@ -356,3 +365,4 @@ pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
 }
 
 const std = @import("std");
+const os = @import("builtin").os.tag;

@@ -1,17 +1,13 @@
 const Win32RendererGL = @This();
 
-buffers_collection: buffers.Collection(Buffer),
+buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
 pub fn init() Win32RendererGL {
-    return .{ .buffers_collection = .empty };
+    return .{ .buffers = .empty };
 }
 
 pub fn deinit(r: *Win32RendererGL, gpa: std.mem.Allocator) void {
-    r.buffers_collection.deinit(gpa);
-}
-
-pub fn has_buffer(r: *Win32RendererGL, id: BufferID) bool {
-    return r.buffers_collection.has(id);
+    r.buffers.deinit(gpa);
 }
 
 pub fn frame_end(_: *Win32RendererGL, _: *Buffer) void {
@@ -19,7 +15,7 @@ pub fn frame_end(_: *Win32RendererGL, _: *Buffer) void {
 }
 
 pub fn buffer_size(r: *const Win32RendererGL) ptypes.Size {
-    const buffer = r.buffers_collection.available.values()[0];
+    const buffer = r.buffers.values()[0];
     return .{
         .width = buffer.width,
         .height = buffer.height,
@@ -28,42 +24,6 @@ pub fn buffer_size(r: *const Win32RendererGL) ptypes.Size {
 
 pub fn get_buffer(_: *Win32RendererGL, _: i64) error{Timeout}!*Buffer {
     unreachable;
-}
-
-pub fn resize(
-    r: *Win32RendererGL,
-    vp: *Viewport,
-    requested_size: ptypes.Size,
-) !void {
-    std.debug.assert(r.buffers_collection.available.count() > 0);
-    const new_width, const new_height = utils.new_dimensions(
-        requested_size.width,
-        requested_size.height,
-    );
-
-    const buffer = r.buffers_collection.available.values()[0];
-    if (buffer.width < new_width or buffer.height < new_height) {
-        try buffers.buffers_resize(
-            Win32RendererGL.Buffer,
-            2,
-            vp,
-            vp.client,
-            &r.buffers_collection,
-            .{ vp.client, new_width, new_height, vp.format },
-        );
-    }
-}
-
-pub fn buffer_destroyed(r: *Win32RendererGL, id: BufferID) void {
-    var i = r.buffers_collection.old.count();
-    while (i > 0) {
-        i -= 1;
-        const old = &r.buffers_collection.old.values()[i];
-        if (old.id == id) {
-            old.deinit();
-            _ = r.buffers_collection.old.orderedRemove(old.id);
-        }
-    }
 }
 
 pub const Buffer = struct {
@@ -115,7 +75,6 @@ const opengl = @import("opengl.zig");
 const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
-const buffers = @import("buffers.zig");
 const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.RendererGL);
 const CreateStatus = Client.CreateStatus;
