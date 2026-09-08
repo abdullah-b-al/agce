@@ -154,6 +154,8 @@ pub fn handle_message(server: *Server, message: ReceivedMessage) void {
             }
         },
 
+        error.Unexpected,
+        error.UnsupportedMessageOnOs,
         error.HeaderInvalidLen,
         error.HeaderInvalidFormat,
         error.HeaderInvalidMessageTag,
@@ -188,7 +190,6 @@ pub fn handle_message(server: *Server, message: ReceivedMessage) void {
         error.UnexpectedEndOfInput,
         error.BufferUnderrun,
         error.ValueTooLong,
-        error.UnsupportedMessageOnOs,
         error.SystemResources,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
@@ -197,7 +198,6 @@ pub fn handle_message(server: *Server, message: ReceivedMessage) void {
         error.PortUnreachable,
         error.ConcurrencyUnavailable,
         error.OutOfMemory,
-        error.Unexpected,
         => |e| {
             log.err("{} when handling client message", .{e});
         },
