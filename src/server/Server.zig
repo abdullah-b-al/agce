@@ -536,7 +536,7 @@ pub const Event = union(enum) {
     viewport_close: ptypes.WithClientID(Payload.ViewportClose),
     viewport_display_state: ptypes.WithClientID(Payload.ViewportDisplayState),
 
-    sub_viewport_embeded: ptypes.WithClientID(Payload.SubviewportCreated),
+    sub_viewport_embeded: ptypes.WithClientID(Payload.SubViewportEmbeded),
     sub_viewport_display_state: ptypes.WithClientID(Payload.SubViewportDisplayState),
     sub_viewport_closed: ptypes.WithClientID(Payload.SubviewportClosed),
 

@@ -16,7 +16,7 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_close: ViewportClose,
     viewport_display_state: ViewportDisplayState,
 
-    sub_viewport_embeded: SubviewportCreated,
+    sub_viewport_embeded: SubViewportEmbeded,
     sub_viewport_display_state: SubViewportDisplayState,
     sub_viewport_closed: SubviewportClosed,
 
@@ -76,7 +76,7 @@ pub const MessagePayload = union(enum(u32)) {
         full_id: types.ClientFullID,
     };
 
-    pub const SubviewportCreated = struct {
+    pub const SubViewportEmbeded = struct {
         sub_viewport_id: types.SubViewportID,
         status: types.Status,
         render_size: types.Size,
