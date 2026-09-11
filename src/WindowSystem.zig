@@ -2,15 +2,14 @@ const WindowSystem = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
-dispatch: *Dispatch,
 
 resources: std.array_hash_map.Auto(ClientID, ClientResources),
 windows: std.array_hash_map.Auto(WindowID, *Window),
 
 window_next_id: WindowID,
 
-event_arena_instance: std.heap.ArenaAllocator,
-event_arena: std.mem.Allocator,
+server_events: std.ArrayList(ServerEvent),
+deferred_events: std.ArrayList(Event),
 
 gbm: Gbm,
 native: Native,
@@ -18,15 +17,13 @@ native: Native,
 pub fn create_wayland(
     io: Io,
     gpa: std.mem.Allocator,
-    dispatch: *Dispatch,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
-        dispatch,
     );
 
-    const wl: *Wayland = try .create(dispatch);
+    const wl: *Wayland = try .create(io, gpa);
     ws.native = .{ .wayland = wl };
 
     try wl.set_listeners(ws);
@@ -38,12 +35,10 @@ pub fn create_win32(
     io: Io,
     gpa: std.mem.Allocator,
     instance: Win32.HINSTANCE,
-    dispatch: *Dispatch,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
-        dispatch,
     );
 
     ws.native = try .create(gpa, instance);
@@ -54,7 +49,6 @@ pub fn create_win32(
 fn create_undefined_native(
     io: Io,
     gpa: std.mem.Allocator,
-    dispatch: *Dispatch,
 ) !*WindowSystem {
     const ws = try gpa.create(WindowSystem);
     errdefer gpa.destroy(ws);
@@ -77,18 +71,16 @@ fn create_undefined_native(
     ws.* = .{
         .io = io,
         .gpa = gpa,
-        .dispatch = dispatch,
         .resources = .empty,
         .windows = .empty,
         .gbm = gbm,
-        .event_arena_instance = .init(gpa),
 
         .window_next_id = .first,
 
-        .event_arena = undefined,
+        .server_events = .empty,
+        .deferred_events = .empty,
         .native = undefined,
     };
-    ws.event_arena = ws.event_arena_instance.allocator();
 
     return ws;
 }
@@ -115,17 +107,25 @@ pub fn destroy(ws: *WindowSystem) void {
     inline for (.{
         &ws.resources,
         &ws.windows,
+        &ws.deferred_events,
+        &ws.server_events,
     }) |entry| {
         entry.deinit(ws.gpa);
     }
 
-    ws.event_arena_instance.deinit();
     ws.gpa.destroy(ws);
 }
 
-pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void {
+pub fn events_handle(ws: *WindowSystem, events: []const Event) void {
+    for (events) |e| {
+        ws.event_handle(e) catch |err| {
+            log.err("event_handle {}", .{err});
+        };
+    }
+}
+
+pub fn event_handle(ws: *WindowSystem, event: Event) !void {
     switch (event) {
-        .exit => return error.Exit,
         .client_registered => |e| try ws.client_registered(e),
         .client_disconnected => |id| try ws.client_disconnected(id),
         .buffer_create_cpu => |args| try ws.buffer_create_cpu(args),
@@ -140,7 +140,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
 
             switch (result) {
                 .create_with_window => |key| {
-                    try ws.dispatch.server_put(@src(), .{
+                    ws.server_events.appendAssumeCapacity(.{
                         .viewport_created = .{
                             .client_id = key.client_id,
                             .payload = .{
@@ -151,7 +151,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                     });
                 },
                 .create_with_sub_viewport => |v| {
-                    try ws.dispatch.server_put(@src(), .{
+                    ws.server_events.appendAssumeCapacity(.{
                         .viewport_created = .{
                             .client_id = v.embeded.client_id,
                             .payload = .{
@@ -161,7 +161,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                         },
                     });
 
-                    try ws.dispatch.server_put(@src(), .{
+                    ws.server_events.appendAssumeCapacity(.{
                         .sub_viewport_embeded = .{
                             .client_id = v.embeder.key.client_id,
                             .payload = .{
@@ -220,7 +220,7 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
         .mouse_leave => |args| {
             switch (Native) {
                 Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.mouse_leave(args),
+                    .wayland => |wl| try wl.mouse_leave(ws, args),
                 },
                 else => comptime unreachable,
             }
@@ -247,17 +247,6 @@ pub fn event_handle(ws: *WindowSystem, event: Dispatch.WindowSystemEvent) !void 
                     .wayland => |wl| try wl.mouse_scroll(ws, args),
                 },
                 else => comptime unreachable,
-            }
-        },
-        .wayland_dispatch => |dis| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| {
-                        wl.display_dispatch(ws);
-                        dis.signal.set(wl.io);
-                    },
-                },
-                else => @compileError("OS does not support this event"),
             }
         },
     }
@@ -296,12 +285,12 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) !void {
         const svp_id = p.sub_viewport_id_from_key(key).?;
 
         _ = p.sub_viewports.orderedRemove(svp_id);
-        ws.dispatch.server_put(@src(), .{
+        ws.server_events.appendAssumeCapacity(.{
             .sub_viewport_closed = .{
                 .client_id = parent.client_id,
                 .payload = .{ .sub_viewport_id = svp_id },
             },
-        }) catch {};
+        });
 
         vp.parent_key = null;
     }
@@ -329,7 +318,7 @@ fn buffer_create_cpu(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_cpu)) 
         args.payload.format,
     );
 
-    try ws.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .buffer_created_cpu = .{
             .client_id = args.client_id,
             .payload = .{
@@ -783,7 +772,7 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
         else => comptime unreachable,
     }
 
-    try ws.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .viewport_resize = .{
             .client_id = key.client_id,
             .payload = .{
@@ -848,31 +837,25 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
         else => comptime unreachable,
     }
 
-    try ws.dispatch.server_put(
-        @src(),
-        .{
-            .sub_viewport_display_state = .{
-                .client_id = parent_key.client_id,
-                .payload = .{
-                    .sub_viewport_id = args.payload.sub_viewport_id,
-                    .state = args.payload.state,
-                },
+    ws.server_events.appendAssumeCapacity(.{
+        .sub_viewport_display_state = .{
+            .client_id = parent_key.client_id,
+            .payload = .{
+                .sub_viewport_id = args.payload.sub_viewport_id,
+                .state = args.payload.state,
             },
         },
-    );
+    });
 
-    try ws.dispatch.server_put(
-        @src(),
-        .{
-            .viewport_display_state = .{
-                .client_id = svp_viewport_key.client_id,
-                .payload = .{
-                    .viewport_id = svp_viewport_key.viewport_id,
-                    .state = args.payload.state,
-                },
+    ws.server_events.appendAssumeCapacity(.{
+        .viewport_display_state = .{
+            .client_id = svp_viewport_key.client_id,
+            .payload = .{
+                .viewport_id = svp_viewport_key.viewport_id,
+                .state = args.payload.state,
             },
         },
-    );
+    });
 }
 
 pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.window_resize_by_display_server)) !void {
@@ -897,7 +880,7 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
     const rs = ws.resources.getPtr(win.viewport_key.client_id) orelse return;
     const vp = rs.viewports.get(win.viewport_key.viewport_id) orelse return;
     if (!std.meta.eql(vp.render_size, args.size)) {
-        try ws.dispatch.server_put(@src(), .{
+        ws.server_events.appendAssumeCapacity(.{
             .viewport_resize = .{
                 .client_id = win.viewport_key.client_id,
                 .payload = .{
@@ -949,7 +932,7 @@ pub fn sub_viewport_embed(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_em
         },
     );
 
-    try ws.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .viewport_create = .{
             .client_id = args.payload.client_id_to_embed,
             .payload = .{
@@ -1020,6 +1003,109 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
     }
 };
 
+pub const Event = union(enum) {
+    const Payload = client_to_server.MessagePayload;
+
+    client_registered: ClientRegistered,
+    client_disconnected: ClientID,
+
+    buffer_create_cpu: ptypes.WithClientID(Payload.BufferCreateCpu),
+    buffer_create_gbm_bo: ptypes.WithClientID(Payload.BufferCreateGbmBo),
+    buffer_present: ptypes.WithClientID(Payload.BufferPresent),
+    buffer_present_with_sync: ptypes.WithClientID(Payload.BufferPresentWithSync),
+    buffer_destroy: ptypes.WithClientID(Payload.BufferDestroy),
+
+    viewport_create: ptypes.WithClientID(Payload.ViewportCreate),
+    viewport_destroy: ptypes.WithClientID(Payload.ViewportDestroy),
+    sub_viewport_embed: ptypes.WithClientID(Payload.SubViewportEmbed),
+    sub_viewport_pos_set: ptypes.WithClientID(Payload.SubViewportPosSet),
+    sub_viewport_size_set: ptypes.WithClientID(Payload.SubViewportSizeSet),
+    sub_viewport_display_state_set: ptypes.WithClientID(Payload.SubViewportDisplayStateSet),
+
+    window_resize_by_display_server: WindowResize,
+
+    cursor_shape_set: ptypes.WithClientID(Payload.CursorShape),
+
+    keyboard_key: KeyboardKey,
+    keyboard_enter: KeyboardEnter,
+    keyboard_leave: KeyboardLeave,
+
+    mouse_enter: MouseEnter,
+    mouse_leave: MouseLeave,
+    mouse_motion: MouseMotion,
+    mouse_button: MouseButton,
+    mouse_scroll: MouseScroll,
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .wayland_dispatch => |_, tag| {
+                try writer.print("{s}", .{@tagName(tag)});
+            },
+            inline else => |v, tag| {
+                try utils.format_active_union_field(v, @tagName(tag), writer);
+            },
+        }
+    }
+
+    pub const ClientRegistered = struct {
+        client_id: ClientID,
+    };
+
+    pub const WindowResize = struct {
+        id: WindowID,
+        size: ptypes.Size,
+    };
+
+    pub fn TypeOf(comptime tag: std.meta.Tag(Event)) type {
+        return utils.TypeOfField(Event, @tagName(tag));
+    }
+
+    pub const KeyboardChar = struct {
+        char: u32,
+    };
+
+    pub const KeyboardKey = struct {
+        key: pinput.Key,
+        state: pinput.KeyState,
+        char: ?u32,
+    };
+
+    pub const KeyboardEnter = struct {
+        window_id: WindowID,
+    };
+
+    pub const KeyboardLeave = struct {
+        window_id: WindowID,
+    };
+
+    pub const MouseEnter = struct {
+        client_id: ClientID,
+        viewport_id: ptypes.ViewportID,
+        window_id: WindowID,
+    };
+
+    pub const MouseLeave = struct {
+        client_id: ClientID,
+        viewport_id: ptypes.ViewportID,
+        window_id: WindowID,
+    };
+
+    pub const MouseMotion = struct {
+        x: f32,
+        y: f32,
+    };
+
+    pub const MouseButton = struct {
+        button: pinput.MouseButton,
+        state: pinput.MouseState,
+    };
+
+    pub const MouseScroll = struct {
+        axis: ptypes.ScrollAxis,
+        value: f32,
+    };
+};
+
 pub const Linux = union(enum) { wayland: *Wayland };
 pub const W32 = *Win32;
 pub const Native = switch (os) {
@@ -1041,9 +1127,11 @@ const Win32 = @import("win32/Win32.zig");
 const os = @import("builtin").os.tag;
 const log = std.log.scoped(.WindowSystem);
 const BufferID = ptypes.BufferID;
-const Dispatch = @import("Dispatch.zig");
 const ClientResources = @import("window_system/ClientResources.zig");
-const Event = Dispatch.WindowSystemEvent;
 const win32_win = @import("win32").ui.windows_and_messaging;
 const c_linux = @import("c_linux");
 const constants = @import("constants");
+const client_to_server = @import("protocol").client_to_server;
+const utils = @import("utils");
+const pinput = @import("protocol").input;
+const ServerEvent = @import("server/Server.zig").Event;

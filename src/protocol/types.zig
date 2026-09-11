@@ -364,5 +364,12 @@ pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
     };
 }
 
+pub fn WithClientID(comptime T: type) type {
+    return struct {
+        client_id: ClientID,
+        payload: T,
+    };
+}
+
 const std = @import("std");
 const os = @import("builtin").os.tag;

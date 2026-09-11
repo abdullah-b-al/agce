@@ -218,7 +218,6 @@ const BufferID = ptypes.BufferID;
 const ViewportID = ptypes.ViewportID;
 const SubViewportID = ptypes.SubViewportID;
 const ClientID = ptypes.ClientID;
-const Dispatch = @import("../Dispatch.zig");
 const Viewport = @import("Viewport.zig");
 const Buffer = @import("buffer.zig").Buffer;
 const constants = @import("constants");

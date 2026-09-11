@@ -2,7 +2,6 @@ const Wayland = @This();
 
 io: std.Io,
 gpa: std.mem.Allocator,
-dispatch: *Dispatch,
 
 shm: *cwl.Shm,
 compositor: *cwl.Compositor,
@@ -32,8 +31,8 @@ input_delay_ms: ?i32,
 input_rate_ms: ?i32,
 input_repeat_future: ?InputRepeatFuture,
 
-pub fn create(dispatch: *Dispatch) !*Wayland {
-    const state = try dispatch.gpa.create(Wayland);
+pub fn create(io: Io, gpa: std.mem.Allocator) !*Wayland {
+    const state = try gpa.create(Wayland);
     const display = try cwl.Display.connect(null);
     const registry = try display.getRegistry();
 
@@ -66,9 +65,8 @@ pub fn create(dispatch: *Dispatch) !*Wayland {
         return error.XkbContextNewFailed;
 
     state.* = .{
-        .io = dispatch.io,
-        .gpa = dispatch.gpa,
-        .dispatch = dispatch,
+        .io = io,
+        .gpa = gpa,
 
         .shm = shm,
         .compositor = compositor,
@@ -148,8 +146,6 @@ pub fn buffer_set_listener(wl: *Wayland, ws: *WindowSystem, rs: *ClientResources
 pub fn display_dispatch(wl: *Wayland, ws: *WindowSystem) void {
     if (wl.display.dispatch() != .SUCCESS) {
         std.process.fatal("Dispatch failed {}", .{wl.display.getError()});
-        // log.err("Dispatch failed {}", .{wl.display.getError()});
-        // return;
     }
 
     for (ws.windows.values()) |win| {
@@ -249,7 +245,7 @@ pub fn keyboard_key(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.keyboar
     const control =
         mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
 
-    try wl.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .keyboard_key = .{
             .client_id = key.client_id,
             .payload = .{
@@ -266,7 +262,7 @@ pub fn keyboard_key(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.keyboar
     });
 
     if (process_char(args.char)) |char| {
-        try wl.dispatch.server_put(@src(), .{
+        ws.server_events.appendAssumeCapacity(.{
             .keyboard_char = .{
                 .client_id = key.client_id,
                 .payload = .{
@@ -287,7 +283,7 @@ pub fn keyboard_key(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.keyboar
 
     if (maybe_ms) |ms| {
         wl.input_repeat_future = wl.io.concurrent(input_repeat, .{
-            wl.dispatch,
+            ws,
             ms,
             args.key,
             args.char,
@@ -323,7 +319,7 @@ pub fn mouse_enter(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_en
         .viewport_id = args.viewport_id,
     };
 
-    try wl.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .mouse_enter = .{
             .client_id = args.client_id,
             .payload = .{
@@ -333,26 +329,23 @@ pub fn mouse_enter(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_en
     });
 }
 
-pub fn mouse_leave(wl: *Wayland, args: Event.TypeOf(.mouse_leave)) !void {
+pub fn mouse_leave(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_leave)) !void {
     wl.input_focus_mouse = null;
 
-    try wl.dispatch.server_put(
-        @src(),
-        .{
-            .mouse_leave = .{
-                .client_id = args.client_id,
-                .payload = .{
-                    .viewport_id = args.viewport_id,
-                },
+    ws.server_events.appendAssumeCapacity(.{
+        .mouse_leave = .{
+            .client_id = args.client_id,
+            .payload = .{
+                .viewport_id = args.viewport_id,
             },
         },
-    );
+    });
 }
 pub fn mouse_motion(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void {
     const window = ws.windows.get(wl.input_focus_mouse orelse return) orelse return;
     const key = window.input_focus_mouse;
 
-    try wl.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .mouse_motion = .{
             .client_id = key.client_id,
             .payload = .{
@@ -370,7 +363,7 @@ pub fn mouse_button(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_b
         window.input_focus_keyboard = window.input_focus_mouse;
     }
 
-    try wl.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .mouse_button = .{
             .client_id = key.client_id,
             .payload = .{
@@ -385,7 +378,7 @@ pub fn mouse_scroll(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_s
     const window = ws.windows.get(wl.input_focus_mouse orelse return) orelse return;
     const key = window.input_focus_mouse;
 
-    try wl.dispatch.server_put(@src(), .{
+    ws.server_events.appendAssumeCapacity(.{
         .mouse_scroll = .{
             .client_id = key.client_id,
             .payload = .{
@@ -469,14 +462,14 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
         },
 
         .close => {
-            ws.dispatch.server_put(@src(), .{
+            ws.server_events.appendAssumeCapacity(.{
                 .viewport_close = .{
                     .client_id = win.input_focus_keyboard.client_id,
                     .payload = .{
                         .viewport_id = win.input_focus_keyboard.viewport_id,
                     },
                 },
-            }) catch {};
+            });
         },
     }
 }
@@ -519,7 +512,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
                 .window_id = window_id,
             });
-            ws.dispatch.window_system_put(@src(), ws_event) catch {};
+            ws.deferred_events.appendAssumeCapacity(ws_event);
         },
         .key => |e| {
             const key = input.linux_key_to_protocol_key(e.key) orelse {
@@ -543,16 +536,13 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
                 char = c_linux.xkb_state_key_get_utf32(wl.xkb_state.?, code);
             }
 
-            ws.dispatch.window_system_put(
-                @src(),
-                .{
-                    .keyboard_key = .{
-                        .key = key,
-                        .state = state,
-                        .char = char,
-                    },
+            ws.deferred_events.appendAssumeCapacity(.{
+                .keyboard_key = .{
+                    .key = key,
+                    .state = state,
+                    .char = char,
                 },
-            ) catch {};
+            });
         },
     }
 }
@@ -635,7 +625,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
         },
     };
 
-    ws.dispatch.window_system_put(@src(), ws_event) catch {};
+    ws.deferred_events.appendAssumeCapacity(ws_event);
 }
 
 pub fn window_id_from_toplevel(ws: *const WindowSystem, tl: *xdg.Toplevel) WindowID {
@@ -742,18 +732,15 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, ws: *WindowSystem) v
     const vp = rs.viewports.get(key.viewport_id) orelse return;
     vp.native.wayland.refresh_cycle += 1;
 
-    ws.dispatch.server_put(
-        @src(),
-        .{
-            .frame_render = .{
-                .client_id = key.client_id,
-                .payload = .{
-                    .viewport_id = vp.id,
-                    .refresh_cycle = vp.native.wayland.refresh_cycle,
-                },
+    ws.server_events.appendAssumeCapacity(.{
+        .frame_render = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = vp.id,
+                .refresh_cycle = vp.native.wayland.refresh_cycle,
             },
         },
-    ) catch {};
+    });
 
     // TODO: Handle in case of error
     frame_listener_set(ws, vp.native.wayland.surface, key) catch {};
@@ -934,16 +921,18 @@ pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDevi
 }
 
 const InputRepeatFuture = Io.Future(@typeInfo(@TypeOf(input_repeat)).@"fn".return_type.?);
-fn input_repeat(dispatch: *Dispatch, ms: i32, key: pinput.Key, char: ?u32) void {
-    dispatch.io.sleep(.fromMilliseconds(ms), .awake) catch return;
+fn input_repeat(ws: *WindowSystem, ms: i32, key: pinput.Key, char: ?u32) void {
+    ws.io.sleep(.fromMilliseconds(ms), .awake) catch return;
 
     // FIXME: This might end up sending stale data.
     // Add some checks to make sure that doesn't happen
-    dispatch.window_system_put(@src(), .{ .keyboard_key = .{
-        .key = key,
-        .state = .repeat,
-        .char = char,
-    } }) catch return;
+    ws.deferred_events.appendAssumeCapacity(.{
+        .keyboard_key = .{
+            .key = key,
+            .state = .repeat,
+            .char = char,
+        },
+    });
 }
 
 pub const MaybeGlobals = struct {
@@ -1076,26 +1065,23 @@ pub const RegisterGpuBuffer = struct {
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
 
-                data.ws.dispatch.server_put(
-                    @src(),
-                    .{
-                        .buffer_created_gbm_bo = .{
-                            .client_id = data.client_id,
-                            .payload = .{
-                                .viewport_id = data.viewport_id,
-                                .buffer_id = data.buffer_id,
-                                .size = data.size,
-                                .fds = .{
-                                    .buffer = data.buffer_fd,
-                                    .acquire_timeline = data.acquire_timeline,
-                                    .release_timeline = data.release_timeline,
-                                },
-                                .stride = data.stride,
-                                .format = data.format,
+                data.ws.server_events.appendAssumeCapacity(.{
+                    .buffer_created_gbm_bo = .{
+                        .client_id = data.client_id,
+                        .payload = .{
+                            .viewport_id = data.viewport_id,
+                            .buffer_id = data.buffer_id,
+                            .size = data.size,
+                            .fds = .{
+                                .buffer = data.buffer_fd,
+                                .acquire_timeline = data.acquire_timeline,
+                                .release_timeline = data.release_timeline,
                             },
+                            .stride = data.stride,
+                            .format = data.format,
                         },
                     },
-                ) catch {};
+                });
             },
             .failed => {
                 std.debug.assert(std.os.linux.close(@intFromEnum(data.buffer_fd)) == 0);
@@ -1118,18 +1104,15 @@ pub const BufferListener = struct {
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
 
-                ws.dispatch.server_put(
-                    @src(),
-                    .{
-                        .buffer_released = .{
-                            .client_id = key.client_id,
-                            .payload = .{
-                                .buffer_id = key.buffer_id,
-                                .viewport_id = entry.value,
-                            },
+                ws.server_events.appendAssumeCapacity(.{
+                    .buffer_released = .{
+                        .client_id = key.client_id,
+                        .payload = .{
+                            .buffer_id = key.buffer_id,
+                            .viewport_id = entry.value,
                         },
                     },
-                ) catch {};
+                });
             },
         }
     }
@@ -1151,7 +1134,6 @@ const log = std.log.scoped(.Wayland);
 const utils = @import("utils");
 const ClientResources = @import("../window_system/ClientResources.zig");
 const c_linux = @import("c_linux");
-const Dispatch = @import("../Dispatch.zig");
 const BufferKey = WindowSystem.BufferKey;
 const ViewportKey = WindowSystem.ViewportKey;
 const SubViewportKey = WindowSystem.SubViewportKey;
@@ -1159,7 +1141,7 @@ const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;
 const BufferID = ptypes.BufferID;
-const Event = Dispatch.WindowSystemEvent;
+const Event = WindowSystem.Event;
 const input = @import("input.zig");
 const BufferFormat = ptypes.BufferFormat;
 const CpuBufferHandle = ptypes.CpuBufferHandle;

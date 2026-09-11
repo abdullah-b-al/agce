@@ -3,20 +3,17 @@ const Server = @This();
 io: Io,
 gpa: std.mem.Allocator,
 environ: *std.process.Environ.Map,
-dispatch: *Dispatch,
 
 rand: std.Random.DefaultPrng,
 unix_path: []const u8,
 server: net.Server,
 clients: Clients,
 generated_full_ids: std.array_hash_map.Auto(ptypes.ClientFullID, void),
-arena_pool: std.ArrayList(*std.heap.ArenaAllocator),
 
 pub fn create(
     io: Io,
     environ: *std.process.Environ.Map,
     gpa: std.mem.Allocator,
-    dispatch: *Dispatch,
 ) !*Server {
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
@@ -35,18 +32,9 @@ pub fn create(
     };
     log.info("Created server on {s}", .{address.path});
 
-    const arena_count = 32;
-    var arena_pool: std.ArrayList(*std.heap.ArenaAllocator) = try .initCapacity(gpa, arena_count);
-    for (0..arena_count) |_| {
-        const arena = try gpa.create(std.heap.ArenaAllocator);
-        arena.* = .init(gpa);
-        arena_pool.appendAssumeCapacity(arena);
-    }
-
     server.* = .{
         .io = io,
         .gpa = gpa,
-        .dispatch = dispatch,
         .rand = .init(0),
         .environ = environ,
         .generated_full_ids = .empty,
@@ -54,7 +42,6 @@ pub fn create(
         .unix_path = unix_path,
         .server = net_server,
         .clients = .init,
-        .arena_pool = arena_pool,
     };
     return server;
 }
@@ -62,12 +49,6 @@ pub fn create(
 pub fn destroy(server: *Server) void {
     server.clients.deinit(server.io, server.gpa);
     server.generated_full_ids.deinit(server.gpa);
-
-    for (server.arena_pool.items) |arena| {
-        arena.deinit();
-        server.gpa.destroy(arena);
-    }
-    server.arena_pool.deinit(server.gpa);
 
     server.server.deinit(server.io);
     Io.Dir.deleteFileAbsolute(server.io, server.unix_path) catch |err| switch (err) {
@@ -79,15 +60,6 @@ pub fn destroy(server: *Server) void {
 
     server.gpa.free(server.unix_path);
     server.gpa.destroy(server);
-}
-
-pub fn arena_acquire(server: *Server) *std.heap.ArenaAllocator {
-    return server.arena_pool.pop() orelse @panic("Too many acquire requests");
-}
-
-pub fn arena_release(server: *Server, arena: *std.heap.ArenaAllocator) void {
-    _ = arena.reset(.free_all);
-    server.arena_pool.appendAssumeCapacity(arena);
 }
 
 fn message_receive(server: *const Server, arena: std.mem.Allocator, source: MessageSource) ReceivedMessage {
@@ -121,10 +93,10 @@ fn message_receive(server: *const Server, arena: std.mem.Allocator, source: Mess
     };
 }
 
-pub fn handle_message(server: *Server, message: ReceivedMessage) void {
+pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) void {
     const @"error" = switch (message.from) {
-        .known => server.handle_message_from_known(message),
-        .unknown => server.handle_message_from_unknown(message),
+        .known => server.handle_message_from_known(message, events),
+        .unknown => server.handle_message_from_unknown(message, events),
     };
 
     @"error" catch |err| switch (err) {
@@ -158,7 +130,7 @@ pub fn handle_message(server: *Server, message: ReceivedMessage) void {
         => {
             switch (message.from) {
                 .known => |id| {
-                    server.close_known_client_with(id, err);
+                    server.close_known_client_with(id, err, events);
                 },
                 .unknown => |index| {
                     server.close_unknown_client_with(index, err);
@@ -194,14 +166,22 @@ pub fn handle_message(server: *Server, message: ReceivedMessage) void {
     };
 }
 
+pub fn handle_events(
+    server: *Server,
+    events: []const Event,
+) void {
+    for (events) |e| {
+        server.handle_event(e) catch |err| {
+            log.err("{}", .{err});
+        };
+    }
+}
+
 pub fn handle_event(
     server: *Server,
-    event: Dispatch.ServerEvent,
-) error{ Canceled, WriteFailed, OutOfMemory, FailedToSendFds, Exit }!void {
+    event: Event,
+) error{ Canceled, WriteFailed, OutOfMemory, FailedToSendFds }!void {
     switch (event) {
-        .exit => {
-            return error.Exit;
-        },
         .unknown_client_connected => |stream| {
             errdefer stream.close(server.io);
 
@@ -320,7 +300,7 @@ const HandleMessageError = error{
     CmsgInvalidType,
 };
 
-fn handle_message_from_known(server: *Server, message: ReceivedMessage) HandleMessageError!void {
+fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) HandleMessageError!void {
     std.debug.assert(message.from == .known);
 
     const client_id = message.from.known;
@@ -346,7 +326,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage) HandleMe
         else => {
             const client = server.clients.known.get(client_id).?;
             const wse = try server.window_system_event_from_message(client, msg);
-            try server.dispatch.window_system_put(@src(), wse);
+            events.appendAssumeCapacity(wse);
         },
     }
 }
@@ -362,6 +342,7 @@ const HandleMessageFromUnknownError =
 fn handle_message_from_unknown(
     server: *Server,
     message: ReceivedMessage,
+    events: *std.ArrayList(WindowSystemEvent),
 ) HandleMessageFromUnknownError!void {
     std.debug.assert(message.from == .unknown);
 
@@ -406,9 +387,9 @@ fn handle_message_from_unknown(
         .{ .registered = .{} },
     );
 
-    try server.dispatch.window_system_put(@src(), .{
-        .client_registered = .{ .client_id = id },
-    });
+    events.appendAssumeCapacity(
+        .{ .client_registered = .{ .client_id = id } },
+    );
 
     errdefer comptime unreachable;
 
@@ -430,7 +411,7 @@ pub fn window_system_event_from_message(
     _: *Server,
     client: *Client,
     payload: client_to_server.MessagePayload,
-) error{UnsupportedMessageOnOs}!Dispatch.WindowSystemEvent {
+) error{UnsupportedMessageOnOs}!WindowSystemEvent {
     switch (payload) {
         .register,
         .generate_client_full_id,
@@ -450,7 +431,7 @@ pub fn window_system_event_from_message(
         .buffer_create_gbm_bo,
         => |msg, tag| {
             return @unionInit(
-                Dispatch.WindowSystemEvent,
+                WindowSystemEvent,
                 @tagName(tag),
                 .{ .client_id = client.id, .payload = msg },
             );
@@ -469,15 +450,33 @@ pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
     return .{ .id = client_id, .fingerprint = fp };
 }
 
-fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
+pub fn messages_receive(server: *Server, arena: std.mem.Allocator, poll_result: []const MessageSource) error{OutOfMemory}![]const ReceivedMessage {
+    var list = try std.ArrayList(ReceivedMessage).initCapacity(arena, poll_result.len);
+
+    for (poll_result) |result| {
+        const message = server.message_receive(arena, result);
+        list.appendAssumeCapacity(message);
+    }
+
+    return list.items;
+}
+
+pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []const ReceivedMessage) error{OutOfMemory}![]const WindowSystemEvent {
+    var list: std.ArrayList(WindowSystemEvent) = try .initCapacity(arena, messages.len);
+
+    for (messages) |msg| {
+        server.handle_message(msg, &list);
+    }
+
+    return list.items;
+}
+
+fn close_known_client_with(server: *Server, id: ClientID, err: anyerror, events: *std.ArrayList(WindowSystemEvent)) void {
     const client = server.clients.known.get(id) orelse return;
     client.close(server.io);
     log.err("Closing client {} with {}", .{ id, err });
 
-    server.dispatch.window_system_put(
-        @src(),
-        .{ .client_disconnected = client.id },
-    ) catch {};
+    events.appendAssumeCapacity(.{ .client_disconnected = client.id });
 
     for (server.clients.known.values()) |c| {
         if (c.id == id or c.closed) continue;
@@ -514,166 +513,6 @@ fn ErrorSetOf(comptime func: anytype) type {
     return @typeInfo(T).error_union.error_set;
 }
 
-pub const Task = union(enum) {
-    const Tag = std.meta.Tag(Task);
-
-    get_events: ReturnType(fn_get_events),
-    get_client_messages: ReturnType(fn_get_client_messages),
-
-    pub fn handle(task: Task, server: *Server) error{ Canceled, OutOfMemory, Exit }!void {
-        switch (task) {
-            .get_events => |result| {
-                defer server.arena_release(result.arena);
-
-                if (result.err) |err| return err;
-
-                for (result.events) |event| {
-                    server.handle_event(event) catch |err| switch (err) {
-                        error.Exit, error.Canceled => |e| return e,
-                        else => |e| log.err("Server: {}", .{e}),
-                    };
-                }
-            },
-            .get_client_messages => |result| {
-                defer server.arena_release(result.arena);
-
-                if (result.err) |err| return err;
-
-                for (result.messages) |message| {
-                    server.handle_message(message);
-                }
-            },
-        }
-
-        server.clients.remove_closed_known_clients();
-        server.clients.remove_promoted_or_closed_unknown_clients();
-    }
-
-    pub fn fn_get_events(server: *Server, arena: *std.heap.ArenaAllocator) GetEvents {
-        const buf = arena.allocator().alloc(Dispatch.ServerEvent, 128) catch |err|
-            return .@"error"(arena, err);
-
-        const len = server.dispatch.server_get_many(buf) catch |err|
-            return .@"error"(arena, err);
-
-        return .{ .arena = arena, .events = buf[0..len], .err = null };
-    }
-
-    pub fn fn_get_client_messages(server: *Server, arena: *std.heap.ArenaAllocator) GetClientMessages {
-        const poll_result = poll_peek(server.io, arena.allocator(), &server.clients) catch |err| {
-            return .{ .arena = arena, .messages = &.{}, .err = err };
-        };
-
-        var list = std.ArrayList(ReceivedMessage).initCapacity(arena.allocator(), poll_result.len) catch |err| {
-            return .{ .arena = arena, .messages = &.{}, .err = err };
-        };
-
-        for (poll_result) |result| {
-            const message = server.message_receive(arena.allocator(), result);
-            list.appendAssumeCapacity(message);
-        }
-
-        return .{ .arena = arena, .messages = list.items, .err = null };
-    }
-
-    const GetEvents = struct {
-        arena: *std.heap.ArenaAllocator,
-        events: []const Dispatch.ServerEvent,
-        err: ?error{ Canceled, OutOfMemory },
-
-        pub fn @"error"(arena: *std.heap.ArenaAllocator, err: anytype) GetEvents {
-            return .{ .arena = arena, .events = &.{}, .err = err };
-        }
-    };
-
-    const GetClientMessages = struct {
-        arena: *std.heap.ArenaAllocator,
-        messages: []const ReceivedMessage,
-        err: ?error{ OutOfMemory, Canceled },
-    };
-
-    fn poll_peek(
-        io: Io,
-        arena: std.mem.Allocator,
-        clients: *const Clients,
-    ) error{ Canceled, OutOfMemory }![]const MessageSource {
-        return switch (os) {
-            .linux => try poll_peek_linux(io, arena, clients),
-            else => comptime unreachable,
-        };
-    }
-
-    fn poll_peek_linux(
-        io: Io,
-        arena: std.mem.Allocator,
-        clients: *const Clients,
-    ) error{ Canceled, OutOfMemory }![]const MessageSource {
-        std.debug.assert(clients.count() > 0);
-
-        const count = clients.count();
-
-        const storage = try arena.alloc(Io.Operation.Storage, count);
-        const buffers = try arena.alloc([]u8, count);
-
-        for (buffers) |*buf| {
-            buf.* = try arena.alloc(u8, 1);
-        }
-
-        var batch = Io.Batch.init(storage);
-        var batch_i: usize = 0;
-        const table = .{
-            clients.known.values(),
-            clients.unknown.items,
-        };
-
-        inline for (table) |entry| {
-            for (entry) |client| {
-                std.debug.assert(!client.closed);
-                if (@TypeOf(client) == *UnknownClient or @TypeOf(client) == UnknownClient) {
-                    std.debug.assert(!client.promoted_to_known);
-                }
-
-                const msg_buf = try arena.alloc(net.IncomingMessage, 1);
-
-                const op: Io.Operation = .{
-                    .net_receive = .{
-                        .socket_handle = client.stream.socket.handle,
-                        .message_buffer = msg_buf,
-                        .data_buffer = buffers[batch_i],
-                        .flags = .{ .peek = true },
-                    },
-                };
-
-                _ = batch.add(op);
-                batch_i += 1;
-            }
-        }
-
-        std.debug.assert(batch_i == count);
-
-        try batch.awaitAsync(io);
-
-        var list = try std.ArrayList(MessageSource).initCapacity(arena, count);
-
-        while (batch.next()) |completed| {
-            const source: MessageSource = blk: {
-                if (completed.index < clients.known.count()) {
-                    const index = completed.index;
-                    const id = clients.known.values()[index].id;
-                    break :blk .{ .known = id };
-                } else {
-                    const index = completed.index - clients.known.count();
-                    break :blk .{ .unknown = index };
-                }
-            };
-
-            list.appendAssumeCapacity(source);
-        }
-
-        return try list.toOwnedSlice(arena);
-    }
-};
-
 const ReceivedMessage = struct {
     payload: Payload,
     from: MessageSource,
@@ -681,9 +520,43 @@ const ReceivedMessage = struct {
     const Payload = ErrorSetOf(client_to_server.message_receive)!?client_to_server.MessagePayload;
 };
 
-const MessageSource = union(enum) {
+pub const MessageSource = union(enum) {
     known: ClientID,
     unknown: usize,
+};
+
+pub const Event = union(enum) {
+    const Payload = server_to_client.MessagePayload;
+
+    unknown_client_connected: net.Stream,
+
+    viewport_create: ptypes.WithClientID(Payload.ViewportCreate),
+    viewport_created: ptypes.WithClientID(Payload.ViewportCreated),
+    viewport_resize: ptypes.WithClientID(Payload.ViewportResize),
+    viewport_close: ptypes.WithClientID(Payload.ViewportClose),
+    viewport_display_state: ptypes.WithClientID(Payload.ViewportDisplayState),
+
+    sub_viewport_embeded: ptypes.WithClientID(Payload.SubviewportCreated),
+    sub_viewport_display_state: ptypes.WithClientID(Payload.SubViewportDisplayState),
+    sub_viewport_closed: ptypes.WithClientID(Payload.SubviewportClosed),
+
+    frame_render: ptypes.WithClientID(Payload.FrameRender),
+
+    buffer_released: ptypes.WithClientID(Payload.BufferReleased),
+    buffer_created_cpu: ptypes.WithClientID(Payload.BufferCreatedCpu),
+    buffer_created_gbm_bo: ptypes.WithClientID(Payload.BufferCreatedGbmBo),
+
+    keyboard_key: ptypes.WithClientID(Payload.KeyboardKey),
+    keyboard_char: ptypes.WithClientID(Payload.KeyboardChar),
+    mouse_enter: ptypes.WithClientID(Payload.MouseEnter),
+    mouse_leave: ptypes.WithClientID(Payload.MouseLeave),
+    mouse_motion: ptypes.WithClientID(Payload.MouseMotion),
+    mouse_button: ptypes.WithClientID(Payload.MouseButton),
+    mouse_scroll: ptypes.WithClientID(Payload.MouseScroll),
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try utils.format_union(self, writer);
+    }
 };
 
 const std = @import("std");
@@ -694,7 +567,7 @@ const constants = @import("constants");
 const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
-const Dispatch = @import("../Dispatch.zig");
+const WindowSystemEvent = @import("../WindowSystem.zig").Event;
 const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;
 const ptypes = @import("protocol").types;
