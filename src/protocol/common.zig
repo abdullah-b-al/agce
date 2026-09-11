@@ -23,7 +23,7 @@ pub fn operation_net_receive_peek(comptime MessageHeader: type, io: Io, stream: 
     return msg_buf[0];
 }
 
-pub fn read_and_parse_data_json(
+pub fn message_receive_and_parse_json(
     comptime MessageHeader: type,
     comptime Message: type,
     io: Io,

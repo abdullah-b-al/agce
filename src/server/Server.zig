@@ -90,38 +90,31 @@ pub fn arena_release(server: *Server, arena: *std.heap.ArenaAllocator) void {
     server.arena_pool.appendAssumeCapacity(arena);
 }
 
-fn message_receive(server: *const Server, arena: std.mem.Allocator, client_message: ClientMessage) ReceivedMessage {
-    if (client_message.err) |err| {
-        return .{
-            .payload = err,
-            .from = switch (client_message.client) {
-                .known => |id| .{ .known = id },
-                .unknown => |index| .{ .unknown = index },
-            },
-        };
-    }
-
-    const timeout: Io.Timeout =
-        .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
-
-    const closed = switch (client_message.client) {
+fn message_receive(server: *const Server, arena: std.mem.Allocator, source: MessageSource) ReceivedMessage {
+    const closed = switch (source) {
         .known => |id| server.clients.known.get(id).?.closed,
         .unknown => |index| server.clients.unknown.items[index].closed,
     };
 
     std.debug.assert(!closed);
 
-    const stream = switch (client_message.client) {
+    const stream = switch (source) {
         .known => |id| server.clients.known.get(id).?.stream,
         .unknown => |index| server.clients.unknown.items[index].stream,
     };
 
-    const err_message = client_to_server.message_receive(server.io, arena, stream, timeout);
+    const timeout: Io.Timeout =
+        .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
+
+    const err_message = switch (os) {
+        .linux => client_to_server.message_receive(server.io, arena, stream, timeout),
+        else => comptime unreachable,
+    };
 
     return .{
         .payload = err_message,
 
-        .from = switch (client_message.client) {
+        .from = switch (source) {
             .known => |id| .{ .known = id },
             .unknown => |index| .{ .unknown = index },
         },
@@ -512,16 +505,6 @@ fn close_unknown_client_with(server: *Server, index: usize, err: anyerror) void 
     }
 }
 
-pub const ClientMessage = struct {
-    err: ?Io.Operation.NetReceive.Error,
-    client: Source,
-
-    const Source = union(enum) {
-        known: ClientID,
-        unknown: usize,
-    };
-};
-
 fn ReturnType(comptime func: anytype) type {
     return @typeInfo(@TypeOf(func)).@"fn".return_type.?;
 }
@@ -577,18 +560,15 @@ pub const Task = union(enum) {
     }
 
     pub fn fn_get_client_messages(server: *Server, arena: *std.heap.ArenaAllocator) GetClientMessages {
-
-        // In zig 0.16 we cannot get aux data from a unix socket.
-        // So we peek in a batch then get the each message on its own
-        const batch = batch_peek(server.io, arena.allocator(), &server.clients) catch |err| {
+        const poll_result = poll_peek(server.io, arena.allocator(), &server.clients) catch |err| {
             return .{ .arena = arena, .messages = &.{}, .err = err };
         };
 
-        var list = std.ArrayList(ReceivedMessage).initCapacity(arena.allocator(), batch.len) catch |err| {
+        var list = std.ArrayList(ReceivedMessage).initCapacity(arena.allocator(), poll_result.len) catch |err| {
             return .{ .arena = arena, .messages = &.{}, .err = err };
         };
 
-        for (batch) |result| {
+        for (poll_result) |result| {
             const message = server.message_receive(arena.allocator(), result);
             list.appendAssumeCapacity(message);
         }
@@ -612,11 +592,22 @@ pub const Task = union(enum) {
         err: ?error{ OutOfMemory, Canceled },
     };
 
-    fn batch_peek(
+    fn poll_peek(
         io: Io,
         arena: std.mem.Allocator,
         clients: *const Clients,
-    ) error{ Canceled, OutOfMemory }![]const ClientMessage {
+    ) error{ Canceled, OutOfMemory }![]const MessageSource {
+        return switch (os) {
+            .linux => try poll_peek_linux(io, arena, clients),
+            else => comptime unreachable,
+        };
+    }
+
+    fn poll_peek_linux(
+        io: Io,
+        arena: std.mem.Allocator,
+        clients: *const Clients,
+    ) error{ Canceled, OutOfMemory }![]const MessageSource {
         std.debug.assert(clients.count() > 0);
 
         const count = clients.count();
@@ -662,11 +653,10 @@ pub const Task = union(enum) {
 
         try batch.awaitAsync(io);
 
-        var list = try std.ArrayList(Server.ClientMessage).initCapacity(arena, count);
+        var list = try std.ArrayList(MessageSource).initCapacity(arena, count);
 
         while (batch.next()) |completed| {
-            const err, _ = completed.result.net_receive;
-            const source: ClientMessage.Source = blk: {
+            const source: MessageSource = blk: {
                 if (completed.index < clients.known.count()) {
                     const index = completed.index;
                     const id = clients.known.values()[index].id;
@@ -677,13 +667,7 @@ pub const Task = union(enum) {
                 }
             };
 
-            list.appendAssumeCapacity(.{
-                .client = source,
-                .err = if (err) |e| switch (e) {
-                    error.Canceled => |c| return c,
-                    else => |rest| rest,
-                } else null,
-            });
+            list.appendAssumeCapacity(source);
         }
 
         return try list.toOwnedSlice(arena);
@@ -692,12 +676,14 @@ pub const Task = union(enum) {
 
 const ReceivedMessage = struct {
     payload: Payload,
-    from: union(enum) {
-        known: ClientID,
-        unknown: usize,
-    },
+    from: MessageSource,
 
     const Payload = ErrorSetOf(client_to_server.message_receive)!?client_to_server.MessagePayload;
+};
+
+const MessageSource = union(enum) {
+    known: ClientID,
+    unknown: usize,
 };
 
 const std = @import("std");
