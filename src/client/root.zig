@@ -27,13 +27,10 @@ pub fn init(
     client.* = try .init(io, gpa, environ_map);
     errdefer client.deinit();
 
-    try client_to_server.message_send_json(
+    try client.connection.send_register(
         io,
         gpa,
-        client.connection,
-        .{
-            .register = .{ .full_id = client.env.client_full_id },
-        },
+        .{ .full_id = client.env.client_full_id },
     );
 
     const duration: Io.Clock.Duration = .{ .raw = .fromSeconds(1), .clock = .awake };
@@ -136,11 +133,10 @@ pub const ClientHandle = opaque {
 
         try client.processes.append(client.gpa, process);
 
-        try client_to_server.message_send_json(
+        try client.connection.send_generate_client_full_id(
             client.io,
             client.gpa,
-            client.connection,
-            .{ .generate_client_full_id = .{} },
+            .{},
         );
 
         return @ptrCast(process);
@@ -193,13 +189,10 @@ pub const ClientHandle = opaque {
     pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
         const client = handle.cast();
 
-        try client_to_server.message_send_json(
+        try client.connection.send_cursor_shape_set(
             client.io,
             client.gpa,
-            client.connection,
-            .{
-                .cursor_shape_set = .{ .viewport_id = viewport_id, .shape = shape },
-            },
+            .{ .viewport_id = viewport_id, .shape = shape },
         );
     }
 };
@@ -219,13 +212,10 @@ pub const ViewportHandle = opaque {
 
         vp.deinit();
 
-        client_to_server.message_send_json(
+        vp.client.connection.send_viewport_destroy(
             vp.client.io,
             vp.client.gpa,
-            vp.client.connection,
-            .{
-                .viewport_destroy = .{ .viewport_id = vp.id },
-            },
+            .{ .viewport_id = vp.id },
         ) catch {};
     }
 
@@ -401,16 +391,10 @@ pub const SubViewportHandle = opaque {
         }
 
         if (pos.x != svp.pos.x or pos.y != svp.pos.y) {
-            try client_to_server.message_send_json(
+            try svp.client.connection.send_sub_viewport_pos_set(
                 svp.client.io,
                 svp.client.gpa,
-                svp.client.connection,
-                .{
-                    .sub_viewport_pos_set = .{
-                        .pos = pos,
-                        .sub_viewport_id = svp.id,
-                    },
-                },
+                .{ .pos = pos, .sub_viewport_id = svp.id },
             );
         }
 
@@ -426,16 +410,10 @@ pub const SubViewportHandle = opaque {
         }
 
         if (size.width != svp.size.width or size.height != svp.size.height) {
-            try client_to_server.message_send_json(
+            try svp.client.connection.send_sub_viewport_size_set(
                 svp.client.io,
                 svp.client.gpa,
-                svp.client.connection,
-                .{
-                    .sub_viewport_size_set = .{
-                        .size = size,
-                        .sub_viewport_id = svp.id,
-                    },
-                },
+                .{ .size = size, .sub_viewport_id = svp.id },
             );
         }
 
@@ -460,16 +438,10 @@ pub const SubViewportHandle = opaque {
             .pending, .failed, .closed => return,
         }
 
-        try client_to_server.message_send_json(
+        try svp.client.connection.send_sub_viewport_display_state_set(
             svp.client.io,
             svp.client.gpa,
-            svp.client.connection,
-            .{
-                .sub_viewport_display_state_set = .{
-                    .sub_viewport_id = svp.id,
-                    .state = s,
-                },
-            },
+            .{ .sub_viewport_id = svp.id, .state = s },
         );
 
         svp.state = .from_display_state(s);

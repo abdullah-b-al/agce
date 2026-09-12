@@ -1027,27 +1027,25 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
 };
 
 pub const Event = union(enum) {
-    const Payload = client_to_server.MessagePayload;
-
     client_registered: ClientRegistered,
     client_disconnected: ClientID,
 
-    buffer_create_cpu: ptypes.WithClientID(Payload.BufferCreateCpu),
-    buffer_create_gbm_bo: ptypes.WithClientID(Payload.BufferCreateGbmBo),
-    buffer_present: ptypes.WithClientID(Payload.BufferPresent),
-    buffer_present_with_sync: ptypes.WithClientID(Payload.BufferPresentWithSync),
-    buffer_destroy: ptypes.WithClientID(Payload.BufferDestroy),
+    buffer_create_cpu: ptypes.WithClientID(client_to_server.BufferCreateCpu),
+    buffer_create_gbm_bo: ptypes.WithClientID(client_to_server.BufferCreateGbmBo),
+    buffer_present: ptypes.WithClientID(client_to_server.BufferPresent),
+    buffer_present_with_sync: ptypes.WithClientID(client_to_server.BufferPresentWithSync),
+    buffer_destroy: ptypes.WithClientID(client_to_server.BufferDestroy),
 
-    viewport_create: ptypes.WithClientID(Payload.ViewportCreate),
-    viewport_destroy: ptypes.WithClientID(Payload.ViewportDestroy),
-    sub_viewport_embed: ptypes.WithClientID(Payload.SubViewportEmbed),
-    sub_viewport_pos_set: ptypes.WithClientID(Payload.SubViewportPosSet),
-    sub_viewport_size_set: ptypes.WithClientID(Payload.SubViewportSizeSet),
-    sub_viewport_display_state_set: ptypes.WithClientID(Payload.SubViewportDisplayStateSet),
+    viewport_create: ptypes.WithClientID(client_to_server.ViewportCreate),
+    viewport_destroy: ptypes.WithClientID(client_to_server.ViewportDestroy),
+    sub_viewport_embed: ptypes.WithClientID(client_to_server.SubViewportEmbed),
+    sub_viewport_pos_set: ptypes.WithClientID(client_to_server.SubViewportPosSet),
+    sub_viewport_size_set: ptypes.WithClientID(client_to_server.SubViewportSizeSet),
+    sub_viewport_display_state_set: ptypes.WithClientID(client_to_server.SubViewportDisplayStateSet),
 
     window_resize_by_display_server: WindowResize,
 
-    cursor_shape_set: ptypes.WithClientID(Payload.CursorShape),
+    cursor_shape_set: ptypes.WithClientID(client_to_server.CursorShape),
 
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,

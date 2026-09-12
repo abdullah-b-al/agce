@@ -124,22 +124,23 @@ pub fn buffer_present(vp: *Viewport) !void {
         vp.current_buffer = null;
     }
 
-    const buffer: *anyopaque, const message: client_to_server.MessagePayload =
+    const buffer: *anyopaque =
         blk: switch (vp.renderer) {
             .cpu => |*cpu| {
                 const buffer = cpu.buffers.getPtr(vp.current_buffer.?).?;
                 std.debug.assert(buffer.released);
 
-                break :blk .{
-                    buffer,
+                try vp.client.connection.send_buffer_present(
+                    vp.client.io,
+                    vp.client.gpa,
                     .{
-                        .buffer_present = .{
-                            .viewport_id = vp.id,
-                            .buffer_id = buffer.id,
-                            .viewport_size = vp.size,
-                        },
+                        .viewport_id = vp.id,
+                        .buffer_id = buffer.id,
+                        .viewport_size = vp.size,
                     },
-                };
+                );
+
+                break :blk buffer;
             },
             .gl => |*gl| {
                 const buffer = gl.buffers.getPtr(vp.current_buffer.?) orelse
@@ -147,27 +148,21 @@ pub fn buffer_present(vp: *Viewport) !void {
                 std.debug.assert(buffer.released);
                 buffer.release.point.advance();
 
-                break :blk .{
-                    buffer,
+                try vp.client.connection.send_buffer_present_with_sync(
+                    vp.client.io,
+                    vp.client.gpa,
                     .{
-                        .buffer_present_with_sync = .{
-                            .viewport_id = vp.id,
-                            .buffer_id = buffer.id,
-                            .acquire_point = buffer.acquire.point,
-                            .release_point = buffer.release.point,
-                            .viewport_size = vp.size,
-                        },
+                        .viewport_id = vp.id,
+                        .buffer_id = buffer.id,
+                        .acquire_point = buffer.acquire.point,
+                        .release_point = buffer.release.point,
+                        .viewport_size = vp.size,
                     },
-                };
+                );
+
+                break :blk buffer;
             },
         };
-
-    try client_to_server.message_send_json(
-        vp.client.io,
-        vp.client.gpa,
-        vp.client.connection,
-        message,
-    );
 
     switch (vp.renderer) {
         .cpu => |_, tag| {
@@ -194,16 +189,13 @@ pub fn buffers_create(
     switch (vp.renderer) {
         .cpu => {
             for (0..buffer_count) |_| {
-                try client_to_server.message_send_json(
+                try client.connection.send_buffer_create_cpu(
                     client.io,
                     client.gpa,
-                    client.connection,
                     .{
-                        .buffer_create_cpu = .{
-                            .viewport_id = vp.id,
-                            .format = vp.format,
-                            .size = .{ .width = width, .height = height },
-                        },
+                        .viewport_id = vp.id,
+                        .format = vp.format,
+                        .size = .{ .width = width, .height = height },
                     },
                 );
             }
@@ -219,16 +211,13 @@ pub fn buffers_create(
         },
         .gl => {
             for (0..buffer_count) |_| {
-                try client_to_server.message_send_json(
+                try client.connection.send_buffer_create_gbm_bo(
                     client.io,
                     client.gpa,
-                    client.connection,
                     .{
-                        .buffer_create_gbm_bo = .{
-                            .viewport_id = vp.id,
-                            .format = vp.format,
-                            .size = .{ .width = width, .height = height },
-                        },
+                        .viewport_id = vp.id,
+                        .format = vp.format,
+                        .size = .{ .width = width, .height = height },
                     },
                 );
             }
@@ -330,11 +319,10 @@ pub fn buffer_resize(
                 for (old_buffers.values()) |*old| {
                     old.deinit();
 
-                    client_to_server.message_send_json(
+                    vp.client.connection.send_buffer_destroy(
                         vp.client.io,
                         vp.client.gpa,
-                        vp.client.connection,
-                        .{ .buffer_destroy = .{ .buffer_id = old.id } },
+                        .{ .buffer_id = old.id },
                     ) catch {};
                 }
                 old_buffers.deinit(vp.client.gpa);
@@ -391,6 +379,6 @@ const CreateStatus = Client.CreateStatus;
 const BufferPresented = server_to_client.MessagePayload.BufferPresented;
 const log = std.log.scoped(.Viewport);
 const os = @import("builtin").os.tag;
-const BufferCreatedCpu = server_to_client.MessagePayload.BufferCreatedCpu;
-const BufferCreatedGbmBo = server_to_client.MessagePayload.BufferCreatedGbmBo;
+const BufferCreatedCpu = server_to_client.BufferCreatedCpu;
+const BufferCreatedGbmBo = server_to_client.BufferCreatedGbmBo;
 const utils = @import("utils");

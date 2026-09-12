@@ -63,26 +63,17 @@ pub fn destroy(server: *Server) void {
 }
 
 fn message_receive(server: *const Server, arena: std.mem.Allocator, source: MessageSource) ReceivedMessage {
-    const closed = switch (source) {
-        .known => |id| server.clients.known.get(id).?.closed,
-        .unknown => |index| server.clients.unknown.items[index].closed,
+    const connection: *ClientConnection = switch (source) {
+        .known => |id| &server.clients.known.get(id).?.connection,
+        .unknown => |index| &server.clients.unknown.items[index].connection,
     };
 
-    std.debug.assert(!closed);
-
-    const stream = switch (source) {
-        .known => |id| server.clients.known.get(id).?.stream,
-        .unknown => |index| server.clients.unknown.items[index].stream,
-    };
+    std.debug.assert(!connection.closed);
 
     const timeout: Io.Timeout =
         .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
 
-    const err_message = switch (os) {
-        .linux => client_to_server.message_receive(server.io, arena, stream, timeout),
-        .windows => @panic("TODO"),
-        else => comptime unreachable,
-    };
+    const err_message = connection.receive(server.io, arena, timeout);
 
     return .{
         .payload = err_message,
@@ -191,31 +182,21 @@ pub fn handle_event(
 
             log.info("Unknown client connected", .{});
         },
-        .buffer_created_cpu => |e, tag| {
-            switch (os) {
-                .linux => {
-                    defer std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.handle)) == 0);
-
-                    const client = server.clients.known.get(e.client_id) orelse return;
-                    const payload = @unionInit(
-                        server_to_client.MessagePayload,
-                        @tagName(tag),
-                        e.payload,
-                    );
-
-                    try server_to_client.message_send_json(
-                        server.io,
-                        server.gpa,
-                        client.stream,
-                        @tagName(tag),
-                        payload,
-                    );
-                },
-                .windows => @panic("TODO"),
-                else => comptime unreachable,
+        .buffer_created_cpu => |e| {
+            defer {
+                switch (os) {
+                    .linux => {
+                        std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.handle)) == 0);
+                    },
+                    .windows => @panic("TODO"),
+                    else => comptime unreachable,
+                }
             }
+
+            const client = server.clients.known.get(e.client_id) orelse return;
+            try client.connection.send_buffer_created_cpu(server.io, server.gpa, e.payload);
         },
-        .buffer_created_gbm_bo => |e, tag| {
+        .buffer_created_gbm_bo => |e| {
             switch (os) {
                 .linux => {
                     defer {
@@ -225,19 +206,7 @@ pub fn handle_event(
                     }
 
                     const client = server.clients.known.get(e.client_id) orelse return;
-                    const payload = @unionInit(
-                        server_to_client.MessagePayload,
-                        @tagName(tag),
-                        e.payload,
-                    );
-
-                    try server_to_client.message_send_json(
-                        server.io,
-                        server.gpa,
-                        client.stream,
-                        @tagName(tag),
-                        payload,
-                    );
+                    try client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload);
                 },
                 .windows => @panic("TODO"),
                 else => comptime unreachable,
@@ -247,18 +216,8 @@ pub fn handle_event(
         inline else => |e, tag| {
             const client = server.clients.known.get(e.client_id) orelse return;
 
-            const payload = @unionInit(
-                server_to_client.MessagePayload,
-                @tagName(tag),
-                e.payload,
-            );
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                @tagName(tag),
-                payload,
-            );
+            const method = @field(ClientConnection, "send_" ++ @tagName(tag));
+            try method(&client.connection, server.io, server.gpa, e.payload);
         },
     }
 }
@@ -318,13 +277,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
             server.generated_full_ids.putAssumeCapacityNoClobber(full_id, {});
             log.debug("Generated {f}", .{full_id});
 
-            try server_to_client.message_send_json(
-                server.io,
-                server.gpa,
-                client.stream,
-                "generated_client_full_id",
-                .{ .generated_client_full_id = .{ .full_id = full_id } },
-            );
+            try client.connection.send_generated_client_full_id(server.io, server.gpa, .{ .full_id = full_id });
         },
         else => {
             const client = server.clients.known.get(client_id).?;
@@ -340,7 +293,7 @@ const HandleMessageFromUnknownError =
         MisbehavingUnknownClient,
         ClientSentInvalidClientFullID,
         WriteFailed,
-    } || ErrorSetOf(client_to_server.message_receive);
+    } || ErrorSetOf(ClientConnection.receive);
 
 fn handle_message_from_unknown(
     server: *Server,
@@ -382,13 +335,7 @@ fn handle_message_from_unknown(
 
     const client = server.clients.known.get(id).?;
 
-    try server_to_client.message_send_json(
-        server.io,
-        server.gpa,
-        client.stream,
-        "registered",
-        .{ .registered = .{} },
-    );
+    try client.connection.send_registered(server.io, server.gpa, .{});
 
     events.appendAssumeCapacity(
         .{ .client_registered = .{ .client_id = id } },
@@ -400,13 +347,8 @@ fn handle_message_from_unknown(
     for (server.clients.known.values()) |other| {
         if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
 
-        server_to_client.message_send_json(
-            server.io,
-            server.gpa,
-            other.stream,
-            "client_registered",
-            .{ .client_registered = .{ .client_id = client.id } },
-        ) catch |err| log.err("{} from {f} during broadcast", .{ err, other.id });
+        client.connection.send_client_registered(server.io, server.gpa, .{ .client_id = client.id }) catch |err|
+            log.err("{} from {f} during broadcast", .{ err, other.id });
     }
 }
 
@@ -482,15 +424,9 @@ fn close_known_client_with(server: *Server, id: ClientID, err: anyerror, events:
     events.appendAssumeCapacity(.{ .client_disconnected = client.id });
 
     for (server.clients.known.values()) |c| {
-        if (c.id == id or c.closed) continue;
+        if (c.id == id or c.connection.closed) continue;
 
-        server_to_client.message_send_json(
-            server.io,
-            server.gpa,
-            c.stream,
-            "client_disconnected",
-            .{ .client_disconnected = .{ .client_id = id } },
-        ) catch {};
+        c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_id = id }) catch {};
     }
 }
 
@@ -520,7 +456,7 @@ const ReceivedMessage = struct {
     payload: Payload,
     from: MessageSource,
 
-    const Payload = ErrorSetOf(client_to_server.message_receive)!?client_to_server.MessagePayload;
+    const Payload = ErrorSetOf(ClientConnection.receive)!?client_to_server.MessagePayload;
 };
 
 pub const MessageSource = union(enum) {
@@ -529,33 +465,31 @@ pub const MessageSource = union(enum) {
 };
 
 pub const Event = union(enum) {
-    const Payload = server_to_client.MessagePayload;
-
     unknown_client_connected: net.Stream,
 
-    viewport_create: ptypes.WithClientID(Payload.ViewportCreate),
-    viewport_created: ptypes.WithClientID(Payload.ViewportCreated),
-    viewport_resize: ptypes.WithClientID(Payload.ViewportResize),
-    viewport_close: ptypes.WithClientID(Payload.ViewportClose),
-    viewport_display_state: ptypes.WithClientID(Payload.ViewportDisplayState),
+    viewport_create: ptypes.WithClientID(server_to_client.ViewportCreate),
+    viewport_created: ptypes.WithClientID(server_to_client.ViewportCreated),
+    viewport_resize: ptypes.WithClientID(server_to_client.ViewportResize),
+    viewport_close: ptypes.WithClientID(server_to_client.ViewportClose),
+    viewport_display_state: ptypes.WithClientID(server_to_client.ViewportDisplayState),
 
-    sub_viewport_embeded: ptypes.WithClientID(Payload.SubViewportEmbeded),
-    sub_viewport_display_state: ptypes.WithClientID(Payload.SubViewportDisplayState),
-    sub_viewport_closed: ptypes.WithClientID(Payload.SubviewportClosed),
+    sub_viewport_embeded: ptypes.WithClientID(server_to_client.SubViewportEmbeded),
+    sub_viewport_display_state: ptypes.WithClientID(server_to_client.SubViewportDisplayState),
+    sub_viewport_closed: ptypes.WithClientID(server_to_client.SubviewportClosed),
 
-    frame_render: ptypes.WithClientID(Payload.FrameRender),
+    frame_render: ptypes.WithClientID(server_to_client.FrameRender),
 
-    buffer_released: ptypes.WithClientID(Payload.BufferReleased),
-    buffer_created_cpu: ptypes.WithClientID(Payload.BufferCreatedCpu),
-    buffer_created_gbm_bo: ptypes.WithClientID(Payload.BufferCreatedGbmBo),
+    buffer_released: ptypes.WithClientID(server_to_client.BufferReleased),
+    buffer_created_cpu: ptypes.WithClientID(server_to_client.BufferCreatedCpu),
+    buffer_created_gbm_bo: ptypes.WithClientID(server_to_client.BufferCreatedGbmBo),
 
-    keyboard_key: ptypes.WithClientID(Payload.KeyboardKey),
-    keyboard_char: ptypes.WithClientID(Payload.KeyboardChar),
-    mouse_enter: ptypes.WithClientID(Payload.MouseEnter),
-    mouse_leave: ptypes.WithClientID(Payload.MouseLeave),
-    mouse_motion: ptypes.WithClientID(Payload.MouseMotion),
-    mouse_button: ptypes.WithClientID(Payload.MouseButton),
-    mouse_scroll: ptypes.WithClientID(Payload.MouseScroll),
+    keyboard_key: ptypes.WithClientID(server_to_client.KeyboardKey),
+    keyboard_char: ptypes.WithClientID(server_to_client.KeyboardChar),
+    mouse_enter: ptypes.WithClientID(server_to_client.MouseEnter),
+    mouse_leave: ptypes.WithClientID(server_to_client.MouseLeave),
+    mouse_motion: ptypes.WithClientID(server_to_client.MouseMotion),
+    mouse_button: ptypes.WithClientID(server_to_client.MouseButton),
+    mouse_scroll: ptypes.WithClientID(server_to_client.MouseScroll),
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
@@ -578,3 +512,4 @@ const ClientID = ptypes.ClientID;
 const Client = Clients.Client;
 const UnknownClient = Clients.UnknownClient;
 const os = @import("builtin").os.tag;
+const ClientConnection = @import("ClientConnection.zig");

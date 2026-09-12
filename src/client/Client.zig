@@ -3,7 +3,7 @@ const Client = @This();
 io: Io,
 gpa: std.mem.Allocator,
 environ_map: std.process.Environ.Map,
-connection: net.Stream,
+connection: ServerConnection,
 registered: bool,
 
 next_viewport_id: ptypes.ViewportID,
@@ -43,7 +43,10 @@ pub fn init(
         .io = io,
         .gpa = gpa,
         .environ_map = map,
-        .connection = stream,
+        .connection = .{
+            .format = .json,
+            .stream = stream,
+        },
         .registered = false,
         .messages_arena = .init(gpa),
         .next_viewport_id = .first_for_client,
@@ -105,7 +108,7 @@ pub fn deinit(client: *Client) void {
 
     client.environ_map.deinit();
     client.messages_arena.deinit();
-    client.connection.close(client.io);
+    client.connection.stream.close(client.io);
 }
 
 pub fn init_gbm(client: *Client) !void {
@@ -173,10 +176,9 @@ pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag
 pub fn poll(client: *Client, timeout: Io.Timeout) !void {
     defer _ = client.messages_arena.reset(.{ .retain_with_limit = 1024 * 4 });
 
-    const messages = try server_to_client.message_receive_all(
+    const messages = try client.connection.receive_all(
         client.io,
         client.messages_arena.allocator(),
-        client.connection,
         timeout,
     );
 
@@ -435,21 +437,18 @@ pub fn send_viewport_create(
         };
     };
 
-    try client_to_server.message_send_json(client.io, client.gpa, client.connection, .{
-        .viewport_create = .{
-            .viewport_id = viewport_id,
-            .create_sync_timeline = create_sync_timeline,
-            .size = size,
-        },
+    try client.connection.send_viewport_create(client.io, client.gpa, .{
+        .viewport_id = viewport_id,
+        .create_sync_timeline = create_sync_timeline,
+        .size = size,
     });
 }
 
 pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
-    try client_to_server.message_send_json(
+    try client.connection.send_buffer_destroy(
         client.io,
         client.gpa,
-        client.connection,
-        .{ .buffer_destroy = .{ .buffer_id = buffer_id } },
+        .{ .buffer_id = buffer_id },
     );
 }
 
@@ -468,17 +467,14 @@ pub fn sub_viewport_embed(
 
     client.sub_viewports.putAssumeCapacityNoClobber(id, svp);
 
-    try client_to_server.message_send_json(
+    try client.connection.send_sub_viewport_embed(
         client.io,
         client.gpa,
-        client.connection,
         .{
-            .sub_viewport_embed = .{
-                .client_id_to_embed = client_id_to_embed,
-                .embeder_viewport_id = viewport_id,
-                .rect = rect,
-                .sub_viewport_id = id,
-            },
+            .client_id_to_embed = client_id_to_embed,
+            .embeder_viewport_id = viewport_id,
+            .rect = rect,
+            .sub_viewport_id = id,
         },
     );
 
@@ -491,17 +487,15 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
 };
 
 pub const Event = union(enum) {
-    const Payload = server_to_client.MessagePayload;
-
-    viewport_resize: Payload.ViewportResize,
-    viewport_close: Payload.ViewportClose,
-    keyboard_char: Payload.KeyboardChar,
-    keyboard_key: Payload.KeyboardKey,
-    mouse_enter: Payload.MouseEnter,
-    mouse_leave: Payload.MouseLeave,
-    mouse_motion: Payload.MouseMotion,
-    mouse_button: Payload.MouseButton,
-    mouse_scroll: Payload.MouseScroll,
+    viewport_resize: server_to_client.ViewportResize,
+    viewport_close: server_to_client.ViewportClose,
+    keyboard_char: server_to_client.KeyboardChar,
+    keyboard_key: server_to_client.KeyboardKey,
+    mouse_enter: server_to_client.MouseEnter,
+    mouse_leave: server_to_client.MouseLeave,
+    mouse_motion: server_to_client.MouseMotion,
+    mouse_button: server_to_client.MouseButton,
+    mouse_scroll: server_to_client.MouseScroll,
     sub_viewport_closed: SubViewportID,
     sub_viewport_embeded: SubViewportID,
     wake_up,
@@ -509,12 +503,11 @@ pub const Event = union(enum) {
 
 pub const Message = union(enum) {
     pub const Tag = std.meta.Tag(Message);
-    const Payload = server_to_client.MessagePayload;
 
-    viewport_resize: Payload.ViewportResize,
-    viewport_created: Payload.ViewportCreated,
-    buffer_released: Payload.BufferReleased,
-    frame_render: Payload.FrameRender,
+    viewport_resize: server_to_client.ViewportResize,
+    viewport_created: server_to_client.ViewportCreated,
+    buffer_released: server_to_client.BufferReleased,
+    frame_render: server_to_client.FrameRender,
 };
 
 pub fn WithViewportID(comptime T: type) type {
@@ -575,3 +568,4 @@ const SubViewport = @import("SubViewport.zig");
 const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
 const Process = @import("Process.zig");
+const ServerConnection = @import("ServerConnection.zig");

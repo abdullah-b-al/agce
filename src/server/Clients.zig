@@ -58,8 +58,11 @@ pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
 pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: net.Stream) void {
     const client = clients.unknown_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
-        .stream = stream,
-        .closed = false,
+        .connection = .{
+            .format = .json,
+            .stream = stream,
+            .closed = false,
+        },
         .promoted_to_known = false,
     };
     clients.unknown.appendAssumeCapacity(client);
@@ -72,8 +75,11 @@ pub fn promote_client_to_known(clients: *Clients, gpa: std.mem.Allocator, index:
     const client = clients.known_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
         .id = id,
-        .stream = unknown.stream,
-        .closed = false,
+        .connection = .{
+            .format = unknown.connection.format,
+            .stream = unknown.connection.stream,
+            .closed = false,
+        },
     };
 
     clients.known.putAssumeCapacityNoClobber(id, client);
@@ -85,7 +91,7 @@ pub fn remove_closed_known_clients(clients: *Clients) void {
     while (i > 0) {
         i -= 1;
         const client = clients.known.values()[i];
-        if (client.closed) {
+        if (client.connection.closed) {
             const id = client.id;
             log.debug("Removed closed client {f}", .{id});
             clients.known_pool.destroy(@alignCast(client));
@@ -99,7 +105,7 @@ pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients) void {
     while (i > 0) {
         i -= 1;
         const client = clients.unknown.items[i];
-        if (client.promoted_to_known or client.closed) {
+        if (client.promoted_to_known or client.connection.closed) {
             clients.unknown_pool.destroy(@alignCast(client));
             _ = clients.unknown.orderedRemove(i);
         }
@@ -108,30 +114,29 @@ pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients) void {
 
 pub const Client = struct {
     id: ptypes.ClientID,
-    stream: net.Stream,
-    closed: bool,
+    connection: ClientConnection,
 
     pub fn close(client: *Client, io: Io) void {
-        std.debug.assert(!client.closed);
-        client.stream.close(io);
-        client.closed = true;
+        std.debug.assert(!client.connection.closed);
+        client.connection.stream.close(io);
+        client.connection.closed = true;
     }
 };
 
 pub const UnknownClient = struct {
-    stream: net.Stream,
-    closed: bool,
+    connection: ClientConnection,
     promoted_to_known: bool,
 
     pub fn close(unknown: *UnknownClient, io: Io) void {
-        std.debug.assert(!unknown.closed);
-        unknown.stream.close(io);
-        unknown.closed = true;
+        std.debug.assert(!unknown.connection.closed);
+        unknown.connection.stream.close(io);
+        unknown.connection.closed = true;
     }
 };
 
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
+const ClientConnection = @import("ClientConnection.zig");
 const ptypes = @import("protocol").types;
 const log = std.log.scoped(.Clients);

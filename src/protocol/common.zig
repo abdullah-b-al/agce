@@ -55,53 +55,6 @@ pub fn parse_message_header(comptime Header: type, data: []const u8) !Header {
     return header;
 }
 
-pub fn contains_a_fd(comptime T: type) ?[:0]const u8 {
-    const info = @typeInfo(T);
-    switch (info) {
-        .@"struct" => |s| {
-            inline for (s.fields) |field| {
-                const F = field.type;
-                switch (@typeInfo(F)) {
-                    .@"enum" => if (enum_is_fd(F)) return field.name,
-                    .@"struct" => if (contains_a_fd(F)) |_| return field.name,
-                    else => {},
-                }
-            }
-        },
-        .void => {},
-        else => @compileError("Unsupported primitive type"),
-    }
-
-    return null;
-}
-
-fn enum_is_fd(comptime E: type) bool {
-    const info = @typeInfo(E);
-    std.debug.assert(info == .@"enum");
-
-    const e = info.@"enum";
-
-    if (!e.is_exhaustive and e.tag_type == c_int) {
-        const err = std.fmt.comptimePrint(
-            "Error on type {}: non-exhaustive enums backed by a c_int must contain the declaration is_fd: bool",
-            .{E},
-        );
-
-        const decl_name = "is_fd";
-        if (@hasDecl(E, decl_name)) {
-            if (@TypeOf(@field(E, decl_name)) != bool) {
-                @compileError(err);
-            }
-
-            return @field(E, decl_name);
-        } else {
-            @compileError(err);
-        }
-    }
-
-    return false;
-}
-
 const std = @import("std");
 const os = @import("builtin").os.tag;
 const Io = std.Io;

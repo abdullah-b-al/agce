@@ -121,13 +121,13 @@ fn poll_linux_wayland(arena: std.mem.Allocator, wl: *Wayland, server: *const Ser
 
     const known_i = i;
     for (server.clients.known.values()) |c| {
-        fds[i].fd = c.stream.socket.handle;
+        fds[i].fd = c.connection.stream.socket.handle;
         i += 1;
     }
 
     const unknown_i = i;
     for (server.clients.unknown.items) |c| {
-        fds[i].fd = c.stream.socket.handle;
+        fds[i].fd = c.connection.stream.socket.handle;
         i += 1;
     }
 
@@ -179,13 +179,13 @@ fn poll_windows(arena: std.mem.Allocator, server: *const Server) !PollWindows {
 
     const known_i = i;
     for (server.clients.known.values()) |c| {
-        handles[i] = c.stream.socket.handle;
+        handles[i] = c.connection.stream.socket.handle;
         i += 1;
     }
 
     const unknown_i = i;
     for (server.clients.unknown.items) |c| {
-        handles[i] = c.stream.socket.handle;
+        handles[i] = c.connection.stream.socket.handle;
         i += 1;
     }
 
