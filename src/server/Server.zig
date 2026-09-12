@@ -80,6 +80,7 @@ fn message_receive(server: *const Server, arena: std.mem.Allocator, source: Mess
 
     const err_message = switch (os) {
         .linux => client_to_server.message_receive(server.io, arena, stream, timeout),
+        .windows => @panic("TODO"),
         else => comptime unreachable,
     };
 
@@ -210,6 +211,7 @@ pub fn handle_event(
                         payload,
                     );
                 },
+                .windows => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -237,6 +239,7 @@ pub fn handle_event(
                         payload,
                     );
                 },
+                .windows => @panic("TODO"),
                 else => comptime unreachable,
             }
         },

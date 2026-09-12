@@ -1,3 +1,6 @@
+var step_check: *Build.Step = undefined;
+var step_all: *Build.Step = undefined;
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -85,30 +88,27 @@ pub fn build(b: *std.Build) !void {
         break :blk module;
     };
 
-    const check = b.step("check", "Check the compilation");
     const step_server = b.step("server", "Build the server");
 
+    step_check = b.step("check", "Check the compilation");
+    step_all = b.step("all", "Build everything");
+
     { // client cli
-        const exe = b.addExecutable(.{
-            .name = "agce-client",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/main_client.zig"),
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-                .imports = &.{
-                    .{ .name = "glad", .module = glad.c },
-                    .{ .name = "client", .module = client },
-                },
-            }),
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/main_client.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "glad", .module = glad.c },
+                .{ .name = "client", .module = client },
+            },
         });
 
-        if (c_linux) |c| exe.root_module.addImport("c_linux", c);
+        if (c_linux) |c| module.addImport("c_linux", c);
+        module.linkLibrary(glad.lib);
 
-        exe.root_module.linkLibrary(glad.lib);
-
-        b.installArtifact(exe);
-        check.dependOn(&exe.step);
+        install_exe(b, "agce-client", module, null);
     }
 
     switch (target.result.os.tag) {
@@ -125,16 +125,7 @@ pub fn build(b: *std.Build) !void {
                 },
             });
 
-            const exe = b.addExecutable(.{ .name = "agce", .root_module = module });
-            step_server.dependOn(&(b.addInstallArtifact(exe, .{}).step));
-
-            const exe_check = b.addExecutable(.{
-                .name = "agce",
-                .root_module = module,
-                .use_llvm = false,
-            });
-
-            check.dependOn(&exe_check.step);
+            install_exe(b, "agce", module, step_server);
         },
         .linux => {
             const Scanner = @import("wayland").Scanner;
@@ -173,16 +164,7 @@ pub fn build(b: *std.Build) !void {
             });
             module.linkSystemLibrary("wayland-client", .{});
 
-            const exe = b.addExecutable(.{ .name = "agce", .root_module = module });
-            step_server.dependOn(&(b.addInstallArtifact(exe, .{}).step));
-
-            const exe_check = b.addExecutable(.{
-                .name = "agce",
-                .root_module = module,
-                .use_llvm = false,
-            });
-
-            check.dependOn(&exe_check.step);
+            install_exe(b, "agce", module, step_server);
         },
         else => return error.UnsupportedOS,
     }
@@ -222,6 +204,16 @@ fn build_glad(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin
         .lib = lib,
         .c = c.createModule(),
     };
+}
+
+fn install_exe(b: *Build, name: []const u8, root: *Build.Module, exe_step: ?*Build.Step) void {
+    const exe = b.addExecutable(.{ .name = name, .root_module = root });
+    const art = b.addInstallArtifact(exe, .{});
+    if (exe_step) |s| s.dependOn(&art.step);
+    step_all.dependOn(&art.step);
+
+    const exe_check = b.addExecutable(.{ .name = name, .root_module = root, .use_llvm = false });
+    step_check.dependOn(&exe_check.step);
 }
 
 const std = @import("std");

@@ -73,6 +73,7 @@ pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) voi
                 },
             }
         },
+        WindowSystem.W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 

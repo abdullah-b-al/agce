@@ -129,7 +129,12 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .client_registered => |e| try ws.client_registered(e),
         .client_disconnected => |id| try ws.client_disconnected(id),
         .buffer_create_cpu => |args| try ws.buffer_create_cpu(args),
-        .buffer_create_gbm_bo => |args| try ws.buffer_create_gbm_bo(args),
+        .buffer_create_gbm_bo => |args| {
+            if (!constants.os_has_gbm) {
+                return error.MessageUnsupportedByOS;
+            }
+            try ws.buffer_create_gbm_bo(args);
+        },
 
         .buffer_present => |args| try ws.buffer_present(.{ .no_sync = args }),
         .buffer_present_with_sync => |args| try ws.buffer_present(.{ .sync = args }),
@@ -190,6 +195,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.keyboard_key(ws, args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -198,6 +204,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.keyboard_enter(args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -206,6 +213,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.keyboard_leave(args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -214,6 +222,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.mouse_enter(ws, args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -222,6 +231,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.mouse_leave(ws, args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -230,6 +240,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.mouse_motion(ws, args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -238,6 +249,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.mouse_button(ws, args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -246,6 +258,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 Linux => switch (ws.native) {
                     .wayland => |wl| try wl.mouse_scroll(ws, args),
                 },
+                W32 => @panic("TODO"),
                 else => comptime unreachable,
             }
         },
@@ -363,6 +376,7 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
                 .buffer_id = buffer_id,
             };
         },
+        W32 => @panic("TODO"),
         else => @compileError("Not supported on OS"),
     }
 }
@@ -493,6 +507,7 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 }
@@ -616,6 +631,7 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 
@@ -688,6 +704,7 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 }
@@ -728,6 +745,8 @@ pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_
                 },
             }
         },
+
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 }
@@ -769,6 +788,7 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 
@@ -834,6 +854,7 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 
@@ -874,6 +895,7 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 
@@ -905,6 +927,7 @@ pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)
                 },
             }
         },
+        W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 }

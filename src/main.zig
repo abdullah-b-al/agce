@@ -31,7 +31,6 @@ pub fn main(init: std.process.Init) !void {
     const server = try Server.create(init.io, init.environ_map, init.gpa);
     defer server.destroy();
 
-    const display_fd = ws.native.wayland.display.getFd();
     var arena: std.heap.ArenaAllocator = .init(init.gpa);
     defer arena.deinit();
 
@@ -53,13 +52,18 @@ pub fn main(init: std.process.Init) !void {
         try ws.server_events.ensureUnusedCapacity(ws.gpa, server_events_len);
         try ws.deferred_events.ensureUnusedCapacity(ws.gpa, ws_events_len);
 
-        const poll = try poll_linux_wayland(arena.allocator(), server, display_fd);
+        const poll = switch (WindowSystem.Native) {
+            WindowSystem.Linux => switch (ws.native) {
+                .wayland => |wl| try poll_linux_wayland(arena.allocator(), wl, server),
+            },
+            WindowSystem.W32 => try poll_windows(arena.allocator(), server),
+            else => comptime unreachable,
+        };
 
         const messages = try server.messages_receive(arena.allocator(), poll.clients);
         const ws_events = try server.messages_handle(arena.allocator(), messages);
         ws.events_handle(ws_events);
-
-        if (poll.compositor) {
+        if (@hasField(@TypeOf(poll), "compositor") and poll.compositor) {
             ws.native.wayland.display_dispatch(ws);
         }
 
@@ -90,7 +94,9 @@ const PollLinuxWayland = struct {
     accept: bool,
     clients: []Server.MessageSource,
 };
-fn poll_linux_wayland(arena: std.mem.Allocator, server: *const Server, display_fd: c_int) !PollLinuxWayland {
+fn poll_linux_wayland(arena: std.mem.Allocator, wl: *Wayland, server: *const Server) !PollLinuxWayland {
+    const display_fd = wl.display.getFd();
+
     const fds_len = server.clients.count() + 2;
     const fds = try arena.alloc(std.os.linux.pollfd, fds_len);
     var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
@@ -127,9 +133,9 @@ fn poll_linux_wayland(arena: std.mem.Allocator, server: *const Server, display_f
 
     std.debug.assert(i == fds.len);
 
-    const poll_result = std.os.linux.poll(fds.ptr, fds.len, std.math.maxInt(i32));
+    const poll_result: isize = @bitCast(std.os.linux.poll(fds.ptr, fds.len, std.math.maxInt(i32)));
     std.debug.assert(poll_result != 0); // timeout
-    if (poll_result < 0) return;
+    if (poll_result < 0) return error.PollFailed;
 
     for (server.clients.known.values(), 0..) |client, ci| {
         const fd = fds[known_i + ci];
@@ -154,6 +160,74 @@ fn poll_linux_wayland(arena: std.mem.Allocator, server: *const Server, display_f
     };
 }
 
+const PollWindows = struct {
+    accept: bool,
+    clients: []Server.MessageSource,
+};
+
+fn poll_windows(arena: std.mem.Allocator, server: *const Server) !PollWindows {
+    const handles_len = server.clients.count() + 1;
+    const handles = try arena.alloc(std.os.windows.HANDLE, handles_len);
+    var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
+
+    var i: usize = 0;
+
+    {
+        handles[i] = server.server.socket.handle;
+        i += 1;
+    }
+
+    const known_i = i;
+    for (server.clients.known.values()) |c| {
+        handles[i] = c.stream.socket.handle;
+        i += 1;
+    }
+
+    const unknown_i = i;
+    for (server.clients.unknown.items) |c| {
+        handles[i] = c.stream.socket.handle;
+        i += 1;
+    }
+
+    std.debug.assert(i == handles.len);
+
+    const result = win32_threading.WaitForMultipleObjects(
+        @intCast(handles.len),
+        handles.ptr,
+        @intFromEnum(std.os.windows.BOOL.FALSE),
+        std.math.maxInt(i32),
+    );
+
+    std.debug.assert(result != win32.foundation.WAIT_TIMEOUT);
+    if (result == win32.foundation.WAIT_FAILED) {
+        return error.WaitForMultipleObjectsFailed;
+    }
+
+    for (server.clients.known.values(), 0..) |client, ci| {
+        const handle = handles[known_i + ci];
+        const wait = win32_threading.WaitForSingleObject(handle, 0);
+        if (wait == win32.foundation.WAIT_OBJECT_0) {
+            clients.appendAssumeCapacity(.{ .known = client.id });
+        }
+    }
+
+    for (server.clients.unknown.items, 0..) |_, ci| {
+        const handle = handles[unknown_i + ci];
+        const wait = win32_threading.WaitForSingleObject(handle, 0);
+        if (wait == win32.foundation.WAIT_OBJECT_0) {
+            clients.appendAssumeCapacity(.{ .unknown = ci });
+        }
+    }
+
+    const accept = win32_threading.WaitForSingleObject(server.server.socket.handle, 0) ==
+        win32.foundation.WAIT_OBJECT_0;
+
+    return .{
+        .accept = accept,
+        .clients = clients.items,
+    };
+}
+
 pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
     switch (sig) {
         .INT => {
@@ -170,6 +244,7 @@ const Wayland = @import("wayland/Wayland.zig");
 const Win32 = @import("win32/Win32.zig");
 const WindowSystem = @import("WindowSystem.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
+const win32 = @import("win32");
 const Server = @import("server/Server.zig");
 const utils = @import("utils");
 const c_linux = @import("c_linux");
@@ -177,3 +252,4 @@ const log = std.log.scoped(.main);
 const os_tag = @import("builtin").os.tag;
 const Clients = @import("server/Clients.zig");
 const ClientID = Clients.ClientID;
+const win32_threading = win32.system.threading;

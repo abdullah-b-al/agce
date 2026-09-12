@@ -103,5 +103,6 @@ fn enum_is_fd(comptime E: type) bool {
 }
 
 const std = @import("std");
+const os = @import("builtin").os.tag;
 const Io = std.Io;
 const net = Io.net;

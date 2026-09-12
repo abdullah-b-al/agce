@@ -259,6 +259,7 @@ pub fn renderer_buffers_create(
                         .linux => {
                             std.debug.assert(std.os.linux.close(@intFromEnum(c.handle)) == 0);
                         },
+                        .windows => @panic("TODO"),
                         else => comptime unreachable,
                     }
                 },
@@ -286,6 +287,7 @@ pub fn renderer_buffers_create(
                         }
                     }
                 },
+                Win32RendererGL => @panic("TODO"),
                 else => comptime unreachable,
             }
         },

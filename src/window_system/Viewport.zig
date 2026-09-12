@@ -53,6 +53,7 @@ pub fn create(
                 ),
             },
         },
+        WindowSystem.W32 => @panic("TODO"),
         else => comptime unreachable,
     };
 
@@ -80,6 +81,7 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
                 },
             }
         },
+        WindowSystem.W32 => @panic("TODO"),
         else => comptime unreachable,
     }
 
