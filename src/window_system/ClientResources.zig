@@ -60,21 +60,17 @@ pub fn deinit(rs: *ClientResources, ws: *WindowSystem) void {
 pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) void {
     const buffer = rs.buffers.getPtr(id) orelse return;
 
-    switch (WindowSystem.Native) {
-        WindowSystem.Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    if (rs.gbm_bos.getPtr(id)) |bo| {
-                        bo.deinit(ws.gbm);
-                    }
-                    _ = rs.gbm_bos.orderedRemove(id);
-                    _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wayland.wl_buffer()));
-                    buffer.wayland.destroy();
-                },
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            if (rs.gbm_bos.getPtr(id)) |bo| {
+                bo.deinit(ws.gbm);
             }
+            _ = rs.gbm_bos.orderedRemove(id);
+            _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wayland.wl_buffer()));
+            buffer.wayland.destroy();
         },
-        WindowSystem.W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => @panic("TODO"),
     }
 
     _ = rs.buffers.orderedRemove(id);

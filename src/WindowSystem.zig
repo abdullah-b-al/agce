@@ -12,7 +12,9 @@ server_events: std.ArrayList(ServerEvent),
 deferred_events: std.ArrayList(Event),
 
 gbm: Gbm,
-native: Native,
+
+win32: if (os == .windows) *Win32 else void,
+linux: if (os == .linux) Linux else void,
 
 pub fn create_wayland(
     io: Io,
@@ -24,7 +26,7 @@ pub fn create_wayland(
     );
 
     const wl: *Wayland = try .create(io, gpa);
-    ws.native = .{ .wayland = wl };
+    ws.linux = .{ .wayland = wl };
 
     try wl.set_listeners(ws);
 
@@ -41,7 +43,7 @@ pub fn create_win32(
         gpa,
     );
 
-    ws.native = try .create(gpa, instance);
+    ws.win32 = try .create(gpa, instance);
 
     return ws;
 }
@@ -79,7 +81,8 @@ fn create_undefined_native(
 
         .server_events = .empty,
         .deferred_events = .empty,
-        .native = undefined,
+        .win32 = undefined,
+        .linux = undefined,
     };
 
     return ws;
@@ -94,14 +97,15 @@ pub fn destroy(ws: *WindowSystem) void {
         win.destroy(ws.gpa);
     }
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| wl.destroy(),
-            }
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            wl.destroy();
         },
-        W32 => ws.native.destroy(),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            const w = tag.window_system(ws);
+            w.destroy();
+        },
     }
 
     inline for (.{
@@ -114,6 +118,16 @@ pub fn destroy(ws: *WindowSystem) void {
     }
 
     ws.gpa.destroy(ws);
+}
+
+pub fn native_tag(ws: *WindowSystem) NativeTag {
+    return switch (os) {
+        .linux => switch (ws.linux) {
+            .wayland => .wayland,
+        },
+        .windows => .win32,
+        else => comptime unreachable,
+    };
 }
 
 pub fn events_handle(ws: *WindowSystem, events: []const Event) void {
@@ -191,75 +205,99 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .cursor_shape_set => |args| try ws.cursor_shape_set(args),
 
         .keyboard_key => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.keyboard_key(ws, args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.keyboard_key(ws, args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .keyboard_enter => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.keyboard_enter(args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.keyboard_enter(args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .keyboard_leave => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.keyboard_leave(args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.keyboard_leave(args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .mouse_enter => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.mouse_enter(ws, args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.mouse_enter(ws, args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .mouse_leave => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.mouse_leave(ws, args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.mouse_leave(ws, args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .mouse_motion => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.mouse_motion(ws, args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.mouse_motion(ws, args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .mouse_button => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.mouse_button(ws, args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.mouse_button(ws, args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
         .mouse_scroll => |args| {
-            switch (Native) {
-                Linux => switch (ws.native) {
-                    .wayland => |wl| try wl.mouse_scroll(ws, args),
+            switch (ws.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.window_system(ws);
+                    try wl.mouse_scroll(ws, args);
                 },
-                W32 => @panic("TODO"),
-                else => comptime unreachable,
+                .win32 => |tag| {
+                    tag.guard();
+                    @panic("TODO");
+                },
             }
         },
     }
@@ -351,33 +389,32 @@ const BufferCreateCpu = struct {
 };
 
 fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes.Size, format: ptypes.BufferFormat) !BufferCreateCpu {
-    switch (Native) {
-        Linux => {
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
             const s = size.width * size.height * format.bytes_per_pixel();
             const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
             if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), @intCast(s))) != .SUCCESS) return error.FtruncateFailed;
 
             const buffer_id = rs.next_buffer_id.increment();
-            switch (ws.native) {
-                .wayland => |wl| {
-                    try wl.buffer_create_and_register_cpu(
-                        ws,
-                        rs,
-                        buffer_id,
-                        fd,
-                        size,
-                        format,
-                    );
-                },
-            }
+            try wl.buffer_create_and_register_cpu(
+                ws,
+                rs,
+                buffer_id,
+                fd,
+                size,
+                format,
+            );
 
             return .{
                 .handle = fd,
                 .buffer_id = buffer_id,
             };
         },
-        W32 => @panic("TODO"),
-        else => @compileError("Not supported on OS"),
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 }
 
@@ -398,7 +435,7 @@ fn buffer_create_gbm_bo(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_gbm
     const rs = ws.resources.getPtr(args.client_id).?;
     try rs.gbm_bos.ensureUnusedCapacity(ws.gpa, 1);
 
-    switch (ws.native) {
+    switch (ws.linux) {
         .wayland => |wl| {
             const id = try wl.buffer_create_and_register_gpu_async(
                 rs,
@@ -462,53 +499,52 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
         return;
     };
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    const vp_wl = &vp.native.wayland;
-                    const b = &buffer.wayland;
-                    const w = &win.native.wayland;
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            const nvp = tag.viewport(vp);
+            const nw = tag.window(win);
+            const b = &buffer.wayland;
 
-                    vp_wl.surface.damage(0, 0, b.width(), b.height());
-                    vp_wl.surface.attach(b.wl_buffer(), 0, 0);
-                    switch (args) {
-                        .no_sync => {
-                            rs.buffers_commited.putAssumeCapacityNoClobber(buffer_id, viewport_id);
-                        },
-                        .sync => |a| {
-                            // TODO: Should we add a check to make sure we are not presenting
-                            // a non-released buffer, or is the timeline sufficient ?
+            nvp.surface.damage(0, 0, b.width(), b.height());
+            nvp.surface.attach(b.wl_buffer(), 0, 0);
+            switch (args) {
+                .no_sync => {
+                    rs.buffers_commited.putAssumeCapacityNoClobber(buffer_id, viewport_id);
+                },
+                .sync => |a| {
+                    // TODO: Should we add a check to make sure we are not presenting
+                    // a non-released buffer, or is the timeline sufficient ?
 
-                            const sync = a.payload;
-                            if (vp_wl.sync_surface) |sync_surface| {
-                                switch (b.*) {
-                                    .gpu => |gpu| {
-                                        gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
-                                        gpu.timeline_release.?.set(sync_surface, sync.release_point);
-                                    },
-                                    .cpu => {},
-                                }
-                            }
-                        },
+                    const sync = a.payload;
+                    if (nvp.sync_surface) |sync_surface| {
+                        switch (b.*) {
+                            .gpu => |gpu| {
+                                gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
+                                gpu.timeline_release.?.set(sync_surface, sync.release_point);
+                            },
+                            .cpu => {},
+                        }
                     }
-
-                    const size = vp_wl.min_source_size_with_buffer(w, b);
-                    vp_wl.viewport.setSource(
-                        .fromInt(0),
-                        .fromInt(0),
-                        .fromInt(@intCast(size.width)),
-                        .fromInt(@intCast(size.height)),
-                    );
-
-                    vp_wl.surface.commit();
-
-                    _ = wl.display.flush();
                 },
             }
+
+            const size = nvp.min_source_size_with_buffer(nw, b);
+            nvp.viewport.setSource(
+                .fromInt(0),
+                .fromInt(0),
+                .fromInt(@intCast(size.width)),
+                .fromInt(@intCast(size.height)),
+            );
+
+            nvp.surface.commit();
+
+            _ = wl.display.flush();
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 }
 
@@ -622,17 +658,17 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
 
     ws.windows.putAssumeCapacityNoClobber(id, win);
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    win.native.wayland.surface.commit();
-                    _ = wl.display.flush();
-                },
-            }
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            win.linux.wayland.surface.commit();
+            _ = wl.display.flush();
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+
+            @panic("TODO");
+        },
     }
 
     log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_id });
@@ -694,18 +730,17 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
         }
     }
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    if (removed) {
-                        _ = wl.display.flush();
-                    }
-                },
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            if (removed) {
+                _ = wl.display.flush();
             }
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 }
 
@@ -730,24 +765,23 @@ pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_
     vp.clipping_rect.x = pos.x;
     vp.clipping_rect.y = pos.y;
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    if (set_position) {
-                        vp.native.wayland.subsurface.set_position(
-                            vp.clipping_rect.x,
-                            vp.clipping_rect.y,
-                        );
-                    }
-
-                    _ = wl.display.flush();
-                },
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            const nvp = tag.viewport(vp);
+            if (set_position) {
+                nvp.subsurface.set_position(
+                    vp.clipping_rect.x,
+                    vp.clipping_rect.y,
+                );
             }
-        },
 
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+            _ = wl.display.flush();
+        },
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 }
 
@@ -772,24 +806,24 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
     vp.clipping_rect.width = size.width;
     vp.clipping_rect.height = size.height;
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    const min_size = vp.native.wayland.min_source_size(&win.native.wayland);
-                    vp.native.wayland.viewport.setSource(
-                        .fromInt(0),
-                        .fromInt(0),
-                        .fromInt(@intCast(min_size.width)),
-                        .fromInt(@intCast(min_size.height)),
-                    );
-                    vp.native.wayland.surface.commit();
-                    _ = wl.display.flush();
-                },
-            }
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            const nvp = tag.viewport(vp);
+            const min_size = nvp.min_source_size(&win.linux.wayland);
+            nvp.viewport.setSource(
+                .fromInt(0),
+                .fromInt(0),
+                .fromInt(@intCast(min_size.width)),
+                .fromInt(@intCast(min_size.height)),
+            );
+            nvp.surface.commit();
+            _ = wl.display.flush();
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 
     ws.server_events.appendAssumeCapacity(.{
@@ -823,39 +857,38 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
 
     const parent_key = svp.parent_key.?;
     const parent = ws.viewport_from_key(parent_key).?;
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            const nvp = tag.viewport(svp);
+            const size = nvp.min_source_size(&win.linux.wayland);
+            nvp.viewport.setSource(
+                .fromInt(0),
+                .fromInt(0),
+                .fromInt(@intCast(size.width)),
+                .fromInt(@intCast(size.height)),
+            );
 
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    const size = svp.native.wayland.min_source_size(&win.native.wayland);
-                    svp.native.wayland.viewport.setSource(
-                        .fromInt(0),
-                        .fromInt(0),
-                        .fromInt(@intCast(size.width)),
-                        .fromInt(@intCast(size.height)),
-                    );
-
-                    switch (svp.state) {
-                        .hidden => {
-                            svp.native.wayland.subsurface.set_position(0, 0);
-                            svp.native.wayland.subsurface.place(.below, parent.native.wayland.surface);
-                        },
-                        .shown => {
-                            svp.native.wayland.subsurface.set_position(svp.clipping_rect.x, svp.clipping_rect.y);
-                            svp.native.wayland.subsurface.place(.above, parent.native.wayland.surface);
-                        },
-                    }
-
-                    svp.native.wayland.surface.commit();
-                    parent.native.wayland.surface.commit();
-
-                    _ = wl.display.flush();
+            switch (svp.state) {
+                .hidden => {
+                    nvp.subsurface.set_position(0, 0);
+                    nvp.subsurface.place(.below, parent.linux.wayland.surface);
+                },
+                .shown => {
+                    nvp.subsurface.set_position(svp.clipping_rect.x, svp.clipping_rect.y);
+                    nvp.subsurface.place(.above, parent.linux.wayland.surface);
                 },
             }
+
+            nvp.surface.commit();
+            tag.viewport(parent).surface.commit();
+
+            _ = wl.display.flush();
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 
     ws.server_events.appendAssumeCapacity(.{
@@ -883,20 +916,18 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
     const win = ws.windows.get(args.id) orelse {
         return error.WindowDoesNotExist;
     };
-
-    switch (Native) {
-        Linux => {
-            switch (ws.native) {
-                .wayland => |wl| {
-                    try win.native.wayland.resize(wl, args.size);
-                    win.native.wayland.viewport_bound(ws);
-                    win.native.wayland.commit();
-                    _ = wl.display.flush();
-                },
-            }
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            try win.linux.wayland.resize(wl, args.size);
+            win.linux.wayland.viewport_bound(ws);
+            win.linux.wayland.commit();
+            _ = wl.display.flush();
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 
     const rs = ws.resources.getPtr(win.viewport_key.client_id) orelse return;
@@ -918,17 +949,16 @@ pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)
     const rs = ws.resources.getPtr(args.client_id) orelse return;
     const vp = rs.viewports.get(args.payload.viewport_id) orelse return error.ViewportDoesNotExist;
 
-    switch (Native) {
-        Linux => {
-            switch (vp.native) {
-                .wayland => |*vp_wl| {
-                    const shape = Wayland.from_protocol_cursor_shape(args.payload.shape);
-                    vp_wl.pointer.set_shape(shape orelse return);
-                },
-            }
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const nvp = tag.viewport(vp);
+            const shape = Wayland.from_protocol_cursor_shape(args.payload.shape);
+            nvp.pointer.set_shape(shape orelse return);
         },
-        W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 }
 
@@ -1127,14 +1157,86 @@ pub const Event = union(enum) {
     };
 };
 
-pub const Linux = union(enum) { wayland: *Wayland };
-pub const W32 = *Win32;
-pub const Native = switch (os) {
-    .linux => Linux,
-    .windows => W32,
-    else => @compileError("Unsupported OS"),
+pub const NativeTag = enum {
+    wayland,
+    win32,
+
+    /// Prevents compile errors of other platforms
+    pub fn guard(
+        comptime tag: NativeTag,
+    ) if (tag.os_matches_tag()) void else noreturn {
+        switch (tag) {
+            .wayland => if (os != .linux) unreachable,
+            .win32 => if (os != .windows) unreachable,
+        }
+    }
+
+    pub fn window_system(
+        comptime tag: NativeTag,
+        ws: *WindowSystem,
+    ) if (tag.os_matches_tag()) *window_system_type(tag) else noreturn {
+        tag.guard();
+        return switch (tag) {
+            .wayland => ws.linux.wayland,
+            .win32 => ws.win32,
+        };
+    }
+
+    pub fn window(
+        comptime tag: NativeTag,
+        win: *Window,
+    ) if (tag.os_matches_tag()) *window_type(tag) else noreturn {
+        tag.guard();
+        return switch (tag) {
+            .wayland => &win.linux.wayland,
+            .win32 => win.win32,
+        };
+    }
+
+    pub fn viewport(
+        comptime tag: NativeTag,
+        vp: *Viewport,
+    ) if (tag.os_matches_tag()) *viewport_type(tag) else noreturn {
+        tag.guard();
+        return switch (tag) {
+            .wayland => &vp.linux.wayland,
+            .win32 => vp.win32,
+        };
+    }
+
+    fn window_system_type(comptime tag: NativeTag) type {
+        return switch (tag) {
+            .wayland => Wayland,
+            .win32 => Win32,
+        };
+    }
+
+    fn window_type(comptime tag: NativeTag) type {
+        return switch (tag) {
+            .wayland => Wayland.Window,
+            .win32 => Win32.Window,
+        };
+    }
+
+    fn viewport_type(comptime tag: NativeTag) type {
+        return switch (tag) {
+            .wayland => Wayland.Viewport,
+            .win32 => void,
+        };
+    }
+
+    fn os_matches_tag(comptime tag: NativeTag) bool {
+        return switch (tag) {
+            .wayland => os == .linux,
+            .win32 => os == .windows,
+        };
+    }
 };
 
+pub const Linux = union(enum) { wayland: *Wayland };
+
+pub const Wayland = @import("wayland/Wayland.zig");
+pub const Win32 = @import("win32/Win32.zig");
 pub const Viewport = @import("window_system/Viewport.zig");
 pub const Window = @import("window_system/Window.zig");
 
@@ -1143,8 +1245,6 @@ const Io = std.Io;
 const ClientID = ptypes.ClientID;
 const ptypes = @import("protocol").types;
 const ViewportID = ptypes.ViewportID;
-const Wayland = @import("wayland/Wayland.zig");
-const Win32 = @import("win32/Win32.zig");
 const os = @import("builtin").os.tag;
 const log = std.log.scoped(.WindowSystem);
 const BufferID = ptypes.BufferID;

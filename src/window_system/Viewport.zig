@@ -8,7 +8,8 @@ state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
-native: Native,
+win32: if (os == .windows) void else void,
+linux: if (os == .linux) Linux else void,
 
 pub fn create(
     ws: *WindowSystem,
@@ -37,12 +38,14 @@ pub fn create(
         .render_size = render_size,
         .sub_viewports = .empty,
 
-        .native = undefined,
+        .win32 = undefined,
+        .linux = undefined,
     };
 
-    vp.native = switch (WindowSystem.Native) {
-        WindowSystem.Linux => switch (ws.native) {
-            .wayland => |wl| .{
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            vp.linux = .{
                 .wayland = try .init(
                     ws,
                     wl,
@@ -51,11 +54,13 @@ pub fn create(
                     key.client_id,
                     create_sync_timeline,
                 ),
-            },
+            };
         },
-        WindowSystem.W32 => @panic("TODO"),
-        else => comptime unreachable,
-    };
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
+    }
 
     return vp;
 }
@@ -68,24 +73,33 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
 
     vp.sub_viewports.deinit(gpa);
 
-    switch (WindowSystem.Native) {
-        WindowSystem.Linux => {
-            switch (vp.native) {
-                .wayland => |*wl_vp| {
-                    if (wl_vp.sync_surface) |sync| {
-                        sync.destroy();
-                    }
-                    wl_vp.viewport.destroy();
-                    wl_vp.subsurface.subsurface.destroy();
-                    wl_vp.surface.destroy();
-                },
+    switch (vp.native_tag()) {
+        .wayland => |tag| {
+            const nvp = tag.viewport(vp);
+            if (nvp.sync_surface) |sync| {
+                sync.destroy();
             }
+            nvp.viewport.destroy();
+            nvp.subsurface.subsurface.destroy();
+            nvp.surface.destroy();
         },
-        WindowSystem.W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 
     gpa.destroy(vp);
+}
+
+pub fn native_tag(vp: *Viewport) WindowSystem.NativeTag {
+    return switch (os) {
+        .linux => switch (vp.linux) {
+            .wayland => .wayland,
+        },
+        .windows => .win32,
+        else => comptime unreachable,
+    };
 }
 
 pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubViewportID {
@@ -102,12 +116,6 @@ pub const Linux = union(enum) {
     wayland: Wayland.Viewport,
 };
 
-pub const Native = switch (WindowSystem.Native) {
-    WindowSystem.Linux => Linux,
-    WindowSystem.W32 => void,
-    else => unreachable,
-};
-
 const std = @import("std");
 const ptypes = @import("protocol").types;
 const ClientID = @import("../server/Clients.zig").ClientID;
@@ -122,3 +130,4 @@ const Window = @import("Window.zig");
 const Buffer = @import("ClientResources.zig").Buffer;
 const SubViewport = @import("SubViewport.zig");
 const ParentOfViewport = WindowSystem.ParentOfViewport;
+const os = @import("builtin").os.tag;

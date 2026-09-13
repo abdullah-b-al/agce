@@ -149,10 +149,10 @@ pub fn display_dispatch(wl: *Wayland, ws: *WindowSystem) void {
     }
 
     for (ws.windows.values()) |win| {
-        if (!win.native.wayland.configured) {
-            win.native.wayland.surface.commit();
-        } else if (win.native.wayland.configured and !win.native.wayland.commited_once) {
-            win.native.wayland.commit();
+        if (!win.linux.wayland.configured) {
+            win.linux.wayland.surface.commit();
+        } else if (win.linux.wayland.configured and !win.linux.wayland.commited_once) {
+            win.linux.wayland.commit();
         }
     }
 }
@@ -436,8 +436,8 @@ pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
             xdg_surface.ackConfigure(configure.serial);
             const id = window_id_from_xdg_surface(ws, xdg_surface);
             const win = ws.windows.get(id).?;
-            win.native.wayland.surface.commit();
-            win.native.wayland.configured = true;
+            win.linux.wayland.surface.commit();
+            win.linux.wayland.configured = true;
         },
     }
 }
@@ -475,7 +475,7 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
 }
 
 fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSystem) void {
-    const wl = ws.native.wayland;
+    const wl = ws.linux.wayland;
     switch (event) {
         .keymap => |e| {
             wl.keyboard_keymap(e.fd, e.size, e.format) catch |err| {
@@ -548,6 +548,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
 }
 
 fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
+    const wl = ws.linux.wayland;
     const ws_event: Event = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse {
@@ -563,9 +564,9 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
             if (tag == .enter) {
                 const rs = ws.resources.getPtr(key.client_id).?;
                 const viewport = rs.viewports.get(key.viewport_id).?;
-                const wl_vp = &viewport.native.wayland;
+                const wl_vp = &viewport.linux.wayland;
 
-                wl_vp.pointer.on_surface_enter(ws.native.wayland.cursor_manager, pointer, e.serial);
+                wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
                 wl_vp.pointer.set_shape(.default);
             }
 
@@ -631,7 +632,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
 pub fn window_id_from_toplevel(ws: *const WindowSystem, tl: *xdg.Toplevel) WindowID {
     const id = tl.getId();
     for (ws.windows.values()) |win| {
-        if (win.native.wayland.xdg_toplevel.getId() == id) return win.id;
+        if (win.linux.wayland.xdg_toplevel.getId() == id) return win.id;
     }
 
     unreachable;
@@ -640,7 +641,7 @@ pub fn window_id_from_toplevel(ws: *const WindowSystem, tl: *xdg.Toplevel) Windo
 pub fn window_id_from_xdg_surface(ws: *const WindowSystem, xdg_surface: *xdg.Surface) WindowID {
     const id = xdg_surface.getId();
     for (ws.windows.values()) |win| {
-        if (win.native.wayland.xdg_surface.getId() == id) return win.id;
+        if (win.linux.wayland.xdg_surface.getId() == id) return win.id;
     }
 
     unreachable;
@@ -666,7 +667,7 @@ pub fn window_from_viewport_key(wl: *Wayland, key: ViewportKey) ?*Window {
 
 pub fn window_id_from_window_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?WindowID {
     for (ws.windows.values()) |win| {
-        if (win.native.wayland.surface == surface) {
+        if (win.linux.wayland.surface == surface) {
             return win.id;
         }
     }
@@ -690,10 +691,10 @@ pub fn viewport_from_key(wl: *Wayland, key: ViewportKey) ?*Viewport {
 pub fn viewport_from_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?struct { ViewportKey, *const Viewport } {
     for (ws.resources.values()) |rs| {
         for (rs.viewports.values()) |vp| {
-            if (vp.native.wayland.surface == surface) {
+            if (vp.linux.wayland.surface == surface) {
                 return .{
                     .{ .client_id = rs.client_id, .viewport_id = vp.id },
-                    &vp.native.wayland,
+                    &vp.linux.wayland,
                 };
             }
         }
@@ -703,11 +704,12 @@ pub fn viewport_from_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?st
 }
 
 pub fn frame_listener_set(ws: *WindowSystem, surface: *cwl.Surface, key: ViewportKey) !void {
-    try ws.native.wayland.frame_callbacks.ensureUnusedCapacity(ws.gpa, 1);
+    const wl = ws.linux.wayland;
+    try wl.frame_callbacks.ensureUnusedCapacity(ws.gpa, 1);
     const cb = try surface.frame();
 
     cb.setListener(*WindowSystem, frame_listener, ws);
-    ws.native.wayland.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
+    wl.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
 }
 
 fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
@@ -725,25 +727,27 @@ fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
 }
 
 fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, ws: *WindowSystem) void {
-    const key = ws.native.wayland.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
+    const wl = ws.linux.wayland;
+    const key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
     cb.destroy();
 
     const rs = ws.resources.get(key.client_id) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
-    vp.native.wayland.refresh_cycle += 1;
+    const nvp = &vp.linux.wayland;
+    nvp.refresh_cycle += 1;
 
     ws.server_events.appendAssumeCapacity(.{
         .frame_render = .{
             .client_id = key.client_id,
             .payload = .{
                 .viewport_id = vp.id,
-                .refresh_cycle = vp.native.wayland.refresh_cycle,
+                .refresh_cycle = nvp.refresh_cycle,
             },
         },
     });
 
     // TODO: Handle in case of error
-    frame_listener_set(ws, vp.native.wayland.surface, key) catch {};
+    frame_listener_set(ws, vp.linux.wayland.surface, key) catch {};
 }
 
 pub fn buffer_create_and_register_cpu(
@@ -1097,7 +1101,7 @@ pub const BufferListener = struct {
     pub fn callback(wl_buffer: *cwl.Buffer, event: cwl.Buffer.Event, ws: *WindowSystem) void {
         switch (event) {
             .release => {
-                const key = ws.native.wayland.wl_buffers.get(.from_wl_buffer(wl_buffer)) orelse
+                const key = ws.linux.wayland.wl_buffers.get(.from_wl_buffer(wl_buffer)) orelse
                     return;
 
                 const rs = ws.resources.getPtr(key.client_id) orelse return;

@@ -1,8 +1,8 @@
 var exit = false;
 
 pub fn main(init: std.process.Init) !void {
-    const ws: *WindowSystem = blk: switch (WindowSystem.Native) {
-        WindowSystem.Linux => {
+    const ws: *WindowSystem = blk: switch (os) {
+        .linux => {
             const sigaction: std.os.linux.Sigaction = .{
                 .handler = .{ .handler = &interrupt_handler },
                 .mask = @splat(0),
@@ -16,7 +16,7 @@ pub fn main(init: std.process.Init) !void {
 
             break :blk try .create_wayland(init.io, init.gpa);
         },
-        WindowSystem.W32 => {
+        .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
             break :blk try .create_win32(
                 init.io,
@@ -52,19 +52,23 @@ pub fn main(init: std.process.Init) !void {
         try ws.server_events.ensureUnusedCapacity(ws.gpa, server_events_len);
         try ws.deferred_events.ensureUnusedCapacity(ws.gpa, ws_events_len);
 
-        const poll = switch (WindowSystem.Native) {
-            WindowSystem.Linux => switch (ws.native) {
-                .wayland => |wl| try poll_linux_wayland(arena.allocator(), wl, server),
+        const poll = blk: switch (ws.native_tag()) {
+            .wayland => |tag| {
+                const wl = tag.window_system(ws);
+                break :blk try poll_linux_wayland(arena.allocator(), wl, server);
             },
-            WindowSystem.W32 => try poll_windows(arena.allocator(), server),
-            else => comptime unreachable,
+
+            .win32 => |tag| {
+                tag.guard();
+                break :blk try poll_windows(arena.allocator(), server);
+            },
         };
 
         const messages = try server.messages_receive(arena.allocator(), poll.clients);
         const ws_events = try server.messages_handle(arena.allocator(), messages);
         ws.events_handle(ws_events);
         if (@hasField(@TypeOf(poll), "compositor") and poll.compositor) {
-            ws.native.wayland.display_dispatch(ws);
+            ws.linux.wayland.display_dispatch(ws);
         }
 
         ws.events_handle(ws.deferred_events.items);
@@ -249,7 +253,7 @@ const Server = @import("server/Server.zig");
 const utils = @import("utils");
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.main);
-const os_tag = @import("builtin").os.tag;
+const os = @import("builtin").os.tag;
 const Clients = @import("server/Clients.zig");
 const ClientID = Clients.ClientID;
 const win32_threading = win32.system.threading;

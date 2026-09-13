@@ -66,6 +66,7 @@ pub fn send_client_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocat
     const message = try c.stringify(gpa, .{ .client_registered = payload });
     try c.send(io, gpa, message);
 }
+
 pub fn send_client_disconnected(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ClientDisconnected) !void {
     const message = try c.stringify(gpa, .{ .client_disconnected = payload });
     try c.send(io, gpa, message);

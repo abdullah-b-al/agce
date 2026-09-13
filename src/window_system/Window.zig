@@ -6,7 +6,8 @@ viewport_key: ViewportKey,
 input_focus_keyboard: ViewportKey,
 input_focus_mouse: ViewportKey,
 
-native: Native,
+win32: if (os == .windows) void else void,
+linux: if (os == .linux) Linux else void,
 
 pub fn create(
     ws: *WindowSystem,
@@ -23,42 +24,51 @@ pub fn create(
         .input_focus_keyboard = viewport_key,
         .input_focus_mouse = viewport_key,
 
-        .native = undefined,
+        .win32 = undefined,
+        .linux = undefined,
     };
 
-    win.native = switch (WindowSystem.Native) {
-        WindowSystem.Linux => switch (ws.native) {
-            .wayland => |wl| .{
-                .wayland = try .init(wl, ws, win, requested_size),
-            },
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            win.linux = .{ .wayland = try .init(wl, ws, win, requested_size) };
         },
-        WindowSystem.W32 => @panic("TODO"),
-        else => comptime unreachable,
-    };
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
+    }
 
     return win;
 }
 
 pub fn destroy(win: *Window, gpa: std.mem.Allocator) void {
-    switch (WindowSystem.Native) {
-        WindowSystem.Linux => switch (win.native) {
-            .wayland => |*wl_win| wl_win.deinit(),
+    switch (win.native_tag()) {
+        .wayland => |tag| {
+            const nwin = tag.window(win);
+            nwin.deinit();
         },
-        WindowSystem.W32 => @panic("TODO"),
-        else => comptime unreachable,
+        .win32 => |tag| {
+            tag.guard();
+            @panic("TODO");
+        },
     }
 
     gpa.destroy(win);
 }
 
+pub fn native_tag(win: *Window) WindowSystem.NativeTag {
+    return switch (os) {
+        .linux => switch (win.linux) {
+            .wayland => .wayland,
+        },
+        .windows => .win32,
+        else => comptime unreachable,
+    };
+}
+
 pub const Linux = union(enum) {
     wayland: Wayland.Window,
-};
-
-pub const Native = switch (WindowSystem.Native) {
-    WindowSystem.Linux => Linux,
-    WindowSystem.W32 => void,
-    else => unreachable,
 };
 
 const std = @import("std");
@@ -73,3 +83,4 @@ const c_linux = @import("c_linux");
 const Wayland = @import("../wayland/Wayland.zig");
 const ptypes = @import("protocol").types;
 const ClientResources = @import("ClientResources.zig");
+const os = @import("builtin").os.tag;

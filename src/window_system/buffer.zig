@@ -2,9 +2,9 @@ pub const Linux = union(enum) {
     wayland: Wayland.Buffer,
 };
 
-pub const Buffer = switch (WindowSystem.Native) {
-    WindowSystem.Linux => Linux,
-    WindowSystem.W32 => void,
+pub const Buffer = switch (os) {
+    .linux => Linux,
+    .windows => void,
     else => unreachable,
 };
 
@@ -16,3 +16,4 @@ const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const Wayland = @import("../wayland/Wayland.zig");
 const WindowSystem = @import("../WindowSystem.zig");
+const os = @import("builtin").os.tag;

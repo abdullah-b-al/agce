@@ -3,7 +3,16 @@ const ServerConnection = @This();
 format: ptypes.MessageFormat,
 stream: net.Stream,
 
-pub fn receive_all(c: *ServerConnection, io: Io, arena: std.mem.Allocator, timeout: Io.Timeout) ![]const server_to_client.MessagePayload {
+const ReceiveAllError = error{
+    Timeout,
+} || if (os == .linux) utils.ErrorSetOf(receive_linux) else error{};
+
+pub fn receive_all(
+    c: *ServerConnection,
+    io: Io,
+    arena: std.mem.Allocator,
+    timeout: Io.Timeout,
+) ReceiveAllError![]const server_to_client.MessagePayload {
     var list: std.ArrayList(server_to_client.MessagePayload) = .empty;
     switch (os) {
         .linux => {

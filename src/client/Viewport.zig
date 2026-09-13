@@ -210,26 +210,32 @@ pub fn buffers_create(
             vp.pending_buffers_cpu.clearRetainingCapacity();
         },
         .gl => {
-            for (0..buffer_count) |_| {
-                try client.connection.send_buffer_create_gbm_bo(
-                    client.io,
-                    client.gpa,
-                    .{
-                        .viewport_id = vp.id,
-                        .format = vp.format,
-                        .size = .{ .width = width, .height = height },
-                    },
-                );
-            }
+            switch (os) {
+                .linux => {
+                    for (0..buffer_count) |_| {
+                        try client.connection.send_buffer_create_gbm_bo(
+                            client.io,
+                            client.gpa,
+                            .{
+                                .viewport_id = vp.id,
+                                .format = vp.format,
+                                .size = .{ .width = width, .height = height },
+                            },
+                        );
+                    }
 
-            std.debug.assert(vp.pending_buffers_gbm_bo.items.len == 0);
-            while (vp.pending_buffers_gbm_bo.items.len != buffer_count) {
-                try client.poll(.none);
-            }
-            std.debug.assert(vp.pending_buffers_gbm_bo.items.len >= buffer_count);
+                    std.debug.assert(vp.pending_buffers_gbm_bo.items.len == 0);
+                    while (vp.pending_buffers_gbm_bo.items.len != buffer_count) {
+                        try client.poll(.none);
+                    }
+                    std.debug.assert(vp.pending_buffers_gbm_bo.items.len >= buffer_count);
 
-            try vp.renderer_buffers_create(BufferCreatedGbmBo, vp.pending_buffers_gbm_bo.items);
-            vp.pending_buffers_gbm_bo.clearRetainingCapacity();
+                    try vp.renderer_buffers_create(BufferCreatedGbmBo, vp.pending_buffers_gbm_bo.items);
+                    vp.pending_buffers_gbm_bo.clearRetainingCapacity();
+                },
+                .windows => @panic("TODO"),
+                else => @compileError("Unsupported OS"),
+            }
         },
     }
 }

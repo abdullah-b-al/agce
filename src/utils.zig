@@ -161,6 +161,11 @@ fn enum_is_fd(comptime E: type) bool {
     return false;
 }
 
+pub fn ErrorSetOf(comptime func: anytype) type {
+    const T = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
+    return @typeInfo(T).error_union.error_set;
+}
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;

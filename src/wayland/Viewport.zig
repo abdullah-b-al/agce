@@ -21,8 +21,8 @@ pub fn init(
     errdefer surface.destroy();
 
     const parent_surface = switch (parent) {
-        .window => |win| win.native.wayland.surface,
-        .viewport => |vp| vp.native.wayland.surface,
+        .window => |win| win.linux.wayland.surface,
+        .viewport => |vp| vp.linux.wayland.surface,
     };
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
     subsurface.setDesync();

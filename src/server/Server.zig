@@ -293,7 +293,7 @@ const HandleMessageFromUnknownError =
         MisbehavingUnknownClient,
         ClientSentInvalidClientFullID,
         WriteFailed,
-    } || ErrorSetOf(ClientConnection.receive);
+    } || utils.ErrorSetOf(ClientConnection.receive);
 
 fn handle_message_from_unknown(
     server: *Server,
@@ -335,7 +335,10 @@ fn handle_message_from_unknown(
 
     const client = server.clients.known.get(id).?;
 
-    try client.connection.send_registered(server.io, server.gpa, .{});
+    client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
+        error.WriteFailed => |e| e,
+        error.OutOfMemory => error.OutOfMemoryDuringRegister,
+    };
 
     events.appendAssumeCapacity(
         .{ .client_registered = .{ .client_id = id } },
@@ -447,16 +450,11 @@ fn ReturnType(comptime func: anytype) type {
     return @typeInfo(@TypeOf(func)).@"fn".return_type.?;
 }
 
-fn ErrorSetOf(comptime func: anytype) type {
-    const T = @typeInfo(@TypeOf(func)).@"fn".return_type.?;
-    return @typeInfo(T).error_union.error_set;
-}
-
 const ReceivedMessage = struct {
     payload: Payload,
     from: MessageSource,
 
-    const Payload = ErrorSetOf(ClientConnection.receive)!?client_to_server.MessagePayload;
+    const Payload = utils.ErrorSetOf(ClientConnection.receive)!?client_to_server.MessagePayload;
 };
 
 pub const MessageSource = union(enum) {
