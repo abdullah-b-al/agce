@@ -347,7 +347,7 @@ fn handle_message_from_unknown(
     for (server.clients.known.values()) |other| {
         if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
 
-        client.connection.send_client_registered(server.io, server.gpa, .{ .client_id = client.id }) catch |err|
+        other.connection.send_client_registered(server.io, server.gpa, .{ .client_id = client.id }) catch |err|
             log.err("{} from {f} during broadcast", .{ err, other.id });
     }
 }
