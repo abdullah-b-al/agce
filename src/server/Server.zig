@@ -98,6 +98,7 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
         // TODO: Get the real error and handle it
         error.WriteFailed => {},
 
+        error.HeaderWithoutPayload,
         error.MisbehavingUnknownClient,
         error.ClientSentInvalidClientFullID,
         error.OutOfMemoryDuringRegister,
@@ -108,6 +109,7 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
             }
         },
 
+        error.AccessDenied,
         error.Unexpected,
         error.UnsupportedMessageOnOs,
         error.HeaderInvalidLen,
@@ -255,6 +257,9 @@ const HandleMessageError = error{
     ValueTooLong,
     UnsupportedMessageOnOs,
     WriteFailed,
+
+    HeaderWithoutPayload,
+    AccessDenied,
 
     // linux only
     CmsgNoHeader,

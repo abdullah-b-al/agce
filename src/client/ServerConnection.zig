@@ -5,7 +5,10 @@ stream: net.Stream,
 
 const ReceiveAllError = error{
     Timeout,
-} || if (os == .linux) utils.ErrorSetOf(receive_linux) else error{};
+    PollFailed,
+} ||
+    if (os == .linux) utils.ErrorSetOf(receive_linux) else error{} ||
+        if (os == .windows) utils.ErrorSetOf(receive_windows) else error{};
 
 pub fn receive_all(
     c: *ServerConnection,
@@ -14,24 +17,44 @@ pub fn receive_all(
     timeout: Io.Timeout,
 ) ReceiveAllError![]const server_to_client.MessagePayload {
     var list: std.ArrayList(server_to_client.MessagePayload) = .empty;
+    const quick_timeout: Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
+
     switch (os) {
         .linux => {
-            // Get one message at a time
             const first = try c.receive_linux(io, arena, timeout);
             try list.append(arena, first);
 
-            // If there are any more messages get them
-            const to: Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
             while (true) {
-                const message = c.receive_linux(io, arena, to) catch |err| switch (err) {
+                const message = c.receive_linux(io, arena, quick_timeout) catch |err| switch (err) {
                     error.Timeout => break,
                     else => return err,
                 };
                 try list.append(arena, message);
             }
+
             return try list.toOwnedSlice(arena);
         },
-        .windows => @panic("TODO"),
+        .windows => {
+            // TODO: Make the read non-blocking
+            const first = try c.receive_windows(io, arena);
+            try list.append(arena, first);
+
+            while (true) {
+                const message = c.receive_windows(
+                    io,
+                    arena,
+                ) catch |err| switch (err) {
+                    error.ConnectionClosed,
+                    error.HeaderWithoutPayload,
+                    => break,
+                    else => |e| return e,
+                };
+
+                try list.append(arena, message);
+            }
+
+            return try list.toOwnedSlice(arena);
+        },
         else => @compileError("Unsupported OS"),
     }
 }
@@ -151,6 +174,70 @@ fn receive_linux(c: *ServerConnection, io: Io, arena: std.mem.Allocator, timeout
     return message;
 }
 
+fn receive_windows(
+    c: *ServerConnection,
+    io: Io,
+    arena: std.mem.Allocator,
+) !server_to_client.MessagePayload {
+    var buf: [4096]u8 = undefined;
+    var reader = c.stream.reader(io, &buf);
+
+    const header_bytes = reader.interface.take(@sizeOf(server_to_client.MessageHeader)) catch |err|
+        return switch (err) {
+            error.EndOfStream => error.ConnectionClosed,
+            error.ReadFailed => switch (reader.err.?) {
+                error.Timeout => unreachable,
+
+                error.Canceled,
+                error.SystemResources,
+                error.ConnectionResetByPeer,
+                error.SocketUnconnected,
+                error.AccessDenied,
+                error.Unexpected,
+                error.NetworkDown,
+                => |e| e,
+            },
+        };
+
+    const header = try server_to_client.parse_message_header(header_bytes);
+    const err_data = if (header.payload_len > buf.len)
+        reader.interface.readAlloc(arena, header.payload_len)
+    else
+        reader.interface.take(header.payload_len);
+
+    const data = err_data catch |err| return switch (err) {
+        error.EndOfStream => error.HeaderWithoutPayload,
+        error.OutOfMemory => |e| e,
+        error.ReadFailed => switch (reader.err.?) {
+            error.Timeout => unreachable,
+
+            error.Canceled,
+            error.SystemResources,
+            error.ConnectionResetByPeer,
+            error.SocketUnconnected,
+            error.AccessDenied,
+            error.Unexpected,
+            error.NetworkDown,
+            => |e| e,
+        },
+    };
+
+    switch (header.message_tag) {
+        inline else => |tag| {
+            switch (header.format) {
+                .json => {
+                    const T = utils.TypeOfField(server_to_client.MessagePayload, @tagName(tag));
+                    const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                        .allocate = .alloc_if_needed,
+                    });
+
+                    return @unionInit(server_to_client.MessagePayload, @tagName(tag), parsed);
+                },
+            }
+        },
+    }
+}
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -160,3 +247,6 @@ const server_to_client = @import("protocol").server_to_client;
 const constants = @import("constants");
 const os = @import("builtin").os.tag;
 const utils = @import("utils");
+const win32 = @import("win32");
+const win32_threading = win32.system.threading;
+const win_sock = win32.networking.win_sock;
