@@ -169,67 +169,8 @@ const PollWindows = struct {
     clients: []Server.MessageSource,
 };
 
-fn poll_windows(arena: std.mem.Allocator, server: *const Server) !PollWindows {
-    const handles_len = server.clients.count() + 1;
-    const handles = try arena.alloc(std.os.windows.HANDLE, handles_len);
-    var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
-
-    var i: usize = 0;
-
-    {
-        handles[i] = server.server.socket.handle;
-        i += 1;
-    }
-
-    const known_i = i;
-    for (server.clients.known.values()) |c| {
-        handles[i] = c.connection.stream.socket.handle;
-        i += 1;
-    }
-
-    const unknown_i = i;
-    for (server.clients.unknown.items) |c| {
-        handles[i] = c.connection.stream.socket.handle;
-        i += 1;
-    }
-
-    std.debug.assert(i == handles.len);
-
-    const result = win32_threading.WaitForMultipleObjects(
-        @intCast(handles.len),
-        handles.ptr,
-        @intFromEnum(std.os.windows.BOOL.FALSE),
-        std.math.maxInt(i32),
-    );
-
-    std.debug.assert(result != win32.foundation.WAIT_TIMEOUT);
-    if (result == win32.foundation.WAIT_FAILED) {
-        return error.WaitForMultipleObjectsFailed;
-    }
-
-    for (server.clients.known.values(), 0..) |client, ci| {
-        const handle = handles[known_i + ci];
-        const wait = win32_threading.WaitForSingleObject(handle, 0);
-        if (wait == win32.foundation.WAIT_OBJECT_0) {
-            clients.appendAssumeCapacity(.{ .known = client.id });
-        }
-    }
-
-    for (server.clients.unknown.items, 0..) |_, ci| {
-        const handle = handles[unknown_i + ci];
-        const wait = win32_threading.WaitForSingleObject(handle, 0);
-        if (wait == win32.foundation.WAIT_OBJECT_0) {
-            clients.appendAssumeCapacity(.{ .unknown = ci });
-        }
-    }
-
-    const accept = win32_threading.WaitForSingleObject(server.server.socket.handle, 0) ==
-        win32.foundation.WAIT_OBJECT_0;
-
-    return .{
-        .accept = accept,
-        .clients = clients.items,
-    };
+fn poll_windows(_: std.mem.Allocator, _: *const Server) !PollWindows {
+    @panic("TODO");
 }
 
 pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
