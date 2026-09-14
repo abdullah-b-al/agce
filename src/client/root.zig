@@ -44,6 +44,8 @@ pub fn init(
         return error.FailedToRegister;
     }
 
+    log.debug("Client registered", .{});
+
     return @ptrCast(client);
 }
 

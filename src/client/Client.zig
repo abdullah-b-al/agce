@@ -23,6 +23,9 @@ gl_context: ?opengl.ContextLinux,
 
 env: Env,
 
+read_future: Io.Future(void),
+messages_queue: *MessagesQueue,
+
 pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
@@ -37,7 +40,15 @@ pub fn init(
     const path = utils.unix_address_path(environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
 
+    const queues: *MessagesQueue = try .create(gpa);
+    errdefer queues.destroy(gpa);
+
     const stream = try address.connect(io);
+
+    const future = try io.concurrent(
+        read_thread,
+        .{ io, gpa, stream, queues },
+    );
 
     return .{
         .io = io,
@@ -47,6 +58,7 @@ pub fn init(
             .format = .json,
             .stream = stream,
         },
+        .messages_queue = queues,
         .registered = false,
         .messages_arena = .init(gpa),
         .next_viewport_id = .first_for_client,
@@ -60,10 +72,13 @@ pub fn init(
         .gl_context = null,
 
         .env = env,
+        .read_future = future,
     };
 }
 
 pub fn deinit(client: *Client) void {
+    client.read_future.cancel(client.io);
+
     for (client.processes.items) |p| {
         if (!p.deinited) {
             p.deinit();
@@ -106,6 +121,7 @@ pub fn deinit(client: *Client) void {
         container.deinit(client.gpa);
     }
 
+    client.messages_queue.destroy(client.gpa);
     client.environ_map.deinit();
     client.messages_arena.deinit();
     client.connection.stream.close(client.io);
@@ -173,24 +189,24 @@ pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag
     }
 }
 
-pub fn poll(client: *Client, timeout: Io.Timeout) !void {
-    defer _ = client.messages_arena.reset(.{ .retain_with_limit = 1024 * 4 });
+pub fn poll(client: *Client, timeout: Io.Timeout) error{ Timeout, Canceled, OutOfMemory }!void {
+    try client.messages_queue.messages_available.waitTimeout(client.io, timeout);
+    client.messages_queue.messages_available.reset();
 
-    const messages = try client.connection.receive_all(
-        client.io,
-        client.messages_arena.allocator(),
-        timeout,
-    );
+    try client.messages_queue.mutex.lock(client.io);
+    defer client.messages_queue.mutex.unlock(client.io);
 
-    try client.viewports_from_server.ensureUnusedCapacity(client.gpa, messages.len);
+    const len = client.messages_queue.messages.items.len;
+
+    try client.viewports_from_server.ensureUnusedCapacity(client.gpa, len);
     for (client.viewports.values()) |vp| {
-        try vp.messages.ensureUnusedCapacity(client.gpa, messages.len);
-        try vp.events.ensureUnusedCapacity(client.gpa, messages.len);
-        try vp.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, messages.len);
-        try vp.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, messages.len);
+        try vp.messages.ensureUnusedCapacity(client.gpa, len);
+        try vp.events.ensureUnusedCapacity(client.gpa, len);
+        try vp.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, len);
+        try vp.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, len);
     }
 
-    for (messages) |message| {
+    while (client.messages_queue.messages.pop()) |message| {
         client.poll_process_message(message);
     }
 }
@@ -369,7 +385,6 @@ pub fn viewport_create_with_id(
     throttle: bool,
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
-
     const vp = blk: {
         const renderer: Viewport.Renderer = switch (tag) {
             .gl => if (RendererGL == Viewport.LinuxRendererGL)
@@ -481,6 +496,47 @@ pub fn sub_viewport_embed(
     return svp;
 }
 
+pub fn read_thread(
+    io: Io,
+    gpa: std.mem.Allocator,
+    stream: net.Stream,
+    queues: *Client.MessagesQueue,
+) void {
+    log.debug("Started read_thread", .{});
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    while (true) {
+        _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 }); // 1MB
+
+        const message = switch (os) {
+            .linux => ServerConnection.receive_linux(io, arena.allocator(), stream),
+            .windows => ServerConnection.receive_windows(io, arena.allocator(), stream),
+            else => comptime unreachable,
+        } catch |err| switch (err) {
+            error.OutOfMemory => continue,
+
+            error.Unexpected,
+            error.ConnectionResetByPeer,
+            error.ConnectionClosed,
+            error.Canceled,
+            => return,
+
+            else => |e| {
+                std.log.err("Receive {}", .{e});
+                continue;
+            },
+        };
+
+        queues.mutex.lock(io) catch return;
+        defer queues.mutex.unlock(io);
+
+        queues.messages.ensureUnusedCapacity(gpa, 512) catch @panic("OOM");
+        queues.messages.insertAssumeCapacity(0, message);
+        queues.messages_available.set(io);
+    }
+}
+
 pub const Gbm = if (!constants.os_has_gbm) void else struct {
     dri: Io.File,
     device: *c_linux.struct_gbm_device,
@@ -547,6 +603,27 @@ const Env = struct {
     }
 };
 
+pub const MessagesQueue = struct {
+    mutex: Io.Mutex,
+    messages: std.ArrayList(server_to_client.MessagePayload),
+    messages_available: Io.Event,
+
+    pub fn create(gpa: std.mem.Allocator) !*MessagesQueue {
+        const ptr = try gpa.create(MessagesQueue);
+        ptr.* = .{
+            .mutex = .init,
+            .messages = .empty,
+            .messages_available = .unset,
+        };
+        return ptr;
+    }
+
+    pub fn destroy(q: *MessagesQueue, gpa: std.mem.Allocator) void {
+        q.messages.deinit(gpa);
+        gpa.destroy(q);
+    }
+};
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -569,3 +646,4 @@ const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
 const Process = @import("Process.zig");
 const ServerConnection = @import("ServerConnection.zig");
+const os = @import("builtin").os.tag;

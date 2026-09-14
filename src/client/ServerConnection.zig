@@ -3,62 +3,6 @@ const ServerConnection = @This();
 format: ptypes.MessageFormat,
 stream: net.Stream,
 
-const ReceiveAllError = error{
-    Timeout,
-    PollFailed,
-} ||
-    if (os == .linux) utils.ErrorSetOf(receive_linux) else error{} ||
-        if (os == .windows) utils.ErrorSetOf(receive_windows) else error{};
-
-pub fn receive_all(
-    c: *ServerConnection,
-    io: Io,
-    arena: std.mem.Allocator,
-    timeout: Io.Timeout,
-) ReceiveAllError![]const server_to_client.MessagePayload {
-    var list: std.ArrayList(server_to_client.MessagePayload) = .empty;
-    const quick_timeout: Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
-
-    switch (os) {
-        .linux => {
-            const first = try c.receive_linux(io, arena, timeout);
-            try list.append(arena, first);
-
-            while (true) {
-                const message = c.receive_linux(io, arena, quick_timeout) catch |err| switch (err) {
-                    error.Timeout => break,
-                    else => return err,
-                };
-                try list.append(arena, message);
-            }
-
-            return try list.toOwnedSlice(arena);
-        },
-        .windows => {
-            // TODO: Make the read non-blocking
-            const first = try c.receive_windows(io, arena);
-            try list.append(arena, first);
-
-            while (true) {
-                const message = c.receive_windows(
-                    io,
-                    arena,
-                ) catch |err| switch (err) {
-                    error.ConnectionClosed,
-                    error.HeaderWithoutPayload,
-                    => break,
-                    else => |e| return e,
-                };
-
-                try list.append(arena, message);
-            }
-
-            return try list.toOwnedSlice(arena);
-        },
-        else => @compileError("Unsupported OS"),
-    }
-}
-
 pub fn send_register(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.Register) !void {
     const message = try c.stringify(gpa, .{ .register = payload });
     try c.send(io, gpa, message);
@@ -158,10 +102,10 @@ fn send(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, message: client_to
     try writer.interface.flush();
 }
 
-fn receive_linux(c: *ServerConnection, io: Io, arena: std.mem.Allocator, timeout: Io.Timeout) !server_to_client.MessagePayload {
+pub fn receive_linux(io: Io, arena: std.mem.Allocator, stream: net.Stream) !server_to_client.MessagePayload {
     if (os != .linux) @compileError("Linux only function");
     var buf: [@sizeOf(server_to_client.MessageHeader)]u8 = undefined;
-    const peek = try server_to_client.operation_net_receive_peek(io, c.stream, timeout, &buf);
+    const peek = try server_to_client.operation_net_receive_peek(io, stream, .none, &buf);
 
     if (peek.data.len == 0) {
         return error.ConnectionClosed;
@@ -170,17 +114,17 @@ fn receive_linux(c: *ServerConnection, io: Io, arena: std.mem.Allocator, timeout
     const header = try server_to_client.parse_message_header(peek.data);
 
     const message_buf = try arena.alloc(u8, header.payload_len + @sizeOf(server_to_client.MessageHeader));
-    const message = try server_to_client.read_and_parse_data_json_linux(io, arena, c.stream, header, message_buf);
+    const message = try server_to_client.read_and_parse_data_json_linux(io, arena, stream, header, message_buf);
     return message;
 }
 
-fn receive_windows(
-    c: *ServerConnection,
+pub fn receive_windows(
     io: Io,
     arena: std.mem.Allocator,
+    stream: net.Stream,
 ) !server_to_client.MessagePayload {
     var buf: [4096]u8 = undefined;
-    var reader = c.stream.reader(io, &buf);
+    var reader = stream.reader(io, &buf);
 
     const header_bytes = reader.interface.take(@sizeOf(server_to_client.MessageHeader)) catch |err|
         return switch (err) {
@@ -250,3 +194,4 @@ const utils = @import("utils");
 const win32 = @import("win32");
 const win32_threading = win32.system.threading;
 const win_sock = win32.networking.win_sock;
+const Client = @import("Client.zig");
