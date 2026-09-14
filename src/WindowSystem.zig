@@ -193,7 +193,7 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                 },
             }
         },
-        .viewport_destroy => |args| try ws.viewport_destroy(.{
+        .viewport_destroy => |args| ws.viewport_destroy(.{
             .client_id = args.client_id,
             .viewport_id = args.payload.viewport_id,
         }),
@@ -313,11 +313,11 @@ fn client_disconnected(ws: *WindowSystem, id: ClientID) !void {
         return;
     };
 
-    for (rs.viewports.values()) |vp| {
-        ws.viewport_destroy(.{ .client_id = rs.client_id, .viewport_id = vp.id }) catch |err|
-            switch (err) {
-                error.ClientDoesNotExist => unreachable,
-            };
+    var i = rs.viewports.count();
+    while (i > 0) {
+        i -= 1;
+        const vp_id = rs.viewports.keys()[i];
+        ws.viewport_destroy(.{ .client_id = rs.client_id, .viewport_id = vp_id });
     }
 
     rs.deinit(ws);
@@ -326,7 +326,7 @@ fn client_disconnected(ws: *WindowSystem, id: ClientID) !void {
     ws.windows_destroy_if_closed();
 }
 
-fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) !void {
+fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
     const rs = ws.resources.getPtr(key.client_id) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
 
