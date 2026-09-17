@@ -55,7 +55,7 @@ pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
     }
 }
 
-pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: net.Stream) void {
+pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.Stream) void {
     const client = clients.unknown_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
         .connection = .{
@@ -116,9 +116,9 @@ pub const Client = struct {
     id: ptypes.ClientID,
     connection: ClientConnection,
 
-    pub fn close(client: *Client, io: Io) void {
+    pub fn close(client: *Client, _: Io) void {
         std.debug.assert(!client.connection.closed);
-        client.connection.stream.close(io);
+        client.connection.stream.close();
         client.connection.closed = true;
     }
 };
@@ -127,9 +127,9 @@ pub const UnknownClient = struct {
     connection: ClientConnection,
     promoted_to_known: bool,
 
-    pub fn close(unknown: *UnknownClient, io: Io) void {
+    pub fn close(unknown: *UnknownClient, _: Io) void {
         std.debug.assert(!unknown.connection.closed);
-        unknown.connection.stream.close(io);
+        unknown.connection.stream.close();
         unknown.connection.closed = true;
     }
 };
@@ -140,3 +140,4 @@ const net = Io.net;
 const ClientConnection = @import("ClientConnection.zig");
 const ptypes = @import("protocol").types;
 const log = std.log.scoped(.Clients);
+const zio = @import("zio");

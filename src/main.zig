@@ -1,6 +1,16 @@
 var exit = false;
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init.Minimal) !void {
+    var debug: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = debug.deinit();
+    const gpa = debug.allocator();
+
+    var environ_map = try init.environ.createMap(gpa);
+    defer environ_map.deinit();
+    const rt = try zio.Runtime.init(gpa, .{});
+    defer rt.deinit();
+    const io = rt.io();
+
     const ws: *WindowSystem = blk: switch (os) {
         .linux => {
             const sigaction: std.os.linux.Sigaction = .{
@@ -14,13 +24,13 @@ pub fn main(init: std.process.Init) !void {
                 else => |e| log.err("{t}: Sigaction interrupt handler failure!", .{e}),
             }
 
-            break :blk try .create_wayland(init.io, init.gpa);
+            break :blk try .create_wayland(io, gpa);
         },
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
             break :blk try .create_win32(
-                init.io,
-                init.gpa,
+                io,
+                gpa,
                 hinstance,
             );
         },
@@ -28,10 +38,10 @@ pub fn main(init: std.process.Init) !void {
     };
     defer ws.destroy();
 
-    const server = try Server.create(init.io, init.environ_map, init.gpa);
+    const server = try Server.create(io, &environ_map, gpa);
     defer server.destroy();
 
-    var arena: std.heap.ArenaAllocator = .init(init.gpa);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
     if (!arena.reset(.{ .retain_with_limit = 1024 * 1024 })) {
@@ -52,36 +62,34 @@ pub fn main(init: std.process.Init) !void {
         try ws.server_events.ensureUnusedCapacity(ws.gpa, server_events_len);
         try ws.deferred_events.ensureUnusedCapacity(ws.gpa, ws_events_len);
 
-        const poll = blk: switch (ws.native_tag()) {
-            .wayland => |tag| {
-                const wl = tag.window_system(ws);
-                break :blk try poll_linux_wayland(arena.allocator(), wl, server);
-            },
+        const poll_result = try poll(arena.allocator(), ws, server);
 
-            .win32 => |tag| {
-                tag.guard();
-                break :blk try poll_windows(arena.allocator(), server);
-            },
-        };
-
-        const messages = try server.messages_receive(arena.allocator(), poll.clients);
+        const messages = try server.messages_receive(arena.allocator(), poll_result.clients);
         const ws_events = try server.messages_handle(arena.allocator(), messages);
         ws.events_handle(ws_events);
-        if (@hasField(@TypeOf(poll), "compositor") and poll.compositor) {
-            ws.linux.wayland.display_dispatch(ws);
+
+        switch (ws.native_tag()) {
+            .wayland => |tag| {
+                const wl = tag.window_system(ws);
+
+                if (poll_result.compositor) {
+                    wl.display_dispatch(ws);
+                }
+            },
+            else => {},
         }
 
         ws.events_handle(ws.deferred_events.items);
         ws.deferred_events.clearRetainingCapacity();
 
-        server.handle_events(ws.server_events.items);
+        server.events_handle(ws.server_events.items);
         ws.server_events.clearRetainingCapacity();
 
-        if (poll.accept) {
-            if (server.server.accept(init.io)) |stream| {
+        if (poll_result.accept) {
+            if (server.server.accept(.{})) |stream| {
                 try server.handle_event(.{ .unknown_client_connected = stream });
             } else |err| switch (err) {
-                error.Canceled => |e| return e,
+                error.Canceled => unreachable,
                 else => {
                     log.err("Accept client failed {}", .{err});
                 },
@@ -93,28 +101,52 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-const PollLinuxWayland = struct {
+const Poll = struct {
     compositor: bool,
     accept: bool,
     clients: []Server.MessageSource,
 };
-fn poll_linux_wayland(arena: std.mem.Allocator, wl: *Wayland, server: *const Server) !PollLinuxWayland {
-    const display_fd = wl.display.getFd();
 
-    const fds_len = server.clients.count() + 2;
-    const fds = try arena.alloc(std.os.linux.pollfd, fds_len);
+fn poll(arena: std.mem.Allocator, ws: *WindowSystem, server: *const Server) !Poll {
+    const Pollfd, const POLL = switch (os) {
+        .linux => .{ std.os.linux.pollfd, std.os.linux.POLL },
+        .windows => .{ zio.os.windows.pollfd, zio.os.windows.POLL },
+        else => comptime unreachable,
+    };
+
+    const fds_len = switch (os) {
+        .linux => server.clients.count() + 2,
+        .windows => server.clients.count() + 1,
+        else => comptime unreachable,
+    };
+    const fds = try arena.alloc(Pollfd, fds_len);
     var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
 
+    const events = switch (os) {
+        .linux => POLL.IN | POLL.HUP,
+        .windows => POLL.IN,
+        else => comptime unreachable,
+    };
+
     for (fds) |*fd| {
-        fd.* = .{ .fd = -1, .events = std.os.linux.POLL.IN, .revents = 0 };
+        fd.* = .{
+            .fd = undefined,
+            .events = events,
+            .revents = 0,
+        };
     }
 
     var i: usize = 0;
 
     const display_i = i;
-    {
-        fds[i].fd = display_fd;
-        i += 1;
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            const display_fd = wl.display.getFd();
+            fds[i].fd = display_fd;
+            i += 1;
+        },
+        else => {},
     }
 
     const server_socket_i = i;
@@ -137,40 +169,45 @@ fn poll_linux_wayland(arena: std.mem.Allocator, wl: *Wayland, server: *const Ser
 
     std.debug.assert(i == fds.len);
 
-    const poll_result: isize = @bitCast(std.os.linux.poll(fds.ptr, fds.len, std.math.maxInt(i32)));
+    const poll_result: isize = switch (os) {
+        .linux => @bitCast(std.os.linux.poll(fds.ptr, fds.len, std.math.maxInt(i32))),
+        .windows => zio.os.windows.WSAPoll(fds.ptr, @intCast(fds.len), -1),
+        else => comptime unreachable,
+    };
+
     std.debug.assert(poll_result != 0); // timeout
-    if (poll_result < 0) return error.PollFailed;
+    if (poll_result < 0) {
+        if (os == .windows) {
+            log.err("WSA {}", .{win32.networking.win_sock.WSAGetLastError()});
+        }
+        return error.PollFailed;
+    }
 
     for (server.clients.known.values(), 0..) |client, ci| {
         const fd = fds[known_i + ci];
-        if ((fd.revents & std.os.linux.POLL.IN) != 0) {
+        if ((fd.revents & events) != 0) {
             clients.appendAssumeCapacity(.{ .known = client.id });
         }
     }
 
     for (server.clients.unknown.items, 0..) |_, ci| {
         const fd = fds[unknown_i + ci];
-        if ((fd.revents & std.os.linux.POLL.IN) != 0) {
+        if ((fd.revents & events) != 0) {
             clients.appendAssumeCapacity(.{ .unknown = ci });
         }
     }
 
-    const compositor = (fds[display_i].revents & std.os.linux.POLL.IN) != 0;
-    const accept = (fds[server_socket_i].revents & std.os.linux.POLL.IN) != 0;
+    const compositor = if (ws.native_tag() == .wayland)
+        (fds[display_i].revents & POLL.IN) != 0
+    else
+        false;
+
+    const accept = (fds[server_socket_i].revents & POLL.IN) != 0;
     return .{
         .compositor = compositor,
         .accept = accept,
         .clients = clients.items,
     };
-}
-
-const PollWindows = struct {
-    accept: bool,
-    clients: []Server.MessageSource,
-};
-
-fn poll_windows(_: std.mem.Allocator, _: *const Server) !PollWindows {
-    @panic("TODO");
 }
 
 pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
@@ -198,3 +235,4 @@ const os = @import("builtin").os.tag;
 const Clients = @import("server/Clients.zig");
 const ClientID = Clients.ClientID;
 const win32_threading = win32.system.threading;
+const zio = @import("zio");

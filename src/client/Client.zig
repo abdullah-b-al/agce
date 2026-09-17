@@ -503,6 +503,8 @@ pub fn read_thread(
     queues: *Client.MessagesQueue,
 ) void {
     log.debug("Started read_thread", .{});
+    defer log.debug("Exited read_thread", .{});
+
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 

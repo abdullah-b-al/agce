@@ -6,7 +6,7 @@ environ: *std.process.Environ.Map,
 
 rand: std.Random.DefaultPrng,
 unix_path: []const u8,
-server: net.Server,
+server: zio.net.Server,
 clients: Clients,
 generated_full_ids: std.array_hash_map.Auto(ptypes.ClientFullID, void),
 
@@ -23,14 +23,14 @@ pub fn create(
         const path = utils.unix_address_path(environ, &path_buf);
         break :blk try gpa.dupe(u8, path);
     };
-    const address = net.UnixAddress.init(unix_path) catch |err| switch (err) {
+    const address = zio.net.UnixAddress.init(unix_path) catch |err| switch (err) {
         error.NameTooLong => unreachable,
     };
-    const net_server = address.listen(io, .{}) catch |err| {
+    const net_server = address.listen(.{}) catch |err| {
         log.err("Failed to listen to socket {s} {}", .{ unix_path, err });
         return err;
     };
-    log.info("Created server on {s}", .{address.path});
+    log.info("Created server on {s}", .{unix_path});
 
     server.* = .{
         .io = io,
@@ -50,7 +50,7 @@ pub fn destroy(server: *Server) void {
     server.clients.deinit(server.io, server.gpa);
     server.generated_full_ids.deinit(server.gpa);
 
-    server.server.deinit(server.io);
+    server.server.shutdown(.both) catch {};
     Io.Dir.deleteFileAbsolute(server.io, server.unix_path) catch |err| switch (err) {
         error.Canceled => {},
         else => |e| {
@@ -60,29 +60,6 @@ pub fn destroy(server: *Server) void {
 
     server.gpa.free(server.unix_path);
     server.gpa.destroy(server);
-}
-
-fn message_receive(server: *const Server, arena: std.mem.Allocator, source: MessageSource) ReceivedMessage {
-    const connection: *ClientConnection = switch (source) {
-        .known => |id| &server.clients.known.get(id).?.connection,
-        .unknown => |index| &server.clients.unknown.items[index].connection,
-    };
-
-    std.debug.assert(!connection.closed);
-
-    const timeout: Io.Timeout =
-        .{ .duration = .{ .raw = .fromNanoseconds(1), .clock = .awake } };
-
-    const err_message = connection.receive(server.io, arena, timeout);
-
-    return .{
-        .payload = err_message,
-
-        .from = switch (source) {
-            .known => |id| .{ .known = id },
-            .unknown => |index| .{ .unknown = index },
-        },
-    };
 }
 
 pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) void {
@@ -98,6 +75,14 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
         // TODO: Get the real error and handle it
         error.WriteFailed => {},
 
+        // These should never be reached
+        // TODO: Remove these errors from the error set
+        error.Timeout,
+        error.WouldBlock,
+        error.ReadFailed,
+        error.EndOfStream,
+        => unreachable,
+
         error.HeaderWithoutPayload,
         error.MisbehavingUnknownClient,
         error.ClientSentInvalidClientFullID,
@@ -109,6 +94,14 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
             }
         },
 
+        error.ConnectionAborted,
+        error.ConnectionRefused,
+        error.NetworkUnreachable,
+        error.FileDescriptorNotASocket,
+        error.OperationNotSupported,
+        error.ConnectionTimedOut,
+        error.SocketNotConnected,
+        error.SocketShutdown,
         error.AccessDenied,
         error.Unexpected,
         error.UnsupportedMessageOnOs,
@@ -160,7 +153,7 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
     };
 }
 
-pub fn handle_events(
+pub fn events_handle(
     server: *Server,
     events: []const Event,
 ) void {
@@ -177,7 +170,7 @@ pub fn handle_event(
 ) error{ Canceled, WriteFailed, OutOfMemory, FailedToSendFds }!void {
     switch (event) {
         .unknown_client_connected => |stream| {
-            errdefer stream.close(server.io);
+            errdefer stream.close();
 
             try server.clients.prepare_for_new_client(server.gpa);
             server.clients.new_unknown(server.gpa, stream);
@@ -265,6 +258,20 @@ const HandleMessageError = error{
     CmsgNoHeader,
     CmsgInvalidLevel,
     CmsgInvalidType,
+
+    Timeout,
+    WouldBlock,
+    ConnectionAborted,
+    ConnectionRefused,
+    NetworkUnreachable,
+    FileDescriptorNotASocket,
+    OperationNotSupported,
+    ConnectionTimedOut,
+    SocketNotConnected,
+    SocketShutdown,
+
+    EndOfStream,
+    ReadFailed,
 };
 
 fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) HandleMessageError!void {
@@ -298,7 +305,7 @@ const HandleMessageFromUnknownError =
         MisbehavingUnknownClient,
         ClientSentInvalidClientFullID,
         WriteFailed,
-    } || utils.ErrorSetOf(ClientConnection.receive);
+    } || ClientConnection.ReceiveError;
 
 fn handle_message_from_unknown(
     server: *Server,
@@ -404,11 +411,48 @@ pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
 }
 
 pub fn messages_receive(server: *Server, arena: std.mem.Allocator, poll_result: []const MessageSource) error{OutOfMemory}![]const ReceivedMessage {
-    var list = try std.ArrayList(ReceivedMessage).initCapacity(arena, poll_result.len);
+    if (poll_result.len == 0)
+        return &.{};
 
-    for (poll_result) |result| {
-        const message = server.message_receive(arena, result);
-        list.appendAssumeCapacity(message);
+    var list = try std.ArrayList(ReceivedMessage).initCapacity(
+        arena,
+        server.clients.count() * 32,
+    );
+
+    var reader_buffer: [4096]u8 = undefined;
+    for (poll_result) |source| {
+        const connection: *ClientConnection = switch (source) {
+            .known => |id| &server.clients.known.get(id).?.connection,
+            .unknown => |index| &server.clients.unknown.items[index].connection,
+        };
+
+        std.debug.assert(!connection.closed);
+        var reader = connection.stream.reader(&reader_buffer);
+        reader.setTimeout(.fromNanoseconds(0));
+
+        var added_from_this_client: usize = 0;
+        while (true) {
+            const read = connection.receive_with_reader(server.io, arena, &reader.interface) catch |err|
+                switch (err) {
+                    error.EndOfStream => {
+                        if (added_from_this_client == 0) {
+                            list.appendAssumeCapacity(.{
+                                .from = source,
+                                .payload = error.ConnectionClosed,
+                            });
+                        }
+                        break;
+                    },
+                    error.ReadFailed => switch (reader.err.?) {
+                        error.Timeout => break,
+                        else => |e| e,
+                    },
+                    else => |e| e,
+                };
+
+            list.appendAssumeCapacity(.{ .from = source, .payload = read });
+            added_from_this_client += 1;
+        }
     }
 
     return list.items;
@@ -459,7 +503,7 @@ const ReceivedMessage = struct {
     payload: Payload,
     from: MessageSource,
 
-    const Payload = utils.ErrorSetOf(ClientConnection.receive)!?client_to_server.MessagePayload;
+    const Payload = ClientConnection.ReceiveError!?client_to_server.MessagePayload;
 };
 
 pub const MessageSource = union(enum) {
@@ -468,7 +512,7 @@ pub const MessageSource = union(enum) {
 };
 
 pub const Event = union(enum) {
-    unknown_client_connected: net.Stream,
+    unknown_client_connected: zio.net.Stream,
 
     viewport_create: ptypes.WithClientID(server_to_client.ViewportCreate),
     viewport_created: ptypes.WithClientID(server_to_client.ViewportCreated),
@@ -516,3 +560,4 @@ const Client = Clients.Client;
 const UnknownClient = Clients.UnknownClient;
 const os = @import("builtin").os.tag;
 const ClientConnection = @import("ClientConnection.zig");
+const zio = @import("zio");

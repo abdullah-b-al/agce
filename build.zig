@@ -5,7 +5,12 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const win32: *std.Build.Dependency = b.dependency("win32", .{});
+    const zio = b.dependency("zio", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("zio");
+
+    const win32 = b.dependency("win32", .{});
 
     if (target.result.os.tag == .windows) {
         const meets_minimum_version =
@@ -59,6 +64,7 @@ pub fn build(b: *std.Build) !void {
             .imports = &.{
                 .{ .name = "utils", .module = utils },
                 .{ .name = "constants", .module = constants },
+                .{ .name = "zio", .module = zio },
             },
         });
 
@@ -122,6 +128,7 @@ pub fn build(b: *std.Build) !void {
                     .{ .name = "protocol", .module = protocol },
                     .{ .name = "utils", .module = utils },
                     .{ .name = "constants", .module = constants },
+                    .{ .name = "zio", .module = zio },
                 },
             });
 
@@ -160,6 +167,7 @@ pub fn build(b: *std.Build) !void {
                     .{ .name = "protocol", .module = protocol },
                     .{ .name = "utils", .module = utils },
                     .{ .name = "constants", .module = constants },
+                    .{ .name = "zio", .module = zio },
                 },
             });
             module.linkSystemLibrary("wayland-client", .{});

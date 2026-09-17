@@ -1,21 +1,43 @@
 const ClientConnection = @This();
 
 format: ptypes.MessageFormat,
-stream: net.Stream,
+stream: zio.net.Stream,
 closed: bool,
 
-const ReceiveError = error{HeaderWithoutPayload} ||
-    if (os == .linux) utils.ErrorSetOf(receive_linux) else error{} ||
-        if (os == .windows) utils.ErrorSetOf(receive_windows) else error{};
+pub const ReceiveError =
+    error{ConnectionClosed} ||
+    zio.ev.NetRecv.Error ||
+    utils.ErrorSetOf(receive_with_reader);
 
-pub fn receive(c: *ClientConnection, io: Io, arena: std.mem.Allocator, timeout: Io.Timeout) ReceiveError!?client_to_server.MessagePayload {
-    return switch (os) {
-        .linux => try receive_linux(io, arena, c.stream, timeout),
-        .windows => try receive_windows(io, arena, c.stream),
-        else => comptime unreachable,
+pub fn receive_with_reader(_: *ClientConnection, _: Io, arena: std.mem.Allocator, reader: *Io.Reader) !?client_to_server.MessagePayload {
+    const header_bytes = try reader.take(@sizeOf(client_to_server.MessageHeader));
+
+    const header = try client_to_server.parse_message_header(header_bytes);
+    const err_data = if (header.payload_len > reader.buffer.len)
+        reader.readAlloc(arena, header.payload_len)
+    else
+        reader.take(header.payload_len);
+
+    const data = err_data catch |err| return switch (err) {
+        error.EndOfStream => error.HeaderWithoutPayload,
+        error.ReadFailed, error.OutOfMemory => |e| e,
     };
-}
 
+    switch (header.message_tag) {
+        inline else => |tag| {
+            switch (header.format) {
+                .json => {
+                    const T = utils.TypeOfField(client_to_server.MessagePayload, @tagName(tag));
+                    const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                        .allocate = .alloc_if_needed,
+                    });
+
+                    return @unionInit(client_to_server.MessagePayload, @tagName(tag), parsed);
+                },
+            }
+        },
+    }
+}
 pub fn send_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.Void) !void {
     const message = try c.stringify(gpa, .{ .registered = payload });
     try c.send(io, gpa, message);
@@ -167,11 +189,11 @@ fn stringify(c: *ClientConnection, gpa: std.mem.Allocator, payload: server_to_cl
     return .{ .header = header, .data = json };
 }
 
-fn send(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, message: server_to_client.Message) !void {
+fn send(c: *ClientConnection, _: Io, gpa: std.mem.Allocator, message: server_to_client.Message) !void {
     defer gpa.free(message.data);
 
     var buf: [4096]u8 = undefined;
-    var writer = c.stream.writer(io, &buf);
+    var writer = c.stream.writer(&buf);
 
     const header_bytes = std.mem.toBytes(message.header);
     try writer.interface.writeAll(&header_bytes);
@@ -196,60 +218,6 @@ fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, gpa: std.mem.Al
     }
 }
 
-fn receive_linux(io: Io, arena: std.mem.Allocator, stream: net.Stream, timeout: Io.Timeout) !?client_to_server.MessagePayload {
-    if (os != .linux) @compileError("Linux only function");
-    const peek = try client_to_server.message_peek(io, stream, timeout) orelse return null;
-
-    const header = try client_to_server.parse_message_header(peek.data);
-
-    const message_buf = try arena.alloc(u8, header.payload_len + @sizeOf(client_to_server.MessageHeader));
-    return try client_to_server.read_and_parse_data_json(io, arena, stream, header, message_buf);
-}
-
-fn receive_windows(io: Io, arena: std.mem.Allocator, stream: net.Stream) !client_to_server.MessagePayload {
-    var buf: [4096]u8 = undefined;
-    var reader = stream.reader(io, &buf);
-
-    const header_bytes = reader.interface.take(@sizeOf(client_to_server.MessageHeader)) catch |err|
-        return switch (err) {
-            error.EndOfStream => error.ConnectionClosed,
-            error.ReadFailed => switch (reader.err.?) {
-                error.Timeout => unreachable,
-                else => |e| e,
-            },
-        };
-
-    const header = try client_to_server.parse_message_header(header_bytes);
-    const err_data = if (header.payload_len > buf.len)
-        reader.interface.readAlloc(arena, header.payload_len)
-    else
-        reader.interface.take(header.payload_len);
-
-    const data = err_data catch |err| return switch (err) {
-        error.EndOfStream => error.HeaderWithoutPayload,
-        error.OutOfMemory => |e| e,
-        error.ReadFailed => switch (reader.err.?) {
-            error.Timeout => unreachable,
-            else => |e| e,
-        },
-    };
-
-    switch (header.message_tag) {
-        inline else => |tag| {
-            switch (header.format) {
-                .json => {
-                    const T = utils.TypeOfField(client_to_server.MessagePayload, @tagName(tag));
-                    const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-                        .allocate = .alloc_if_needed,
-                    });
-
-                    return @unionInit(client_to_server.MessagePayload, @tagName(tag), parsed);
-                },
-            }
-        },
-    }
-}
-
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -259,3 +227,4 @@ const server_to_client = @import("protocol").server_to_client;
 const constants = @import("constants");
 const os = @import("builtin").os.tag;
 const utils = @import("utils");
+const zio = @import("zio");
