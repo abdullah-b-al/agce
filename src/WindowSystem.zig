@@ -16,6 +16,24 @@ gbm: Gbm,
 win32: if (os == .windows) *Win32 else void,
 linux: if (os == .linux) Linux else void,
 
+pub fn create(
+    io: Io,
+    gpa: std.mem.Allocator,
+) !*WindowSystem {
+    return blk: switch (os) {
+        .linux => try .create_wayland(io, gpa),
+        .windows => {
+            const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
+            break :blk try .create_win32(
+                io,
+                gpa,
+                hinstance,
+            );
+        },
+        else => @compileError("Unsupported OS"),
+    };
+}
+
 pub fn create_wayland(
     io: Io,
     gpa: std.mem.Allocator,
@@ -140,8 +158,6 @@ pub fn events_handle(ws: *WindowSystem, events: []const Event) void {
 
 pub fn event_handle(ws: *WindowSystem, event: Event) !void {
     switch (event) {
-        .client_registered => |e| try ws.client_registered(e),
-        .client_disconnected => |id| try ws.client_disconnected(id),
         .buffer_create_cpu => |args| try ws.buffer_create_cpu(args),
         .buffer_create_gbm_bo => |args| {
             if (!constants.os_has_gbm) {
@@ -303,11 +319,11 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
     }
 }
 
-fn client_registered(ws: *WindowSystem, args: Event.TypeOf(.client_registered)) !void {
-    try ws.resources.putNoClobber(ws.gpa, args.client_id, .init(args.client_id));
+pub fn client_registered(ws: *WindowSystem, client_id: ClientID) !void {
+    try ws.resources.putNoClobber(ws.gpa, client_id, .init(client_id));
 }
 
-fn client_disconnected(ws: *WindowSystem, id: ClientID) !void {
+pub fn client_disconnected(ws: *WindowSystem, id: ClientID) void {
     const rs = ws.resources.getPtr(id) orelse {
         log.warn("Tried to disconnected an nonexistent client {}", .{id});
         return;
@@ -1099,9 +1115,6 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
 };
 
 pub const Event = union(enum) {
-    client_registered: ClientRegistered,
-    client_disconnected: ClientID,
-
     buffer_create_cpu: ptypes.WithClientID(client_to_server.BufferCreateCpu),
     buffer_create_gbm_bo: ptypes.WithClientID(client_to_server.BufferCreateGbmBo),
     buffer_present: ptypes.WithClientID(client_to_server.BufferPresent),

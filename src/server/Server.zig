@@ -65,7 +65,7 @@ pub fn destroy(server: *Server) void {
 pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) void {
     const @"error" = switch (message.from) {
         .known => server.handle_message_from_known(message, events),
-        .unknown => server.handle_message_from_unknown(message, events),
+        .unknown => server.handle_message_from_unknown(message),
     };
 
     @"error" catch |err| switch (err) {
@@ -114,7 +114,7 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
         => {
             switch (message.from) {
                 .known => |id| {
-                    server.close_known_client_with(id, err, events);
+                    server.close_known_client_with(id, err);
                 },
                 .unknown => |index| {
                     server.close_unknown_client_with(index, err);
@@ -150,21 +150,13 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
     };
 }
 
-pub fn events_handle(
-    server: *Server,
-    events: []const Event,
-    ws: *WindowSystem,
-) void {
+pub fn events_handle(server: *Server, events: []const Event) void {
     for (events) |e| {
         server.handle_event(e) catch |err| {
             switch (e) {
                 .unknown_client_connected => {},
                 inline else => |v| {
-                    server.close_known_client_with(
-                        v.client_id,
-                        err,
-                        &ws.deferred_events,
-                    );
+                    server.close_known_client_with(v.client_id, err);
                 },
             }
         };
@@ -334,11 +326,7 @@ const HandleMessageFromUnknownError =
         ConnectionClosed,
     } || ClientConnection.ReceiveError;
 
-fn handle_message_from_unknown(
-    server: *Server,
-    message: ReceivedMessage,
-    events: *std.ArrayList(WindowSystemEvent),
-) HandleMessageFromUnknownError!void {
+fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) HandleMessageFromUnknownError!void {
     std.debug.assert(message.from == .unknown);
 
     const index = message.from.unknown;
@@ -378,10 +366,6 @@ fn handle_message_from_unknown(
         error.OutOfMemory => error.OutOfMemoryDuringRegister,
         else => return error.ConnectionClosed,
     };
-
-    events.appendAssumeCapacity(
-        .{ .client_registered = .{ .client_id = id } },
-    );
 
     errdefer comptime unreachable;
 
@@ -495,14 +479,10 @@ pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []co
     return list.items;
 }
 
-fn close_known_client_with(server: *Server, id: ClientID, err: anyerror, events: *std.ArrayList(WindowSystemEvent)) void {
+fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
     const client = server.clients.known.get(id) orelse return;
     client.close(server.io);
     log.err("Closing client {} with {}", .{ id, err });
-
-    // TODO: Instead of sending an event here we should check at the end of the
-    // event loop
-    events.appendAssumeCapacity(.{ .client_disconnected = client.id });
 
     for (server.clients.known.values()) |c| {
         if (c.id == id or c.connection.closed) continue;
