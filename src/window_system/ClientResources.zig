@@ -70,7 +70,10 @@ pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) voi
             _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wayland.wl_buffer()));
             buffer.wayland.destroy();
         },
-        .win32 => @panic("TODO"),
+        .win32 => |tag| {
+            tag.guard();
+            buffer.deinit();
+        },
     }
 
     _ = rs.buffers.orderedRemove(id);

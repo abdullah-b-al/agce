@@ -72,9 +72,6 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
         // irrelevant at this point
         error.Canceled => {},
 
-        // TODO: Get the real error and handle it
-        error.WriteFailed => {},
-
         // These should never be reached
         // TODO: Remove these errors from the error set
         error.Timeout,
@@ -156,10 +153,20 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
 pub fn events_handle(
     server: *Server,
     events: []const Event,
+    ws: *WindowSystem,
 ) void {
     for (events) |e| {
         server.handle_event(e) catch |err| {
-            log.err("{}", .{err});
+            switch (e) {
+                .unknown_client_connected => {},
+                inline else => |v| {
+                    server.close_known_client_with(
+                        v.client_id,
+                        err,
+                        &ws.deferred_events,
+                    );
+                },
+            }
         };
     }
 }
@@ -167,7 +174,13 @@ pub fn events_handle(
 pub fn handle_event(
     server: *Server,
     event: Event,
-) error{ Canceled, WriteFailed, OutOfMemory, FailedToSendFds }!void {
+) error{
+    Canceled,
+    OutOfMemory,
+    FailedToSendFds,
+    FailedToSendHandle,
+    ConnectionClosed,
+}!void {
     switch (event) {
         .unknown_client_connected => |stream| {
             errdefer stream.close();
@@ -183,13 +196,26 @@ pub fn handle_event(
                     .linux => {
                         std.debug.assert(std.os.linux.close(@intFromEnum(e.payload.handle)) == 0);
                     },
-                    .windows => @panic("TODO"),
+                    .windows => {},
                     else => comptime unreachable,
                 }
             }
 
             const client = server.clients.known.get(e.client_id) orelse return;
-            try client.connection.send_buffer_created_cpu(server.io, server.gpa, e.payload);
+            client.connection.send_buffer_created_cpu(
+                server.io,
+                server.gpa,
+                e.payload,
+            ) catch |err| {
+                if (os == .windows) {
+                    return switch (err) {
+                        error.Win32OpenProcessFailed,
+                        error.DuplicateHandleFailed,
+                        => error.FailedToSendHandle,
+                        else => return error.ConnectionClosed,
+                    };
+                } else return err;
+            };
         },
         .buffer_created_gbm_bo => |e| {
             switch (os) {
@@ -203,7 +229,7 @@ pub fn handle_event(
                     const client = server.clients.known.get(e.client_id) orelse return;
                     try client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload);
                 },
-                .windows => @panic("TODO"),
+                .windows => @panic("OS does not support gbm"),
                 else => comptime unreachable,
             }
         },
@@ -211,8 +237,9 @@ pub fn handle_event(
         inline else => |e, tag| {
             const client = server.clients.known.get(e.client_id) orelse return;
 
-            const method = @field(ClientConnection, "send_" ++ @tagName(tag));
-            try method(&client.connection, server.io, server.gpa, e.payload);
+            const send = @field(ClientConnection, "send_" ++ @tagName(tag));
+            send(&client.connection, server.io, server.gpa, e.payload) catch
+                return error.ConnectionClosed;
         },
     }
 }
@@ -249,7 +276,6 @@ const HandleMessageError = error{
     BufferUnderrun,
     ValueTooLong,
     UnsupportedMessageOnOs,
-    WriteFailed,
 
     HeaderWithoutPayload,
     AccessDenied,
@@ -289,7 +315,8 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
             server.generated_full_ids.putAssumeCapacityNoClobber(full_id, {});
             log.debug("Generated {f}", .{full_id});
 
-            try client.connection.send_generated_client_full_id(server.io, server.gpa, .{ .full_id = full_id });
+            client.connection.send_generated_client_full_id(server.io, server.gpa, .{ .full_id = full_id }) catch
+                return error.ConnectionClosed;
         },
         else => {
             const client = server.clients.known.get(client_id).?;
@@ -304,7 +331,7 @@ const HandleMessageFromUnknownError =
         OutOfMemoryDuringRegister,
         MisbehavingUnknownClient,
         ClientSentInvalidClientFullID,
-        WriteFailed,
+        ConnectionClosed,
     } || ClientConnection.ReceiveError;
 
 fn handle_message_from_unknown(
@@ -338,7 +365,7 @@ fn handle_message_from_unknown(
         return error.ClientSentInvalidClientFullID;
     };
 
-    server.clients.promote_client_to_known(server.gpa, index, id);
+    server.clients.promote_client_to_known(server.gpa, index, id, register.pid);
     log.debug("Promoted unknown client to {f}", .{id});
 
     //
@@ -348,8 +375,8 @@ fn handle_message_from_unknown(
     const client = server.clients.known.get(id).?;
 
     client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
-        error.WriteFailed => |e| e,
         error.OutOfMemory => error.OutOfMemoryDuringRegister,
+        else => return error.ConnectionClosed,
     };
 
     events.appendAssumeCapacity(
@@ -473,6 +500,8 @@ fn close_known_client_with(server: *Server, id: ClientID, err: anyerror, events:
     client.close(server.io);
     log.err("Closing client {} with {}", .{ id, err });
 
+    // TODO: Instead of sending an event here we should check at the end of the
+    // event loop
     events.appendAssumeCapacity(.{ .client_disconnected = client.id });
 
     for (server.clients.known.values()) |c| {
@@ -551,6 +580,7 @@ const constants = @import("constants");
 const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
+const WindowSystem = @import("../WindowSystem.zig");
 const WindowSystemEvent = @import("../WindowSystem.zig").Event;
 const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;

@@ -57,7 +57,5 @@ const SubViewportID = ptypes.SubViewportID;
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
-const buffers = @import("buffers.zig");
-const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.Viewport);

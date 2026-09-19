@@ -27,10 +27,16 @@ pub fn init(
     client.* = try .init(io, gpa, environ_map);
     errdefer client.deinit();
 
+    const pid: ?ptypes.PID = switch (os) {
+        .linux => null,
+        .windows => @enumFromInt(win32.system.threading.GetCurrentProcessId()),
+        else => comptime unreachable,
+    };
+
     try client.connection.send_register(
         io,
         gpa,
-        .{ .full_id = client.env.client_full_id },
+        .{ .full_id = client.env.client_full_id, .pid = pid },
     );
 
     const duration: Io.Clock.Duration = .{ .raw = .fromSeconds(1), .clock = .awake };
@@ -492,7 +498,8 @@ const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
 const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
-const buffers = @import("buffers.zig");
 const Process = @import("Process.zig");
 const constants = @import("constants");
 const log = std.log.scoped(.agce);
+const win32 = @import("win32");
+const os = @import("builtin").os.tag;

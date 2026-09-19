@@ -62,23 +62,32 @@ pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.St
             .format = .json,
             .stream = stream,
             .closed = false,
+            .pid = null,
         },
         .promoted_to_known = false,
     };
     clients.unknown.appendAssumeCapacity(client);
 }
 
-pub fn promote_client_to_known(clients: *Clients, gpa: std.mem.Allocator, index: usize, id: ptypes.ClientID) void {
+pub fn promote_client_to_known(
+    clients: *Clients,
+    gpa: std.mem.Allocator,
+    index: usize,
+    id: ptypes.ClientID,
+    pid: ?ptypes.PID,
+) void {
     const unknown = clients.unknown.items[index];
     std.debug.assert(!unknown.promoted_to_known);
 
     const client = clients.known_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
         .id = id,
+        .pid = pid,
         .connection = .{
             .format = unknown.connection.format,
             .stream = unknown.connection.stream,
             .closed = false,
+            .pid = pid,
         },
     };
 
@@ -114,6 +123,7 @@ pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients) void {
 
 pub const Client = struct {
     id: ptypes.ClientID,
+    pid: ?ptypes.PID,
     connection: ClientConnection,
 
     pub fn close(client: *Client, _: Io) void {

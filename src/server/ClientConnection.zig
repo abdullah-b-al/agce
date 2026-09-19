@@ -3,6 +3,7 @@ const ClientConnection = @This();
 format: ptypes.MessageFormat,
 stream: zio.net.Stream,
 closed: bool,
+pid: ?ptypes.PID,
 
 pub const ReceiveError =
     error{ConnectionClosed} ||
@@ -103,14 +104,41 @@ pub fn send_buffer_released(c: *ClientConnection, io: Io, gpa: std.mem.Allocator
     try c.send(io, gpa, message);
 }
 
-pub fn send_buffer_created_cpu(c: *ClientConnection, _: Io, gpa: std.mem.Allocator, payload: server_to_client.BufferCreatedCpu) !void {
-    const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
-
+pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, const_payload: server_to_client.BufferCreatedCpu) !void {
     switch (os) {
         .linux => {
-            try c.send_with_fd(ptypes.CpuBufferHandle, payload.handle, gpa, message);
+            const message = try c.stringify(gpa, .{ .buffer_created_cpu = const_payload });
+            try c.send_with_fd(ptypes.CpuBufferHandle, const_payload.handle, gpa, message);
         },
-        .windows => @panic("TODO"),
+        .windows => {
+            const client_pid = c.pid orelse @panic("Must be provided in windows");
+            const client_handle = win32.system.threading.OpenProcess(
+                win32.system.threading.PROCESS_DUP_HANDLE,
+                @intFromEnum(std.os.windows.BOOL.FALSE),
+                @intFromEnum(client_pid),
+            ) orelse return error.Win32OpenProcessFailed;
+            defer _ = win32.foundation.CloseHandle(client_handle);
+
+            var duplicated: ?*anyopaque = null;
+            const result = win32.foundation.DuplicateHandle(
+                win32.system.threading.GetCurrentProcess(),
+                @ptrFromInt(@intFromEnum(const_payload.handle)),
+                client_handle,
+                &duplicated,
+                0,
+                @intFromEnum(std.os.windows.BOOL.FALSE),
+                win32.foundation.DUPLICATE_SAME_ACCESS,
+            );
+
+            if (result == 0) {
+                return error.DuplicateHandleFailed;
+            }
+
+            var payload = const_payload;
+            payload.handle = @enumFromInt(@intFromPtr(duplicated.?));
+            const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
+            try c.send(io, gpa, message);
+        },
         else => comptime unreachable,
     }
 }
@@ -196,9 +224,15 @@ fn send(c: *ClientConnection, _: Io, gpa: std.mem.Allocator, message: server_to_
     var writer = c.stream.writer(&buf);
 
     const header_bytes = std.mem.toBytes(message.header);
-    try writer.interface.writeAll(&header_bytes);
-    try writer.interface.writeAll(message.data);
-    try writer.interface.flush();
+    writer.interface.writeAll(&header_bytes) catch |err| switch (err) {
+        error.WriteFailed => return writer.err.?,
+    };
+    writer.interface.writeAll(message.data) catch |err| switch (err) {
+        error.WriteFailed => return writer.err.?,
+    };
+    writer.interface.flush() catch |err| switch (err) {
+        error.WriteFailed => return writer.err.?,
+    };
 }
 
 fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, gpa: std.mem.Allocator, message: server_to_client.Message) !void {
@@ -228,3 +262,4 @@ const constants = @import("constants");
 const os = @import("builtin").os.tag;
 const utils = @import("utils");
 const zio = @import("zio");
+const win32 = @import("win32");

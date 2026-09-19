@@ -6,8 +6,8 @@ viewport_key: ViewportKey,
 input_focus_keyboard: ViewportKey,
 input_focus_mouse: ViewportKey,
 
-win32: if (os == .windows) void else void,
-linux: if (os == .linux) Linux else void,
+win32: if (os == .windows) Win32.Window else void,
+linux: if (os == .linux) LinuxWindow else void,
 
 pub fn create(
     ws: *WindowSystem,
@@ -34,8 +34,8 @@ pub fn create(
             win.linux = .{ .wayland = try .init(wl, ws, win, requested_size) };
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const win32 = tag.window_system(ws);
+            win.win32 = try .init(win32, ws, win, requested_size);
         },
     }
 
@@ -67,7 +67,7 @@ pub fn native_tag(win: *Window) WindowSystem.NativeTag {
     };
 }
 
-pub const Linux = union(enum) {
+pub const LinuxWindow = union(enum) {
     wayland: Wayland.Window,
 };
 
@@ -81,6 +81,7 @@ const log = std.log.scoped(.Wayland);
 const utils = @import("utils");
 const c_linux = @import("c_linux");
 const Wayland = @import("../wayland/Wayland.zig");
+const Win32 = @import("../win32/Win32.zig");
 const ptypes = @import("protocol").types;
 const ClientResources = @import("ClientResources.zig");
 const os = @import("builtin").os.tag;

@@ -8,7 +8,7 @@ state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
-win32: if (os == .windows) void else void,
+win32: if (os == .windows) Win32.Viewport else void,
 linux: if (os == .linux) Linux else void,
 
 pub fn create(
@@ -57,8 +57,8 @@ pub fn create(
             };
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const win32 = tag.window_system(ws);
+            vp.win32 = try .init(ws, win32, vp, parent, key.client_id);
         },
     }
 
@@ -131,3 +131,4 @@ const Buffer = @import("ClientResources.zig").Buffer;
 const SubViewport = @import("SubViewport.zig");
 const ParentOfViewport = WindowSystem.ParentOfViewport;
 const os = @import("builtin").os.tag;
+const Win32 = @import("../win32/Win32.zig");

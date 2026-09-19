@@ -25,6 +25,16 @@ pub const ClientFingerprint = enum(u32) {
     }
 };
 
+pub const PID = enum(u32) {
+    _,
+
+    pub fn increment(id: *PID) PID {
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+};
+
 pub const ClientFullID = struct {
     id: ClientID,
     fingerprint: ClientFingerprint,

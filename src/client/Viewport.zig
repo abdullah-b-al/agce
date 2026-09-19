@@ -254,10 +254,13 @@ pub fn renderer_buffers_create(
                         .linux => {
                             std.debug.assert(std.os.linux.close(@intFromEnum(c.handle)) == 0);
                         },
-                        .windows => @panic("TODO"),
+                        .windows => {
+                            _ = win32.foundation.CloseHandle(@ptrFromInt(@intFromEnum(c.handle)));
+                        },
                         else => comptime unreachable,
                     }
                 },
+                // TODO: Close fds here
                 BufferCreatedGbmBo => {},
                 else => comptime unreachable,
             }
@@ -379,8 +382,6 @@ const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
-const buffers = @import("buffers.zig");
-const BufferStatus = @import("buffers.zig").BufferStatus;
 const CreateStatus = Client.CreateStatus;
 const BufferPresented = server_to_client.MessagePayload.BufferPresented;
 const log = std.log.scoped(.Viewport);
@@ -388,3 +389,4 @@ const os = @import("builtin").os.tag;
 const BufferCreatedCpu = server_to_client.BufferCreatedCpu;
 const BufferCreatedGbmBo = server_to_client.BufferCreatedGbmBo;
 const utils = @import("utils");
+const win32 = @import("win32");

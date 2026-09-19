@@ -36,30 +36,6 @@ pub fn buffer_released(r: *Win32RendererCpu, id: BufferID) void {
 
 pub fn buffer_destroyed(_: *Win32RendererCpu, _: BufferID) void {}
 
-fn create_pixel_buffer(size: i32) !struct { std.os.windows.HANDLE, []u8 } {
-    const handle = win32.system.memory.CreateFileMappingA(
-        win32.foundation.INVALID_HANDLE_VALUE,
-        null,
-        win32.system.memory.PAGE_READWRITE,
-        0,
-        @intCast(size),
-        null,
-    ) orelse return error.FailedToCreateFileMapping;
-    errdefer _ = win32.foundation.CloseHandle(handle);
-
-    const buffer = win32.system.memory.MapViewOfFile(
-        handle,
-        win32.system.memory.FILE_MAP_ALL_ACCESS,
-        0,
-        0,
-        @intCast(size),
-    ) orelse return error.FailedToMapViewOfFile;
-
-    const ptr: [*]u8 = @ptrCast(buffer);
-
-    return .{ handle, ptr[0..@intCast(size)] };
-}
-
 pub const Buffer = struct {
     id: ptypes.BufferID,
     data: []u8,
@@ -67,8 +43,26 @@ pub const Buffer = struct {
     size: ptypes.Size,
     format: ptypes.BufferFormat,
 
-    pub fn init(_: BufferCreatedCpu) !Buffer {
-        @panic("TODO");
+    pub fn init(created: BufferCreatedCpu) !Buffer {
+        const size_bytes = created.size.width * created.size.height * created.format.bytes_per_pixel();
+
+        const buffer = win32.system.memory.MapViewOfFile(
+            @ptrFromInt(@intFromEnum(created.handle)),
+            win32.system.memory.FILE_MAP_ALL_ACCESS,
+            0,
+            0,
+            @intCast(size_bytes),
+        ) orelse return error.FailedToMapViewOfFile;
+
+        const ptr: [*]u8 = @ptrCast(buffer);
+
+        return .{
+            .id = created.buffer_id,
+            .data = ptr[0..@intCast(size_bytes)],
+            .released = true,
+            .size = created.size,
+            .format = created.format,
+        };
     }
 
     pub fn deinit(buffer: *Buffer) void {
@@ -88,8 +82,6 @@ const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
-const BufferStatus = @import("buffers.zig").BufferStatus;
-const CreateStatus = Client.CreateStatus;
 const log = std.log.scoped(.RendererCpu);
 const Viewport = @import("Viewport.zig");
 const utils = @import("utils");

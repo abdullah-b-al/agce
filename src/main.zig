@@ -59,8 +59,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             @typeInfo(WindowSystem.Event).@"union".fields.len *
             server.clients.known.count() * 4;
 
-        try ws.server_events.ensureUnusedCapacity(ws.gpa, server_events_len);
-        try ws.deferred_events.ensureUnusedCapacity(ws.gpa, ws_events_len);
+        try ws.server_events.ensureTotalCapacityPrecise(ws.gpa, server_events_len);
+        try ws.deferred_events.ensureTotalCapacityPrecise(ws.gpa, ws_events_len);
 
         const poll_result = try poll(arena.allocator(), ws, server);
 
@@ -76,14 +76,28 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     wl.display_dispatch(ws);
                 }
             },
-            else => {},
+            .win32 => |tag| {
+                tag.guard();
+                var msg: win32_win.MSG = undefined;
+
+                while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
+                    _ = win32_win.TranslateMessage(&msg);
+                    _ = win32_win.DispatchMessageA(&msg);
+                }
+            },
         }
 
-        ws.events_handle(ws.deferred_events.items);
-        ws.deferred_events.clearRetainingCapacity();
+        while (true) {
+            ws.events_handle(ws.deferred_events.items);
+            ws.deferred_events.clearRetainingCapacity();
 
-        server.events_handle(ws.server_events.items);
-        ws.server_events.clearRetainingCapacity();
+            server.events_handle(ws.server_events.items, ws);
+            ws.server_events.clearRetainingCapacity();
+
+            if (ws.deferred_events.items.len == 0 and ws.server_events.items.len == 0) {
+                break;
+            }
+        }
 
         if (poll_result.accept) {
             if (server.server.accept(.{})) |stream| {
@@ -178,7 +192,7 @@ fn poll(arena: std.mem.Allocator, ws: *WindowSystem, server: *const Server) !Pol
     std.debug.assert(poll_result != 0); // timeout
     if (poll_result < 0) {
         if (os == .windows) {
-            log.err("WSA {}", .{win32.networking.win_sock.WSAGetLastError()});
+            log.err("WSA {}", .{win_sock.WSAGetLastError()});
         }
         return error.PollFailed;
     }
@@ -226,7 +240,6 @@ const Wayland = @import("wayland/Wayland.zig");
 const Win32 = @import("win32/Win32.zig");
 const WindowSystem = @import("WindowSystem.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
-const win32 = @import("win32");
 const Server = @import("server/Server.zig");
 const utils = @import("utils");
 const c_linux = @import("c_linux");
@@ -234,5 +247,6 @@ const log = std.log.scoped(.main);
 const os = @import("builtin").os.tag;
 const Clients = @import("server/Clients.zig");
 const ClientID = Clients.ClientID;
-const win32_threading = win32.system.threading;
+const win32_threading = @import("win32").system.threading;
 const zio = @import("zio");
+const win_sock = @import("win32").networking.win_sock;

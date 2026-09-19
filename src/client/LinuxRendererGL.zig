@@ -140,6 +140,7 @@ pub const Buffer = struct {
         const gbm_texture = try opengl.egl_image_from_gbm_bo(gl_context, bo);
         const fbo = try opengl.fbo_gen(gbm_texture.texture);
 
+        // TODO: Do not close fds here
         std.debug.assert(std.os.linux.close(@intFromEnum(created.fds.buffer)) == 0);
 
         return .{
@@ -266,7 +267,6 @@ const c_linux = @import("c_linux");
 const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
-const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.RendererGL);
 const CreateStatus = Client.CreateStatus;
 const Viewport = @import("Viewport.zig");

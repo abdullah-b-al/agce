@@ -641,7 +641,6 @@ const ViewportID = ptypes.ViewportID;
 const SubViewportID = ptypes.SubViewportID;
 const BufferID = ptypes.BufferID;
 const log = std.log.scoped(.Client);
-const buffers = @import("buffers.zig");
 const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
 const RendererGL = Viewport.RendererGL;

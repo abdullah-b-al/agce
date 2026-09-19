@@ -75,7 +75,6 @@ const opengl = @import("opengl.zig");
 const glad = @import("glad");
 const Client = @import("Client.zig");
 const BufferID = ptypes.BufferID;
-const BufferStatus = @import("buffers.zig").BufferStatus;
 const log = std.log.scoped(.RendererGL);
 const CreateStatus = Client.CreateStatus;
 const Viewport = @import("Viewport.zig");

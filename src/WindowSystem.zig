@@ -389,12 +389,16 @@ const BufferCreateCpu = struct {
 };
 
 fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes.Size, format: ptypes.BufferFormat) !BufferCreateCpu {
+    try rs.buffers.ensureUnusedCapacity(ws.gpa, 1);
+
+    const size_bytes = size.width * size.height * format.bytes_per_pixel();
+
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl = tag.window_system(ws);
-            const s = size.width * size.height * format.bytes_per_pixel();
             const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
-            if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), @intCast(s))) != .SUCCESS) return error.FtruncateFailed;
+            if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), @intCast(size_bytes))) != .SUCCESS)
+                return error.FtruncateFailed;
 
             const buffer_id = rs.next_buffer_id.increment();
             try wl.buffer_create_and_register_cpu(
@@ -413,7 +417,38 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
         },
         .win32 => |tag| {
             tag.guard();
-            @panic("TODO");
+            const handle_ptr = win32_memory.CreateFileMappingA(
+                win32_foundation.INVALID_HANDLE_VALUE,
+                null,
+                win32_memory.PAGE_READWRITE,
+                0,
+                @intCast(size_bytes),
+                null,
+            ) orelse return error.FailedToCreateFileMapping;
+            errdefer _ = win32_foundation.CloseHandle(handle_ptr);
+
+            const pixels = win32_memory.MapViewOfFile(
+                handle_ptr,
+                win32_memory.FILE_MAP_READ,
+                0,
+                0,
+                @intCast(size_bytes),
+            ) orelse return error.FailedToMapViewOfFile;
+
+            const handle: ptypes.CpuBufferHandle = @enumFromInt(@intFromPtr(handle_ptr));
+
+            const buffer_id = rs.next_buffer_id.increment();
+            rs.buffers.putAssumeCapacity(buffer_id, .{ .cpu = .{
+                .handle = handle,
+                .pixels = pixels,
+                .format = format,
+                .size = size,
+            } });
+
+            return .{
+                .handle = handle,
+                .buffer_id = buffer_id,
+            };
         },
     }
 }
@@ -542,8 +577,13 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
             _ = wl.display.flush();
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const win32 = tag.window_system(ws);
+
+            switch (buffer.*) {
+                .cpu => |*cpu| {
+                    win32.render_buffer_cpu(ws, viewport_key, vp, buffer_id, cpu);
+                },
+            }
         },
     }
 }
@@ -667,7 +707,9 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
         .win32 => |tag| {
             tag.guard();
 
-            @panic("TODO");
+            // const win32 = tag.window_system(ws);
+
+            // @panic("TODO");
         },
     }
 
@@ -1189,7 +1231,7 @@ pub const NativeTag = enum {
         tag.guard();
         return switch (tag) {
             .wayland => &win.linux.wayland,
-            .win32 => win.win32,
+            .win32 => &win.win32,
         };
     }
 
@@ -1200,7 +1242,7 @@ pub const NativeTag = enum {
         tag.guard();
         return switch (tag) {
             .wayland => &vp.linux.wayland,
-            .win32 => vp.win32,
+            .win32 => &vp.win32,
         };
     }
 
@@ -1221,7 +1263,7 @@ pub const NativeTag = enum {
     fn viewport_type(comptime tag: NativeTag) type {
         return switch (tag) {
             .wayland => Wayland.Viewport,
-            .win32 => void,
+            .win32 => Win32.Viewport,
         };
     }
 
@@ -1256,3 +1298,6 @@ const client_to_server = @import("protocol").client_to_server;
 const utils = @import("utils");
 const pinput = @import("protocol").input;
 const ServerEvent = @import("server/Server.zig").Event;
+const win32_memory = @import("win32").system.memory;
+const win32_foundation = @import("win32").foundation;
+const win32_gdi = @import("win32").graphics.gdi;
