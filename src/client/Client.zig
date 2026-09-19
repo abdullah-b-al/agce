@@ -37,7 +37,7 @@ pub fn init(
     const env: Env = .extract(&map);
 
     var path_buf: [constants.socket_max_path]u8 = undefined;
-    const path = utils.unix_address_path(environ_map, &path_buf);
+    const path = try utils.unix_address_path(io, gpa, environ_map, &path_buf);
     const address = try net.UnixAddress.init(path);
 
     const queues: *MessagesQueue = try .create(gpa);

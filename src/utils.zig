@@ -59,20 +59,18 @@ pub fn format_struct(value: anytype, writer: *Io.Writer) Io.Writer.Error!void {
     try writer.print(" }}", .{});
 }
 
-pub fn unix_address_path(environ: *const std.process.Environ.Map, buf: []u8) []const u8 {
+pub fn unix_address_path(io: Io, gpa: std.mem.Allocator, environ: *const std.process.Environ.Map, buf: []u8) ![]const u8 {
     std.debug.assert(buf.len >= constants.socket_max_path);
 
-    if (environ.get("XDG_RUNTIME_DIR")) |value| {
-        std.debug.assert(value.len + constants.socket_name.len <= buf.len);
-        return std.fmt.bufPrint(
-            buf,
-            "{s}{c}{s}",
-            .{ value, std.fs.path.sep, constants.socket_name },
-        ) catch unreachable;
-    }
+    const path = try known_folders.getPath(io, gpa, environ, .runtime) orelse
+        return error.CouldNotGetRuntimeDirPath;
+    defer gpa.free(path);
 
-    std.mem.copyForwards(u8, buf, constants.socket_name);
-    return buf[0..constants.socket_name.len];
+    return std.fmt.bufPrint(
+        buf,
+        "{s}{c}{s}",
+        .{ path, std.fs.path.sep, constants.socket_name },
+    ) catch unreachable;
 }
 
 pub fn TypeOfField(comptime U: type, comptime name: []const u8) type {
@@ -170,3 +168,4 @@ const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const constants = @import("constants");
+const known_folders = @import("known-folders");

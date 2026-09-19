@@ -20,7 +20,7 @@ pub fn create(
 
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const unix_path = blk: {
-        const path = utils.unix_address_path(environ, &path_buf);
+        const path = try utils.unix_address_path(io, gpa, environ, &path_buf);
         break :blk try gpa.dupe(u8, path);
     };
     const address = zio.net.UnixAddress.init(unix_path) catch |err| switch (err) {

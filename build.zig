@@ -5,6 +5,11 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const known_folders = b.dependency("known_folders", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("known-folders");
+
     const zio = b.dependency("zio", .{
         .target = target,
         .optimize = optimize,
@@ -53,6 +58,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "constants", .module = constants },
+            .{ .name = "known-folders", .module = known_folders },
         },
     });
 
