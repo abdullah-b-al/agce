@@ -2,7 +2,6 @@ const Server = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
-environ: *std.process.Environ.Map,
 
 rand: std.Random.DefaultPrng,
 unix_path: []const u8,
@@ -12,7 +11,7 @@ generated_full_ids: std.array_hash_map.Auto(ptypes.ClientFullID, void),
 
 pub fn create(
     io: Io,
-    environ: *std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
     gpa: std.mem.Allocator,
 ) !*Server {
     const server = try gpa.create(Server);
@@ -20,7 +19,7 @@ pub fn create(
 
     var path_buf: [constants.socket_max_path]u8 = undefined;
     const unix_path = blk: {
-        const path = try utils.unix_address_path(io, gpa, environ, &path_buf);
+        const path = try utils.unix_address_path(io, gpa, environ_map, &path_buf);
         break :blk try gpa.dupe(u8, path);
     };
     const address = zio.net.UnixAddress.init(unix_path) catch |err| switch (err) {
@@ -36,7 +35,6 @@ pub fn create(
         .io = io,
         .gpa = gpa,
         .rand = .init(0),
-        .environ = environ,
         .generated_full_ids = .empty,
 
         .unix_path = unix_path,
