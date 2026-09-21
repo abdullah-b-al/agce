@@ -51,9 +51,15 @@ pub fn destroy(server: *Server) void {
     server.generated_full_ids.deinit(server.gpa);
 
     server.server.shutdown(.both) catch {};
-    Io.Dir.deleteFileAbsolute(server.io, server.unix_path) catch |err| switch (err) {
+    const err =
+        if (std.fs.path.isAbsolute(server.unix_path))
+            Io.Dir.deleteFileAbsolute(server.io, server.unix_path)
+        else
+            Io.Dir.cwd().deleteFile(server.io, server.unix_path);
+
+    err catch |e| switch (e) {
         error.Canceled => {},
-        else => |e| {
+        else => {
             log.err("Could not delete unix socket {s} {}", .{ server.unix_path, e });
         },
     };
