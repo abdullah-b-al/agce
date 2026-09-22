@@ -123,22 +123,21 @@ pub fn build(b: *std.Build) !void {
         install_exe(b, "agce-client", module, null);
     }
 
+    const main = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = protocol },
+            .{ .name = "utils", .module = utils },
+            .{ .name = "constants", .module = constants },
+            .{ .name = "zio", .module = zio },
+        },
+    });
+
     switch (target.result.os.tag) {
         .windows => {
-            const module = b.createModule(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "win32", .module = win32.module("win32") },
-                    .{ .name = "protocol", .module = protocol },
-                    .{ .name = "utils", .module = utils },
-                    .{ .name = "constants", .module = constants },
-                    .{ .name = "zio", .module = zio },
-                },
-            });
-
-            install_exe(b, "agce", module, step_server);
+            main.addImport("win32", win32.module("win32"));
         },
         .linux => {
             const Scanner = @import("wayland").Scanner;
@@ -163,31 +162,96 @@ pub fn build(b: *std.Build) !void {
             scanner.generate("wp_linux_drm_syncobj_manager_v1", 1);
             scanner.generate("wp_cursor_shape_manager_v1", 1);
 
-            const module = b.createModule(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "wayland", .module = wayland },
-                    .{ .name = "c_linux", .module = c_linux.? },
-                    .{ .name = "protocol", .module = protocol },
-                    .{ .name = "utils", .module = utils },
-                    .{ .name = "constants", .module = constants },
-                    .{ .name = "zio", .module = zio },
-                },
-            });
-            module.linkSystemLibrary("wayland-client", .{});
+            main.addImport("wayland", wayland);
+            main.addImport("c_linux", c_linux.?);
 
-            install_exe(b, "agce", module, step_server);
+            main.linkSystemLibrary("wayland-client", .{});
         },
         else => return error.UnsupportedOS,
     }
+
+    install_exe(b, "agce", main, step_server);
+
+    build_tests(b, target, optimize, client, main, constants, glad);
 }
 
-fn build_glad(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) struct {
+fn build_tests(
+    b: *Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    client: *Build.Module,
+    main: *Build.Module,
+    constants: *Build.Module,
+    glad: Glad,
+) void {
+    const z2d = b.dependency("z2d", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("z2d");
+
+    const test_step = b.step("test", "Build tests");
+
+    {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/tests/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "client", .module = client },
+                .{ .name = "glad", .module = glad.c },
+                .{ .name = "main", .module = main },
+                .{ .name = "constants", .module = constants },
+            },
+        });
+
+        module.linkLibrary(glad.lib);
+
+        const t = b.addTest(.{
+            .name = "test",
+            .root_module = module,
+        });
+        const artifact = b.addInstallArtifact(t, .{});
+        test_step.dependOn(&artifact.step);
+        step_all.dependOn(&artifact.step);
+
+        const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
+        step_check.dependOn(&t_check.step);
+    }
+
+    {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/tests/interactive.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "client", .module = client },
+                .{ .name = "glad", .module = glad.c },
+                .{ .name = "main", .module = main },
+                .{ .name = "constants", .module = constants },
+                .{ .name = "z2d", .module = z2d },
+            },
+        });
+
+        module.linkLibrary(glad.lib);
+
+        const t = b.addTest(.{
+            .name = "test-interactive",
+            .root_module = module,
+        });
+        const artifact = b.addInstallArtifact(t, .{});
+        test_step.dependOn(&artifact.step);
+        step_all.dependOn(&artifact.step);
+
+        const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
+        step_check.dependOn(&t_check.step);
+    }
+}
+
+const Glad = struct {
     lib: *Step.Compile,
     c: *Build.Module,
-} {
+};
+fn build_glad(b: *Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) Glad {
     const lib = b.addLibrary(.{
         .name = "glad",
         .root_module = b.createModule(.{

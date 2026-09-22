@@ -85,13 +85,6 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
     const msg = @field(message, @tagName(tag));
 
     switch (tag) {
-        .viewport_created => {
-            std.debug.assert(vp.status == .pending);
-            switch (msg.status) {
-                .success => vp.status = .created,
-                .failure => vp.status = .failed,
-            }
-        },
         .viewport_resize => {
             try vp.buffer_resize(msg.size);
         },

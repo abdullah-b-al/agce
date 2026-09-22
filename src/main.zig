@@ -245,14 +245,16 @@ pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
     }
 }
 
+pub const WindowSystem = @import("WindowSystem.zig");
+pub const Server = @import("server/Server.zig");
+pub const zio = @import("zio");
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
 const Wayland = @import("wayland/Wayland.zig");
 const Win32 = @import("win32/Win32.zig");
-const WindowSystem = @import("WindowSystem.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
-const Server = @import("server/Server.zig");
 const utils = @import("utils");
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.main);
@@ -260,5 +262,4 @@ const os = @import("builtin").os.tag;
 const Clients = @import("server/Clients.zig");
 const ClientID = Clients.ClientID;
 const win32_threading = @import("win32").system.threading;
-const zio = @import("zio");
 const win_sock = @import("win32").networking.win_sock;

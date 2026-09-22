@@ -29,7 +29,7 @@ messages_queue: *MessagesQueue,
 pub fn init(
     io: Io,
     gpa: std.mem.Allocator,
-    environ_map: *std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 ) !Client {
     var map = try environ_map.clone(gpa);
     errdefer map.deinit();
@@ -329,9 +329,17 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             vp.pending_buffers_gbm_bo.appendAssumeCapacity(e);
         },
 
+        .viewport_created => |e| {
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            std.debug.assert(vp.status == .pending);
+            switch (e.status) {
+                .success => vp.status = .created,
+                .failure => vp.status = .failed,
+            }
+        },
+
         inline .frame_render,
         .buffer_released,
-        .viewport_created,
         => |e, tag| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             const msg = @unionInit(Message, @tagName(tag), e);
@@ -406,13 +414,11 @@ pub fn viewport_create_with_id(
     };
     client.viewports.putAssumeCapacityNoClobber(vp.id, vp);
 
+    try client.send_viewport_create(id, requested_size);
     try vp.buffers_create(requested_size);
 
-    try client.send_viewport_create(id, requested_size);
-
-    while (true) {
-        try client.wait_for(id, .viewport_created);
-        try client.update_by_tag(id, .viewport_created);
+    while (vp.status == .pending) {
+        try client.poll(.none);
 
         switch (vp.status) {
             .pending => continue,
@@ -563,7 +569,6 @@ pub const Message = union(enum) {
     pub const Tag = std.meta.Tag(Message);
 
     viewport_resize: server_to_client.ViewportResize,
-    viewport_created: server_to_client.ViewportCreated,
     buffer_released: server_to_client.BufferReleased,
     frame_render: server_to_client.FrameRender,
 };

@@ -60,7 +60,7 @@ fn window_proc(
             if (win.win32.handle == hwnd) break :blk win;
         }
 
-        std.debug.print("Maybe the handle refers to a child window, a viewport.\n", .{});
+        log.debug("Maybe the handle refers to a child window, a viewport.\n", .{});
         // Window has been removed. Pass through msg
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     };
@@ -93,7 +93,7 @@ fn window_proc(
             const w: i16 = @truncate(low);
             const h: i16 = @truncate(high);
 
-            std.debug.print("New width and height {}x{}\n", .{ w, h });
+            log.debug("New width and height {}x{}\n", .{ w, h });
             return 0;
         },
         else => {},

@@ -19,7 +19,7 @@ pub const MouseButton = @import("protocol").input.MouseButton;
 pub fn init(
     io: std.Io,
     gpa: std.mem.Allocator,
-    environ_map: *std.process.Environ.Map,
+    environ_map: *const std.process.Environ.Map,
 ) !*ClientHandle {
     const client = try gpa.create(Client);
     errdefer gpa.destroy(client);

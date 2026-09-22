@@ -722,10 +722,6 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
         },
         .win32 => |tag| {
             tag.guard();
-
-            // const win32 = tag.window_system(ws);
-
-            // @panic("TODO");
         },
     }
 

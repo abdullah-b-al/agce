@@ -20,6 +20,10 @@
             .url = "git+https://github.com/ziglibs/known-folders.git#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
             .hash = "known_folders-0.0.0-Fy-PJiDLAAB98m3uYUzatrTb2mO2fpvwx2zpSroEtfbO",
         },
+        .z2d = .{
+            .url = "git+https://github.com/vancluever/z2d.git#143ff5f45be885606b1694d0fcdad85a0c7dbb84",
+            .hash = "z2d-0.12.2-pre-j5P_HqdBEQCQcvxLJtL6TlM_VTYoPROntkls8YcYqTlt",
+        },
     },
     .paths = .{
         "build.zig",
