@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         else => {},
     }
 
-    const ws: *WindowSystem = try .create(io, gpa);
+    const ws: *WindowSystem = try .create(io, gpa, "agce-server");
     defer ws.destroy();
 
     const server = try Server.create(io, &environ_map, gpa);

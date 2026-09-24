@@ -5,9 +5,9 @@ gpa: std.mem.Allocator,
 instance: win32_foundation.HINSTANCE,
 class: win32_win.WNDCLASSA,
 
-pub fn create(gpa: std.mem.Allocator, instance: win32_foundation.HINSTANCE) !*Win32 {
-    const ptr = try gpa.create(Win32);
-    errdefer gpa.destroy(ptr);
+pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
+    const ptr = try ws.gpa.create(Win32);
+    errdefer ws.gpa.destroy(ptr);
 
     const wc: win32_win.WNDCLASSA = .{
         .style = .{},
@@ -19,17 +19,17 @@ pub fn create(gpa: std.mem.Allocator, instance: win32_foundation.HINSTANCE) !*Wi
         .hbrBackground = null,
         .lpfnWndProc = window_proc,
         .hInstance = instance,
-        .lpszClassName = "agce",
+        .lpszClassName = ws.class,
     };
 
     if (win32_win.RegisterClassA(&wc) == 0) {
         const err = win32_foundation.GetLastError();
-        std.log.err("{}", .{err});
+        log.err("{}", .{err});
         return error.FailedToRegisterClass;
     }
 
     ptr.* = .{
-        .gpa = gpa,
+        .gpa = ws.gpa,
         .instance = instance,
         .class = wc,
     };
@@ -180,3 +180,4 @@ const ViewportKey = WindowSystem.ViewportKey;
 const BufferID = ptypes.BufferID;
 const ptypes = @import("protocol").types;
 const win32_gdi = @import("win32").graphics.gdi;
+const log = std.log.scoped(.win32);

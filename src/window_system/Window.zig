@@ -49,8 +49,8 @@ pub fn destroy(win: *Window, gpa: std.mem.Allocator) void {
             nwin.deinit();
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const nwin = tag.window(win);
+            nwin.deinit();
         },
     }
 

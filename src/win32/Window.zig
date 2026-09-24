@@ -54,13 +54,17 @@ pub fn init(
     };
 }
 
+pub fn deinit(win: *Window) void {
+    _ = win32_win.DestroyWindow(win.handle);
+}
+
 const std = @import("std");
 const ClientID = @import("../server/Clients.zig").ClientID;
 const Viewport = @import("../window_system/Viewport.zig");
 const WindowSystem = @import("../WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
-const log = std.log.scoped(.Win32);
+const log = std.log.scoped(.win32);
 const ptypes = @import("protocol").types;
 const Win32 = @import("Win32.zig");
 const win32_foundation = @import("win32").foundation;

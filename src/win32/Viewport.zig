@@ -47,11 +47,14 @@ pub fn init(
     // TODO: Check return value
     _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
 
-
     return .{
         .base = base,
         .child_window_handle = handle,
     };
+}
+
+pub fn deinit(vp: *Viewport) void {
+    _ = win32_win.DestroyWindow(vp.child_window_handle);
 }
 
 const std = @import("std");
@@ -64,4 +67,4 @@ const Win32 = @import("Win32.zig");
 const ClientID = ptypes.ClientID;
 const win32_foundation = @import("win32").foundation;
 const win32_win = @import("win32").ui.windows_and_messaging;
-const log = std.log.scoped(.Win32);
+const log = std.log.scoped(.win32);

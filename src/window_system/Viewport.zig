@@ -76,16 +76,11 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
     switch (vp.native_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
-            if (nvp.sync_surface) |sync| {
-                sync.destroy();
-            }
-            nvp.viewport.destroy();
-            nvp.subsurface.subsurface.destroy();
-            nvp.surface.destroy();
+            nvp.deinit();
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const nvp = tag.viewport(vp);
+            nvp.deinit();
         },
     }
 

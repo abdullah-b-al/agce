@@ -2,6 +2,7 @@ const WindowSystem = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
+class: [:0]const u8,
 
 resources: std.array_hash_map.Auto(ClientID, ClientResources),
 windows: std.array_hash_map.Auto(WindowID, *Window),
@@ -19,15 +20,17 @@ linux: if (os == .linux) Linux else void,
 pub fn create(
     io: Io,
     gpa: std.mem.Allocator,
+    class: []const u8,
 ) !*WindowSystem {
     return blk: switch (os) {
-        .linux => try .create_wayland(io, gpa),
+        .linux => try .create_wayland(io, gpa, class),
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
             break :blk try .create_win32(
                 io,
                 gpa,
                 hinstance,
+                class,
             );
         },
         else => @compileError("Unsupported OS"),
@@ -37,10 +40,12 @@ pub fn create(
 pub fn create_wayland(
     io: Io,
     gpa: std.mem.Allocator,
+    class: []const u8,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
+        class,
     );
 
     const wl: *Wayland = try .create(io, gpa);
@@ -55,13 +60,15 @@ pub fn create_win32(
     io: Io,
     gpa: std.mem.Allocator,
     instance: Win32.HINSTANCE,
+    class: []const u8,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
+        class,
     );
 
-    ws.win32 = try .create(gpa, instance);
+    ws.win32 = try .create(ws, instance);
 
     return ws;
 }
@@ -69,7 +76,11 @@ pub fn create_win32(
 fn create_undefined_native(
     io: Io,
     gpa: std.mem.Allocator,
+    class: []const u8,
 ) !*WindowSystem {
+    const class_dupe = try gpa.dupeZ(u8, class);
+    errdefer gpa.free(class_dupe);
+
     const ws = try gpa.create(WindowSystem);
     errdefer gpa.destroy(ws);
 
@@ -91,6 +102,7 @@ fn create_undefined_native(
     ws.* = .{
         .io = io,
         .gpa = gpa,
+        .class = class_dupe,
         .resources = .empty,
         .windows = .empty,
         .gbm = gbm,
@@ -135,6 +147,7 @@ pub fn destroy(ws: *WindowSystem) void {
         entry.deinit(ws.gpa);
     }
 
+    ws.gpa.free(ws.class);
     ws.gpa.destroy(ws);
 }
 
@@ -791,10 +804,7 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
                 _ = wl.display.flush();
             }
         },
-        .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
-        },
+        .win32 => {},
     }
 }
 
