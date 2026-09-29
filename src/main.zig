@@ -90,6 +90,8 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
     ws.server_events.clearRetainingCapacity();
 
     if (poll_result.accept) {
+        // FIXME: In windows, we must accept all connections as resetting the accept event
+        // will result in ignoring new clients
         if (server.server.accept(.{})) |stream| {
             try server.handle_event(.{ .unknown_client_connected = stream });
         } else |err| {
@@ -153,37 +155,19 @@ fn poll_windows(
 
     const server_socket_i = i;
     {
-        const event = win_sock.WSACreateEvent().?;
-        std.debug.assert(win_sock.WSAEventSelect(
-            @ptrCast(server.server.socket.handle),
-            event,
-            win_sock.FD_ACCEPT,
-        ) == 0);
-        events[i] = event;
+        events[i] = server.win32_event_handle.handle;
         i += 1;
     }
 
     const known_i = i;
     for (server.clients.known.values()) |c| {
-        const event = win_sock.WSACreateEvent().?;
-        std.debug.assert(win_sock.WSAEventSelect(
-            @ptrCast(c.connection.stream.socket.handle),
-            event,
-            win_sock.FD_READ | win_sock.FD_CLOSE,
-        ) == 0);
-        events[i] = event;
+        events[i] = c.connection.win32_event_handle.handle;
         i += 1;
     }
 
     const unknown_i = i;
     for (server.clients.unknown.items) |c| {
-        const event = win_sock.WSACreateEvent().?;
-        std.debug.assert(win_sock.WSAEventSelect(
-            @ptrCast(c.connection.stream.socket.handle),
-            event,
-            win_sock.FD_READ | win_sock.FD_CLOSE,
-        ) == 0);
-        events[i] = event;
+        events[i] = c.connection.win32_event_handle.handle;
         i += 1;
     }
 
@@ -223,6 +207,9 @@ fn poll_windows(
                 const event = events[known_i + ci];
                 if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
                     clients.appendAssumeCapacity(.{ .known = client.id });
+                    std.debug.assert(
+                        win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
+                    );
                 }
             }
 
@@ -230,12 +217,21 @@ fn poll_windows(
                 const event = events[unknown_i + ci];
                 if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
                     clients.appendAssumeCapacity(.{ .unknown = ci });
+                    std.debug.assert(
+                        win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
+                    );
                 }
             }
 
             const accept = blk: {
                 const event = events[server_socket_i];
-                break :blk @intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0;
+                const accept = @intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0;
+                if (accept) {
+                    std.debug.assert(
+                        win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
+                    );
+                }
+                break :blk accept;
             };
 
             return .{

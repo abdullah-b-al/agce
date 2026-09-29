@@ -5,6 +5,15 @@ stream: zio.net.Stream,
 closed: bool,
 pid: ?ptypes.PID,
 
+win32_event_handle: Win32EventHandle,
+
+pub fn close(c: *ClientConnection) void {
+    std.debug.assert(!c.closed);
+    c.win32_event_handle.close();
+    c.stream.close();
+    c.closed = true;
+}
+
 pub const ReceiveError =
     error{ConnectionClosed} ||
     zio.ev.NetRecv.Error ||
@@ -263,3 +272,5 @@ const os = @import("builtin").os.tag;
 const utils = @import("utils");
 const zio = @import("zio");
 const win32 = @import("win32");
+const win_sock = @import("win32").networking.win_sock;
+const Win32EventHandle = @import("Win32EventHandle.zig");

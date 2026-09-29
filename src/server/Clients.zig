@@ -14,13 +14,13 @@ pub const init: Clients = .{
     .unknown = .empty,
 };
 
-pub fn deinit(clients: *Clients, io: Io, gpa: std.mem.Allocator) void {
+pub fn deinit(clients: *Clients, _: Io, gpa: std.mem.Allocator) void {
     inline for (.{
         clients.known.values(),
         clients.unknown.items,
     }) |slice| {
         for (slice) |client| {
-            client.close(io);
+            client.connection.close();
         }
     }
 
@@ -55,14 +55,17 @@ pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
     }
 }
 
-pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.Stream) void {
+pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
     const client = clients.unknown_pool.create(gpa) catch @panic("Must reserve objects first");
+
     client.* = .{
         .connection = .{
             .format = .json,
             .stream = stream,
             .closed = false,
             .pid = null,
+
+            .win32_event_handle = try .create(stream.socket, .client),
         },
         .promoted_to_known = false,
     };
@@ -88,6 +91,7 @@ pub fn promote_client_to_known(
             .stream = unknown.connection.stream,
             .closed = false,
             .pid = pid,
+            .win32_event_handle = unknown.connection.win32_event_handle,
         },
     };
 
@@ -125,23 +129,11 @@ pub const Client = struct {
     id: ptypes.ClientID,
     pid: ?ptypes.PID,
     connection: ClientConnection,
-
-    pub fn close(client: *Client, _: Io) void {
-        std.debug.assert(!client.connection.closed);
-        client.connection.stream.close();
-        client.connection.closed = true;
-    }
 };
 
 pub const UnknownClient = struct {
     connection: ClientConnection,
     promoted_to_known: bool,
-
-    pub fn close(unknown: *UnknownClient, _: Io) void {
-        std.debug.assert(!unknown.connection.closed);
-        unknown.connection.stream.close();
-        unknown.connection.closed = true;
-    }
 };
 
 const std = @import("std");

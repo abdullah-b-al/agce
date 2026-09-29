@@ -9,6 +9,8 @@ server: zio.net.Server,
 clients: Clients,
 generated_full_ids: std.array_hash_map.Auto(ptypes.ClientFullID, void),
 
+win32_event_handle: Win32EventHandle,
+
 pub fn create(
     io: Io,
     environ_map: *const std.process.Environ.Map,
@@ -31,6 +33,8 @@ pub fn create(
     };
     log.info("Created server on {s}", .{unix_path});
 
+    const win32_event_handle = try Win32EventHandle.create(net_server.socket, .accept);
+
     server.* = .{
         .io = io,
         .gpa = gpa,
@@ -40,6 +44,8 @@ pub fn create(
         .unix_path = unix_path,
         .server = net_server,
         .clients = .init,
+
+        .win32_event_handle = win32_event_handle,
     };
     return server;
 }
@@ -48,6 +54,7 @@ pub fn destroy(server: *Server) void {
     server.clients.deinit(server.io, server.gpa);
     server.generated_full_ids.deinit(server.gpa);
 
+    server.win32_event_handle.close();
     server.server.shutdown(.both) catch {};
     const err =
         if (std.fs.path.isAbsolute(server.unix_path))
@@ -176,13 +183,14 @@ pub fn handle_event(
     FailedToSendFds,
     FailedToSendHandle,
     ConnectionClosed,
+    FailedToCreateWin32EventHandle,
 }!void {
     switch (event) {
         .unknown_client_connected => |stream| {
             errdefer stream.close();
 
             try server.clients.prepare_for_new_client(server.gpa);
-            server.clients.new_unknown(server.gpa, stream);
+            try server.clients.new_unknown(server.gpa, stream);
 
             log.info("Unknown client connected", .{});
         },
@@ -485,7 +493,7 @@ pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []co
 
 fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
     const client = server.clients.known.get(id) orelse return;
-    client.close(server.io);
+    client.connection.close();
     log.err("Closing client {} with {}", .{ id, err });
 
     for (server.clients.known.values()) |c| {
@@ -497,7 +505,7 @@ fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
 
 fn close_unknown_client_with(server: *Server, index: usize, err: anyerror) void {
     const client = server.clients.unknown.items[index];
-    client.close(server.io);
+    client.connection.close();
     log.err("Closing client unknown with {}", .{err});
 
     switch (err) {
@@ -575,3 +583,5 @@ const UnknownClient = Clients.UnknownClient;
 const os = @import("builtin").os.tag;
 const ClientConnection = @import("ClientConnection.zig");
 const zio = @import("zio");
+const win_sock = @import("win32").networking.win_sock;
+const Win32EventHandle = @import("Win32EventHandle.zig");
