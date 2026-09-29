@@ -338,12 +338,17 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             }
         },
 
-        inline .frame_render,
-        .buffer_released,
-        => |e, tag| {
+        .buffer_released => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
-            const msg = @unionInit(Message, @tagName(tag), e);
-            vp.message_push(msg);
+            switch (vp.renderer) {
+                .gl => {}, // relies on timelines
+                .cpu => |*r| r.buffer_released(e.buffer_id),
+            }
+        },
+
+        .frame_render => |e| {
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.refresh_cycle = e.refresh_cycle;
         },
     }
 }
@@ -569,8 +574,6 @@ pub const Message = union(enum) {
     pub const Tag = std.meta.Tag(Message);
 
     viewport_resize: server_to_client.ViewportResize,
-    buffer_released: server_to_client.BufferReleased,
-    frame_render: server_to_client.FrameRender,
 };
 
 pub fn WithViewportID(comptime T: type) type {

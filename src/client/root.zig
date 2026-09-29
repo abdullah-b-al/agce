@@ -316,8 +316,7 @@ pub const ViewportHandle = opaque {
         while (buffer == null) {
             buffer = cpu.get_buffer() orelse {
                 std.debug.assert(cpu.buffers.count() > 0);
-                try client.wait_for(vp.id, .buffer_released);
-                try client.update_by_tag(vp.id, .buffer_released);
+                try client.poll(.none); // poll for buffer_released
                 continue;
             };
         }

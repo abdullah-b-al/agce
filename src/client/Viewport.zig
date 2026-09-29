@@ -88,16 +88,6 @@ pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: 
         .viewport_resize => {
             try vp.buffer_resize(msg.size);
         },
-
-        .buffer_released => {
-            switch (vp.renderer) {
-                .gl => {}, // relies on timelines
-                .cpu => |*r| r.buffer_released(msg.buffer_id),
-            }
-        },
-        .frame_render => {
-            vp.refresh_cycle = msg.refresh_cycle;
-        },
     }
 }
 
