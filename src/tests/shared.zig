@@ -59,13 +59,9 @@ pub const TestServer = struct {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
 
-        const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } };
         while (!exit.isSet()) {
             _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 });
-            tick(arena.allocator(), ws, server, timeout) catch |err| switch (err) {
-                error.Timeout => {},
-                else => |e| return e,
-            };
+            try tick(arena.allocator(), ws, server, .none);
         }
     }
 };
@@ -78,7 +74,6 @@ pub fn client_init(src: std.builtin.SourceLocation) !*client.ClientHandle {
     try testing.io.sleep(.fromMilliseconds(100), .awake);
     return try client.init(testing.io, testing.allocator, &environ_map);
 }
-
 
 pub fn render_cpu(vp: *client.ViewportHandle) !void {
     const frame = try vp.cpu_frame_begin();
