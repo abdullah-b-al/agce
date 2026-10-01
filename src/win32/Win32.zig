@@ -55,12 +55,12 @@ fn window_proc(
     }
 
     const ws: *WindowSystem = @ptrFromInt(long);
-    const win = blk: {
+    const win, const vp, const vp_key = blk: {
         for (ws.windows.values()) |win| {
-            if (win.win32.handle == hwnd) break :blk win;
+            const vp = ws.viewport_from_key(win.viewport_key) orelse continue;
+            if (vp.win32.child_window_handle == hwnd) break :blk .{ win, vp, win.viewport_key };
         }
 
-        log.debug("Maybe the handle refers to a child window, a viewport.\n", .{});
         // Window has been removed. Pass through msg
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     };
@@ -69,9 +69,9 @@ fn window_proc(
         win32_win.WM_CLOSE => {
             ws.server_events.appendAssumeCapacity(.{
                 .viewport_close = .{
-                    .client_id = win.input_focus_keyboard.client_id,
+                    .client_id = vp_key.client_id,
                     .payload = .{
-                        .viewport_id = win.input_focus_keyboard.viewport_id,
+                        .viewport_id = vp_key.viewport_id,
                     },
                 },
             });
@@ -96,6 +96,76 @@ fn window_proc(
             log.debug("New width and height {}x{}\n", .{ w, h });
             return 0;
         },
+
+        inline win32_win.WM_MOUSEMOVE,
+        win32_win.WM_LBUTTONDOWN,
+        win32_win.WM_LBUTTONUP,
+        win32_win.WM_RBUTTONDOWN,
+        win32_win.WM_RBUTTONUP,
+        => |tag| {
+            ws.deferred_events.appendAssumeCapacity(.{
+                .mouse_enter = .{
+                    .client_id = vp_key.client_id,
+                    .viewport_id = vp_key.viewport_id,
+                    .window_id = win.id,
+                },
+            });
+
+            if (!vp.win32.mouse_tracking) {
+                vp.win32.mouse_tracking = true;
+                var arg: kbm.TRACKMOUSEEVENT = .{
+                    .cbSize = @sizeOf(kbm.TRACKMOUSEEVENT),
+                    .dwFlags = .{ .LEAVE = 1 },
+                    .hwndTrack = hwnd,
+                    .dwHoverTime = 0,
+                };
+                const result = kbm.TrackMouseEvent(&arg);
+                if (result == 0) {
+                    log.err("TrackMouseEvent failed", .{});
+                }
+            }
+
+            const event: WindowSystem.Event = blk: switch (tag) {
+                win32_win.WM_MOUSEMOVE => {
+                    const x: i32 = @truncate(lparam & 0xFFFF);
+                    const y: i32 = @truncate((lparam >> 16) & 0xFFFF);
+
+                    break :blk .{
+                        .mouse_motion = .{ .x = @floatFromInt(x), .y = @floatFromInt(y) },
+                    };
+                },
+                win32_win.WM_LBUTTONDOWN => .{
+                    .mouse_button = .{ .button = .left, .state = .pressed },
+                },
+                win32_win.WM_LBUTTONUP => .{
+                    .mouse_button = .{ .button = .left, .state = .released },
+                },
+                win32_win.WM_RBUTTONDOWN => .{
+                    .mouse_button = .{ .button = .right, .state = .pressed },
+                },
+                win32_win.WM_RBUTTONUP => .{
+                    .mouse_button = .{ .button = .right, .state = .released },
+                },
+                else => comptime unreachable,
+            };
+
+            ws.deferred_events.appendAssumeCapacity(event);
+
+            return 0;
+        },
+
+        win32_controls.WM_MOUSELEAVE => {
+            vp.win32.mouse_tracking = false;
+            ws.deferred_events.appendAssumeCapacity(.{
+                .mouse_leave = .{
+                    .client_id = vp_key.client_id,
+                    .viewport_id = vp_key.viewport_id,
+                    .window_id = win.id,
+                },
+            });
+            return 0;
+        },
+
         else => {},
     }
 
@@ -186,6 +256,7 @@ const win32_win = @import("win32").ui.windows_and_messaging;
 const win32_foundation = @import("win32").foundation;
 const win32_memory = @import("win32").system.memory;
 const kbm = @import("win32").ui.input.keyboard_and_mouse;
+const win32_controls = @import("win32").ui.controls;
 const WindowSystem = @import("../WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;
 const BufferID = ptypes.BufferID;

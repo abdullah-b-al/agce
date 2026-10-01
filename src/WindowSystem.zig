@@ -17,6 +17,9 @@ gbm: Gbm,
 win32: if (os == .windows) *Win32 else void,
 linux: if (os == .linux) Linux else void,
 
+input_focus_mouse: ?WindowID,
+input_focus_keyboard: ?WindowID,
+
 pub fn create(
     io: Io,
     gpa: std.mem.Allocator,
@@ -113,6 +116,8 @@ fn create_undefined_native(
         .deferred_events = .empty,
         .win32 = undefined,
         .linux = undefined,
+        .input_focus_mouse = null,
+        .input_focus_keyboard = null,
     };
 
     return ws;
@@ -246,88 +251,88 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
             }
         },
         .keyboard_enter => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.keyboard_enter(args);
-                },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
-            }
+            ws.input_focus_keyboard = args.window_id;
         },
-        .keyboard_leave => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.keyboard_leave(args);
-                },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
-            }
+        .keyboard_leave => {
+            ws.input_focus_keyboard = null;
         },
         .mouse_enter => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.mouse_enter(ws, args);
+            if (ws.input_focus_mouse == args.window_id) return;
+            const window = ws.windows.get(args.window_id) orelse return;
+            ws.input_focus_mouse = args.window_id;
+
+            window.input_focus_mouse = .{
+                .client_id = args.client_id,
+                .viewport_id = args.viewport_id,
+            };
+
+            ws.server_events.appendAssumeCapacity(.{
+                .mouse_enter = .{
+                    .client_id = args.client_id,
+                    .payload = .{
+                        .viewport_id = args.viewport_id,
+                    },
                 },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
-            }
+            });
         },
         .mouse_leave => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.mouse_leave(ws, args);
+            ws.input_focus_mouse = null;
+            ws.server_events.appendAssumeCapacity(.{
+                .mouse_leave = .{
+                    .client_id = args.client_id,
+                    .payload = .{
+                        .viewport_id = args.viewport_id,
+                    },
                 },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
-            }
+            });
         },
         .mouse_motion => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.mouse_motion(ws, args);
+            const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
+            const key = window.input_focus_mouse;
+
+            ws.server_events.appendAssumeCapacity(.{
+                .mouse_motion = .{
+                    .client_id = key.client_id,
+                    .payload = .{
+                        .viewport_id = key.viewport_id,
+                        .x = args.x,
+                        .y = args.y,
+                    },
                 },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
-            }
+            });
         },
         .mouse_button => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.mouse_button(ws, args);
-                },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
+            const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
+            const key = window.input_focus_mouse;
+            if (args.state == .pressed) {
+                window.input_focus_keyboard = window.input_focus_mouse;
             }
+
+            ws.server_events.appendAssumeCapacity(.{
+                .mouse_button = .{
+                    .client_id = key.client_id,
+                    .payload = .{
+                        .viewport_id = key.viewport_id,
+                        .button = args.button,
+                        .state = args.state,
+                    },
+                },
+            });
         },
         .mouse_scroll => |args| {
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    try wl.mouse_scroll(ws, args);
+            const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
+            const key = window.input_focus_mouse;
+
+            ws.server_events.appendAssumeCapacity(.{
+                .mouse_scroll = .{
+                    .client_id = key.client_id,
+                    .payload = .{
+                        .viewport_id = key.viewport_id,
+                        .axis = args.axis,
+                        .value = args.value,
+                    },
                 },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
-            }
+            });
         },
     }
 }
@@ -743,14 +748,14 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
     return .{ .client_id = rs.client_id, .viewport_id = args.payload.viewport_id };
 }
 
-fn viewport_from_key(ws: *WindowSystem, key: ViewportKey) ?*Viewport {
+pub fn viewport_from_key(ws: *WindowSystem, key: ViewportKey) ?*Viewport {
     const rs = ws.resources.getPtr(key.client_id) orelse return null;
     const vp = rs.viewports.get(key.viewport_id) orelse return null;
 
     return vp;
 }
 
-fn window_from_viewport_key(ws: *WindowSystem, key: ViewportKey) ?*Window {
+pub fn window_from_viewport_key(ws: *WindowSystem, key: ViewportKey) ?*Window {
     var root = key;
 
     while (true) {

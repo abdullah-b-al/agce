@@ -2,6 +2,7 @@ const Viewport = @This();
 
 base: *const WindowSystem.Viewport,
 child_window_handle: win32_foundation.HWND,
+mouse_tracking: bool = false,
 
 pub fn init(
     ws: *WindowSystem,

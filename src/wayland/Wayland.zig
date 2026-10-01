@@ -25,8 +25,6 @@ xkb_context: *c_linux.struct_xkb_context,
 xkb_keymap: ?*c_linux.struct_xkb_keymap,
 xkb_state: ?*c_linux.struct_xkb_state,
 
-input_focus_mouse: ?WindowID,
-input_focus_keyboard: ?WindowID,
 input_delay_ms: ?i32,
 input_rate_ms: ?i32,
 input_repeat_future: ?InputRepeatFuture,
@@ -89,8 +87,6 @@ pub fn create(io: Io, gpa: std.mem.Allocator) !*Wayland {
         .xkb_keymap = null,
         .xkb_state = null,
 
-        .input_focus_mouse = null,
-        .input_focus_keyboard = null,
         .input_delay_ms = null,
         .input_rate_ms = null,
         .input_repeat_future = null,
@@ -233,7 +229,7 @@ pub fn keyboard_key(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.keyboar
 
     wl.input_repeat_future = null;
 
-    const window_id = wl.input_focus_keyboard orelse return;
+    const window_id = ws.input_focus_keyboard orelse return;
     const win = ws.windows.get(window_id) orelse return;
     const key = win.input_focus_keyboard;
 
@@ -300,93 +296,6 @@ pub fn keyboard_repeat_info(wl: *Wayland, rate: i32, delay: i32) void {
     log.debug("Repeat info: delay {}ms rate {}ms", .{
         wl.input_rate_ms.?,
         wl.input_delay_ms.?,
-    });
-}
-
-pub fn keyboard_enter(wl: *Wayland, args: Event.TypeOf(.keyboard_enter)) !void {
-    wl.input_focus_keyboard = args.window_id;
-}
-
-pub fn keyboard_leave(wl: *Wayland, _: Event.KeyboardLeave) !void {
-    wl.input_focus_keyboard = null;
-}
-
-pub fn mouse_enter(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_enter)) !void {
-    const window = ws.windows.get(args.window_id) orelse return;
-    wl.input_focus_mouse = args.window_id;
-    window.input_focus_mouse = .{
-        .client_id = args.client_id,
-        .viewport_id = args.viewport_id,
-    };
-
-    ws.server_events.appendAssumeCapacity(.{
-        .mouse_enter = .{
-            .client_id = args.client_id,
-            .payload = .{
-                .viewport_id = args.viewport_id,
-            },
-        },
-    });
-}
-
-pub fn mouse_leave(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_leave)) !void {
-    wl.input_focus_mouse = null;
-
-    ws.server_events.appendAssumeCapacity(.{
-        .mouse_leave = .{
-            .client_id = args.client_id,
-            .payload = .{
-                .viewport_id = args.viewport_id,
-            },
-        },
-    });
-}
-pub fn mouse_motion(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void {
-    const window = ws.windows.get(wl.input_focus_mouse orelse return) orelse return;
-    const key = window.input_focus_mouse;
-
-    ws.server_events.appendAssumeCapacity(.{
-        .mouse_motion = .{
-            .client_id = key.client_id,
-            .payload = .{
-                .viewport_id = key.viewport_id,
-                .x = args.x,
-                .y = args.y,
-            },
-        },
-    });
-}
-pub fn mouse_button(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_button)) !void {
-    const window = ws.windows.get(wl.input_focus_mouse orelse return) orelse return;
-    const key = window.input_focus_mouse;
-    if (args.state == .pressed) {
-        window.input_focus_keyboard = window.input_focus_mouse;
-    }
-
-    ws.server_events.appendAssumeCapacity(.{
-        .mouse_button = .{
-            .client_id = key.client_id,
-            .payload = .{
-                .viewport_id = key.viewport_id,
-                .button = args.button,
-                .state = args.state,
-            },
-        },
-    });
-}
-pub fn mouse_scroll(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.mouse_scroll)) !void {
-    const window = ws.windows.get(wl.input_focus_mouse orelse return) orelse return;
-    const key = window.input_focus_mouse;
-
-    ws.server_events.appendAssumeCapacity(.{
-        .mouse_scroll = .{
-            .client_id = key.client_id,
-            .payload = .{
-                .viewport_id = key.viewport_id,
-                .axis = args.axis,
-                .value = args.value,
-            },
-        },
     });
 }
 
@@ -679,13 +588,6 @@ pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?Vie
     const key, _ = wl.viewport_from_surface(surface) orelse return null;
 
     return key;
-}
-
-pub fn viewport_from_key(wl: *Wayland, key: ViewportKey) ?*Viewport {
-    const rs = wl.resources_get(key.client_id) catch return null;
-    const vp = rs.viewports.get(key.viewport_id) orelse return null;
-
-    return vp;
 }
 
 pub fn viewport_from_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?struct { ViewportKey, *const Viewport } {
