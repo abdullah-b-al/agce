@@ -4,6 +4,9 @@ io: Io,
 gpa: std.mem.Allocator,
 class: [:0]const u8,
 
+/// Used in windows to prevent accesing freed data in callbacks
+destroy_started: bool,
+
 resources: std.array_hash_map.Auto(ClientID, ClientResources),
 windows: std.array_hash_map.Auto(WindowID, *Window),
 
@@ -111,6 +114,7 @@ fn create_undefined_native(
         .gbm = gbm,
 
         .window_next_id = .first,
+        .destroy_started = false,
 
         .server_events = .empty,
         .deferred_events = .empty,
@@ -124,6 +128,8 @@ fn create_undefined_native(
 }
 
 pub fn destroy(ws: *WindowSystem) void {
+    ws.destroy_started = true;
+
     for (ws.resources.values()) |*rs| {
         rs.deinit(ws);
     }

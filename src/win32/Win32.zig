@@ -55,6 +55,11 @@ fn window_proc(
     }
 
     const ws: *WindowSystem = @ptrFromInt(long);
+
+    if (ws.destroy_started) {
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+
     const win, const vp, const vp_key = blk: {
         for (ws.windows.values()) |win| {
             const vp = ws.viewport_from_key(win.viewport_key) orelse continue;
