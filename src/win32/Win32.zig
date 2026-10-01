@@ -114,11 +114,22 @@ pub fn render_buffer_cpu(
     var bitmap_info: win32_gdi.BITMAPINFO = undefined;
 
     bitmap_info.bmiHeader.biSize = @sizeOf(win32_gdi.BITMAPINFOHEADER);
-    bitmap_info.bmiHeader.biWidth = vp.render_size.width;
-    bitmap_info.bmiHeader.biHeight = -vp.render_size.height;
+    bitmap_info.bmiHeader.biWidth = cpu.size.width;
+    bitmap_info.bmiHeader.biHeight = -cpu.size.height;
     bitmap_info.bmiHeader.biPlanes = 1;
-    bitmap_info.bmiHeader.biBitCount = 32;
-    bitmap_info.bmiHeader.biCompression = win32_gdi.BI_RGB;
+
+    switch (cpu.format) {
+        .argb8888 => {
+            bitmap_info.bmiHeader.biBitCount = 32;
+            bitmap_info.bmiHeader.biCompression = win32_gdi.BI_BITFIELDS;
+            const masks_ptr: [*]win32_gdi.RGBQUAD = @ptrCast(&bitmap_info.bmiColors);
+            const masks = masks_ptr[0..3];
+            // for StretchDIBits the alpha value is unused and argb is reversed
+            masks[0] = .{ .rgbBlue = 0xFF, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0 }; // b
+            masks[1] = .{ .rgbBlue = 0, .rgbGreen = 0xFF, .rgbRed = 0, .rgbReserved = 0 }; // g
+            masks[2] = .{ .rgbBlue = 0, .rgbGreen = 0, .rgbRed = 0xFF, .rgbReserved = 0 }; // r
+        },
+    }
 
     const hdc = win32_gdi.GetDC(nvp.child_window_handle);
     // zig fmt: off
