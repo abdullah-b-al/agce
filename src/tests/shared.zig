@@ -1,4 +1,4 @@
-fn environ_map_create(src: std.builtin.SourceLocation) !std.process.Environ.Map {
+pub fn environ_map_create(src: std.builtin.SourceLocation) !std.process.Environ.Map {
     var environ_map = try testing.environ.createMap(testing.allocator);
 
     var buf: [constants.socket_max_path]u8 = undefined;
@@ -61,7 +61,15 @@ pub const TestServer = struct {
 
         while (!exit.isSet()) {
             _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 });
-            try tick(arena.allocator(), ws, server, .none);
+            tick(
+                arena.allocator(),
+                ws,
+                server,
+                .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
+            ) catch |err| switch (err) {
+                error.Timeout => {},
+                else => |e| return e,
+            };
         }
     }
 };
@@ -75,19 +83,18 @@ pub fn client_init(src: std.builtin.SourceLocation) !*client.ClientHandle {
     return try client.init(testing.io, testing.allocator, &environ_map);
 }
 
-pub fn render_cpu(vp: *client.ViewportHandle) !void {
+pub fn render_cpu(vp: *client.ViewportHandle, color: u32) !void {
     const frame = try vp.cpu_frame_begin();
 
-    const r: u8 = 0xFF;
-    const g: u8 = 0xFF;
-    const b: u8 = 0xFF;
-    const a: u8 = 0xFF;
-    var i: usize = 0;
-    while (i < frame.buffer.len) : (i += 4) {
-        frame.buffer[i + 0] = @intCast(b); // B
-        frame.buffer[i + 1] = @intCast(g); // G
-        frame.buffer[i + 2] = @intCast(r); // R
-        frame.buffer[i + 3] = @intCast(a); // A
+    const ptr: [*]u32 = @ptrCast(@alignCast(frame.buffer.ptr));
+    const buffer: []u32 = ptr[0 .. frame.buffer.len / frame.bytes_per_pixel];
+
+    const a: u32 = 0xFF_00_00_00;
+    const r: u32 = color & 0xFF_00_00;
+    const g: u32 = color & 0x00_FF_00;
+    const b: u32 = color & 0x00_00_FF;
+    for (buffer) |*p| {
+        p.* = a | r | g | b;
     }
 
     vp.cpu_frame_end();

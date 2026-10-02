@@ -494,7 +494,12 @@ pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []co
 fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
     const client = server.clients.known.get(id) orelse return;
     client.connection.close();
-    log.err("Closing client {} with {}", .{ id, err });
+
+    if (err == error.ConnectionClosed) {
+        log.info("Closing client {} with {}", .{ id, err });
+    } else {
+        log.err("Closing client {} with {}", .{ id, err });
+    }
 
     for (server.clients.known.values()) |c| {
         if (c.id == id or c.connection.closed) continue;

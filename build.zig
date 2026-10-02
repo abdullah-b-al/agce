@@ -245,6 +245,55 @@ fn build_tests(
         const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
         step_check.dependOn(&t_check.step);
     }
+
+    {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/tests/embeding.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "client", .module = client },
+                .{ .name = "glad", .module = glad.c },
+                .{ .name = "main", .module = main },
+                .{ .name = "constants", .module = constants },
+            },
+        });
+
+        module.linkLibrary(glad.lib);
+
+        const t = b.addTest(.{
+            .name = "embeding",
+            .root_module = module,
+        });
+        const artifact = b.addInstallArtifact(t, .{});
+        test_step.dependOn(&artifact.step);
+        step_all.dependOn(&artifact.step);
+
+        const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
+        step_check.dependOn(&t_check.step);
+    }
+
+    {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/tests/sub_viewport_process.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "client", .module = client },
+            },
+        });
+
+        const t = b.addExecutable(.{
+            .name = "sub_viewport_process",
+            .root_module = module,
+        });
+        const artifact = b.addInstallArtifact(t, .{});
+        test_step.dependOn(&artifact.step);
+        step_all.dependOn(&artifact.step);
+
+        const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
+        step_check.dependOn(&t_check.step);
+    }
 }
 
 const Glad = struct {

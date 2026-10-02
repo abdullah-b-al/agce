@@ -19,7 +19,7 @@ test "Render few frames - cpu" {
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
 
     for (0..60) |_| {
-        try shared.render_cpu(vp);
+        try shared.render_cpu(vp, 0xFFFFFFFF);
         try testing.io.sleep(.fromMilliseconds(16), .awake);
     }
 

@@ -854,8 +854,18 @@ pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_
             _ = wl.display.flush();
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const nvp = tag.viewport(vp);
+            if (set_position) {
+                _ = win32_win.SetWindowPos(
+                    nvp.child_window_handle,
+                    null,
+                    vp.clipping_rect.x,
+                    vp.clipping_rect.y,
+                    0,
+                    0,
+                    .{ .NOZORDER = 1, .NOSIZE = 1, .NOACTIVATE = 1 },
+                );
+            }
         },
     }
 }
@@ -896,8 +906,16 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
             _ = wl.display.flush();
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const nvp = tag.viewport(vp);
+            _ = win32_win.SetWindowPos(
+                nvp.child_window_handle,
+                null,
+                0,
+                0,
+                vp.clipping_rect.width,
+                vp.clipping_rect.height,
+                .{ .NOZORDER = 1, .NOMOVE = 1, .NOACTIVATE = 1 },
+            );
         },
     }
 
