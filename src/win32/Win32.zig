@@ -196,13 +196,7 @@ pub fn render_buffer_cpu(
     switch (cpu.format) {
         .argb8888 => {
             bitmap_info.bmiHeader.biBitCount = 32;
-            bitmap_info.bmiHeader.biCompression = win32_gdi.BI_BITFIELDS;
-            const masks_ptr: [*]win32_gdi.RGBQUAD = @ptrCast(&bitmap_info.bmiColors);
-            const masks = masks_ptr[0..3];
-            // for StretchDIBits the alpha value is unused and argb is reversed
-            masks[0] = .{ .rgbBlue = 0xFF, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0 }; // b
-            masks[1] = .{ .rgbBlue = 0, .rgbGreen = 0xFF, .rgbRed = 0, .rgbReserved = 0 }; // g
-            masks[2] = .{ .rgbBlue = 0, .rgbGreen = 0, .rgbRed = 0xFF, .rgbReserved = 0 }; // r
+            bitmap_info.bmiHeader.biCompression = win32_gdi.BI_RGB;
         },
     }
 
