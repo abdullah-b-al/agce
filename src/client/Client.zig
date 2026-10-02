@@ -519,19 +519,31 @@ pub fn read_thread(
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
+    var reader_buffer: [4096]u8 = undefined;
+    var reader = stream.reader(io, &reader_buffer);
     while (true) {
         _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 }); // 1MB
 
         const message = switch (os) {
             .linux => ServerConnection.receive_linux(io, arena.allocator(), stream),
-            .windows => ServerConnection.receive_windows(io, arena.allocator(), stream),
+            .windows => blk: {
+                const message = ServerConnection.receive_with_reader(
+                    io,
+                    arena.allocator(),
+                    &reader.interface,
+                ) catch |err| break :blk switch (err) {
+                    error.ReadFailed => reader.err.?,
+                    else => |e| break :blk e,
+                };
+
+                break :blk message;
+            },
             else => comptime unreachable,
         } catch |err| switch (err) {
             error.OutOfMemory => continue,
 
             error.Unexpected,
             error.ConnectionResetByPeer,
-            error.ConnectionClosed,
             error.Canceled,
             => return,
 
