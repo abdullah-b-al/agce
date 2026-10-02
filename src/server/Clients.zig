@@ -64,6 +64,7 @@ pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.St
             .stream = stream,
             .closed = false,
             .pid = null,
+            .close_with_error = null,
 
             .win32_event_handle = try .create(stream.socket, .client),
         },
@@ -91,6 +92,7 @@ pub fn promote_client_to_known(
             .stream = unknown.connection.stream,
             .closed = false,
             .pid = pid,
+            .close_with_error = null,
             .win32_event_handle = unknown.connection.win32_event_handle,
         },
     };

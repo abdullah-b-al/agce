@@ -99,6 +99,7 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
         }
     }
 
+    server.close_marked_clients();
     server.clients.remove_closed_known_clients();
     server.clients.remove_promoted_or_closed_unknown_clients();
 

@@ -5,6 +5,8 @@ stream: zio.net.Stream,
 closed: bool,
 pid: ?ptypes.PID,
 
+close_with_error: ?CloseError,
+
 win32_event_handle: Win32EventHandle,
 
 pub fn close(c: *ClientConnection) void {
@@ -19,10 +21,20 @@ pub const ReceiveError =
     zio.ev.NetRecv.Error ||
     utils.ErrorSetOf(receive_with_reader);
 
-pub fn receive_with_reader(_: *ClientConnection, _: Io, arena: std.mem.Allocator, reader: *Io.Reader) !?client_to_server.MessagePayload {
+pub fn receive_with_reader(
+    _: *ClientConnection,
+    _: Io,
+    arena: std.mem.Allocator,
+    reader: *Io.Reader,
+) error{ ReadFailed, OutOfMemory, EndOfStream, InvalidHeader, HeaderWithoutPayload, ParseFailed }!client_to_server.MessagePayload {
     const header_bytes = try reader.take(@sizeOf(client_to_server.MessageHeader));
 
-    const header = try client_to_server.parse_message_header(header_bytes);
+    const header = client_to_server.parse_message_header(header_bytes) catch |err| switch (err) {
+        error.HeaderInvalidLen, error.HeaderInvalidFormat, error.HeaderInvalidMessageTag => {
+            log.err("{}", .{err});
+            return error.InvalidHeader;
+        },
+    };
     const err_data = if (header.payload_len > reader.buffer.len)
         reader.readAlloc(arena, header.payload_len)
     else
@@ -38,9 +50,12 @@ pub fn receive_with_reader(_: *ClientConnection, _: Io, arena: std.mem.Allocator
             switch (header.format) {
                 .json => {
                     const T = utils.TypeOfField(client_to_server.MessagePayload, @tagName(tag));
-                    const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                    const parsed = std.json.parseFromSliceLeaky(T, arena, data, .{
                         .allocate = .alloc_if_needed,
-                    });
+                    }) catch |err| {
+                        log.err("{}", .{err});
+                        return error.ParseFailed;
+                    };
 
                     return @unionInit(client_to_server.MessagePayload, @tagName(tag), parsed);
                 },
@@ -261,6 +276,11 @@ fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, gpa: std.mem.Al
     }
 }
 
+pub const CloseError =
+    ReceiveError ||
+    Server.HandleMessageFromUnknownError ||
+    error{ FailedToSendHandle, FailedToSendFds, FailedToCreateWin32EventHandle };
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -274,3 +294,5 @@ const zio = @import("zio");
 const win32 = @import("win32");
 const win_sock = @import("win32").networking.win_sock;
 const Win32EventHandle = @import("Win32EventHandle.zig");
+const Server = @import("Server.zig");
+const log = std.log.scoped(.Server);

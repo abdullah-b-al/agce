@@ -80,80 +80,29 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
     };
 
     @"error" catch |err| switch (err) {
-        // irrelevant at this point
-        error.Canceled => {},
-
-        // These should never be reached
-        // TODO: Remove these errors from the error set
-        error.Timeout,
-        error.WouldBlock,
-        error.ReadFailed,
-        error.EndOfStream,
-        => unreachable,
-
-        error.HeaderWithoutPayload,
         error.MisbehavingUnknownClient,
         error.ClientSentInvalidClientFullID,
         error.OutOfMemoryDuringRegister,
-        => {
+        => |e| {
             switch (message.from) {
-                .unknown => |index| server.close_unknown_client_with(index, err),
+                .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
                 .known => @panic("Not possiable with a known client"),
             }
         },
 
-        error.ConnectionAborted,
-        error.ConnectionRefused,
-        error.NetworkUnreachable,
-        error.FileDescriptorNotASocket,
-        error.OperationNotSupported,
-        error.ConnectionTimedOut,
-        error.SocketNotConnected,
-        error.SocketShutdown,
-        error.AccessDenied,
-        error.Unexpected,
-        error.UnsupportedMessageOnOs,
-        error.HeaderInvalidLen,
-        error.HeaderInvalidFormat,
-        error.HeaderInvalidMessageTag,
         error.ConnectionClosed,
-        error.ConnectionResetByPeer,
-        error.SocketUnconnected,
-        error.CmsgNoHeader,
-        error.CmsgInvalidLevel,
-        error.CmsgInvalidType,
-        => {
+        => |e| {
             switch (message.from) {
                 .known => |id| {
-                    server.close_known_client_with(id, err);
+                    server.mark_for_closing_known_client_with(id, e);
                 },
                 .unknown => |index| {
-                    server.close_unknown_client_with(index, err);
+                    server.mark_for_closing_unknown_client_with(index, e);
                 },
             }
         },
 
-        error.Overflow,
-        error.InvalidCharacter,
-        error.RecvMsgFailed,
-        error.UnexpectedToken,
-        error.InvalidNumber,
-        error.InvalidEnumTag,
-        error.DuplicateField,
-        error.UnknownField,
-        error.MissingField,
-        error.LengthMismatch,
-        error.SyntaxError,
-        error.UnexpectedEndOfInput,
-        error.BufferUnderrun,
-        error.ValueTooLong,
-        error.SystemResources,
-        error.ProcessFdQuotaExceeded,
-        error.SystemFdQuotaExceeded,
-        error.MessageOversize,
-        error.NetworkDown,
-        error.PortUnreachable,
-        error.ConcurrencyUnavailable,
+        error.UnsupportedMessageOnOs,
         error.OutOfMemory,
         => |e| {
             log.err("{} when handling client message", .{e});
@@ -167,7 +116,19 @@ pub fn events_handle(server: *Server, events: []const Event) void {
             switch (e) {
                 .unknown_client_connected => {},
                 inline else => |v| {
-                    server.close_known_client_with(v.client_id, err);
+                    switch (err) {
+                        error.OutOfMemory => {
+                            log.err("events_handle {}", .{err});
+                        },
+
+                        error.FailedToCreateWin32EventHandle,
+                        error.FailedToSendFds,
+                        error.FailedToSendHandle,
+                        error.ConnectionClosed,
+                        => |mark| {
+                            server.mark_for_closing_known_client_with(v.client_id, mark);
+                        },
+                    }
                 },
             }
         };
@@ -178,7 +139,6 @@ pub fn handle_event(
     server: *Server,
     event: Event,
 ) error{
-    Canceled,
     OutOfMemory,
     FailedToSendFds,
     FailedToSendHandle,
@@ -248,67 +208,11 @@ pub fn handle_event(
     }
 }
 
-const HandleMessageError = error{
-    ConcurrencyUnavailable,
-    Canceled,
-    SystemResources,
-    ConnectionResetByPeer,
-    SocketUnconnected,
-    Unexpected,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    MessageOversize,
-    NetworkDown,
-    PortUnreachable,
-    OutOfMemory,
-    Overflow,
-    InvalidCharacter,
-    ConnectionClosed,
-    HeaderInvalidLen,
-    HeaderInvalidFormat,
-    HeaderInvalidMessageTag,
-    RecvMsgFailed,
-    UnexpectedToken,
-    InvalidNumber,
-    InvalidEnumTag,
-    DuplicateField,
-    UnknownField,
-    MissingField,
-    LengthMismatch,
-    SyntaxError,
-    UnexpectedEndOfInput,
-    BufferUnderrun,
-    ValueTooLong,
-    UnsupportedMessageOnOs,
-
-    HeaderWithoutPayload,
-    AccessDenied,
-
-    // linux only
-    CmsgNoHeader,
-    CmsgInvalidLevel,
-    CmsgInvalidType,
-
-    Timeout,
-    WouldBlock,
-    ConnectionAborted,
-    ConnectionRefused,
-    NetworkUnreachable,
-    FileDescriptorNotASocket,
-    OperationNotSupported,
-    ConnectionTimedOut,
-    SocketNotConnected,
-    SocketShutdown,
-
-    EndOfStream,
-    ReadFailed,
-};
-
-fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) HandleMessageError!void {
+fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) !void {
     std.debug.assert(message.from == .known);
 
     const client_id = message.from.known;
-    const msg = (message.payload catch |err| return err) orelse return;
+    const msg = message.payload;
 
     switch (msg) {
         .generate_client_full_id => {
@@ -330,19 +234,18 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
     }
 }
 
-const HandleMessageFromUnknownError =
-    error{
-        OutOfMemoryDuringRegister,
-        MisbehavingUnknownClient,
-        ClientSentInvalidClientFullID,
-        ConnectionClosed,
-    } || ClientConnection.ReceiveError;
+pub const HandleMessageFromUnknownError = error{
+    OutOfMemoryDuringRegister,
+    MisbehavingUnknownClient,
+    ClientSentInvalidClientFullID,
+    ConnectionClosed,
+};
 
 fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) HandleMessageFromUnknownError!void {
     std.debug.assert(message.from == .unknown);
 
     const index = message.from.unknown;
-    const msg = (message.payload catch |err| return err) orelse return;
+    const msg = message.payload;
 
     const register = switch (msg) {
         .register => |r| r,
@@ -459,21 +362,28 @@ pub fn messages_receive(server: *Server, arena: std.mem.Allocator, poll_result: 
                 switch (err) {
                     error.EndOfStream => {
                         if (added_from_this_client == 0) {
-                            list.appendAssumeCapacity(.{
-                                .from = source,
-                                .payload = error.ConnectionClosed,
-                            });
+                            connection.close_with_error = error.ConnectionClosed;
                         }
                         break;
                     },
                     error.ReadFailed => switch (reader.err.?) {
                         error.Timeout => break,
-                        else => |e| e,
+                        else => |e| {
+                            connection.close_with_error = e;
+                            break;
+                        },
                     },
-                    else => |e| e,
+                    error.OutOfMemory,
+                    error.ParseFailed,
+                    error.InvalidHeader,
+                    error.HeaderWithoutPayload,
+                    => |e| {
+                        log.err("{}", .{e});
+                        continue;
+                    },
                 };
 
-            list.appendAssumeCapacity(.{ .from = source, .payload = read });
+            try list.append(arena, .{ .from = source, .payload = read });
             added_from_this_client += 1;
         }
     }
@@ -491,34 +401,48 @@ pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []co
     return list.items;
 }
 
-fn close_known_client_with(server: *Server, id: ClientID, err: anyerror) void {
-    const client = server.clients.known.get(id) orelse return;
-    client.connection.close();
+pub fn close_marked_clients(server: *Server) void {
+    for (server.clients.known.values()) |client| {
+        if (client.connection.close_with_error) |err| {
+            client.connection.close();
 
-    if (err == error.ConnectionClosed) {
-        log.info("Closing client {} with {}", .{ id, err });
-    } else {
-        log.err("Closing client {} with {}", .{ id, err });
+            if (err == error.ConnectionClosed) {
+                log.info("Closing client {} with {}", .{ client.id, err });
+            } else {
+                log.err("Closing client {} with {}", .{ client.id, err });
+            }
+
+            for (server.clients.known.values()) |c| {
+                if (c.id == client.id or c.connection.closed) continue;
+
+                c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_id = client.id }) catch {};
+            }
+        }
     }
 
-    for (server.clients.known.values()) |c| {
-        if (c.id == id or c.connection.closed) continue;
+    for (server.clients.unknown.items) |client| {
+        if (client.connection.close_with_error) |err| {
+            client.connection.close();
+            log.err("Closing client unknown with {}", .{err});
 
-        c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_id = id }) catch {};
+            switch (err) {
+                error.MisbehavingUnknownClient => {
+                    log.err("Expected only a register message during register phase", .{});
+                },
+                else => {},
+            }
+        }
     }
 }
 
-fn close_unknown_client_with(server: *Server, index: usize, err: anyerror) void {
-    const client = server.clients.unknown.items[index];
-    client.connection.close();
-    log.err("Closing client unknown with {}", .{err});
+fn mark_for_closing_known_client_with(server: *Server, id: ClientID, err: ClientConnection.CloseError) void {
+    const client = server.clients.known.get(id) orelse return;
+    client.connection.close_with_error = err;
+}
 
-    switch (err) {
-        error.MisbehavingUnknownClient => {
-            log.err("Expected only a register message during register phase", .{});
-        },
-        else => {},
-    }
+fn mark_for_closing_unknown_client_with(server: *Server, index: usize, err: ClientConnection.CloseError) void {
+    const client = server.clients.unknown.items[index];
+    client.connection.close_with_error = err;
 }
 
 fn ReturnType(comptime func: anytype) type {
@@ -529,7 +453,7 @@ const ReceivedMessage = struct {
     payload: Payload,
     from: MessageSource,
 
-    const Payload = ClientConnection.ReceiveError!?client_to_server.MessagePayload;
+    const Payload = client_to_server.MessagePayload;
 };
 
 pub const MessageSource = union(enum) {
