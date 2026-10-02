@@ -8,6 +8,8 @@ state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 
+attached_buffer: ?ptypes.BufferID,
+
 win32: if (os == .windows) Win32.Viewport else void,
 linux: if (os == .linux) Linux else void,
 
@@ -37,6 +39,7 @@ pub fn create(
         .clipping_rect = clipping_rect,
         .render_size = render_size,
         .sub_viewports = .empty,
+        .attached_buffer = null,
 
         .win32 = undefined,
         .linux = undefined,

@@ -574,6 +574,11 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
         return;
     };
 
+    errdefer comptime unreachable;
+
+    const released_buffer = vp.attached_buffer;
+    vp.attached_buffer = buffer_id;
+
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl = tag.window_system(ws);
@@ -618,11 +623,26 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
         },
         .win32 => |tag| {
             const win32 = tag.window_system(ws);
+            const nvp = tag.viewport(vp);
 
             switch (buffer.*) {
                 .cpu => |*cpu| {
-                    win32.render_buffer_cpu(ws, viewport_key, vp, buffer_id, cpu);
+                    const hdc = win32_gdi.GetDC(nvp.child_window_handle).?;
+                    win32.render_buffer_cpu(hdc, vp, cpu);
+                    _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
                 },
+            }
+
+            if (released_buffer) |released| {
+                ws.server_events.appendAssumeCapacity(.{
+                    .buffer_released = .{
+                        .client_id = viewport_key.client_id,
+                        .payload = .{
+                            .viewport_id = viewport_key.viewport_id,
+                            .buffer_id = released,
+                        },
+                    },
+                });
             }
         },
     }

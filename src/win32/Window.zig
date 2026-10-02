@@ -24,6 +24,7 @@ pub fn init(
             .DLGFRAME = 1,
             .BORDER = 1,
             .VISIBLE = 1,
+            .CLIPCHILDREN = 1,
         },
 
         win32_win.CW_USEDEFAULT,

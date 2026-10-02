@@ -71,6 +71,9 @@ fn window_proc(
     };
 
     switch (msg) {
+        win32_win.WM_PAINT => {
+            return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+        },
         win32_win.WM_CLOSE => {
             ws.server_events.appendAssumeCapacity(.{
                 .viewport_close = .{
@@ -179,13 +182,10 @@ fn window_proc(
 
 pub fn render_buffer_cpu(
     _: *Win32,
-    ws: *WindowSystem,
-    vp_key: ViewportKey,
+    hdc: win32_gdi.HDC,
     vp: *WindowSystem.Viewport,
-    buffer_id: BufferID,
     cpu: *const Buffer.Cpu,
 ) void {
-    const nvp = &vp.win32;
     var bitmap_info: win32_gdi.BITMAPINFO = undefined;
 
     bitmap_info.bmiHeader.biSize = @sizeOf(win32_gdi.BITMAPINFOHEADER);
@@ -206,7 +206,6 @@ pub fn render_buffer_cpu(
         },
     }
 
-    const hdc = win32_gdi.GetDC(nvp.child_window_handle);
     // zig fmt: off
     _ = win32_gdi.StretchDIBits(
         hdc,
@@ -220,15 +219,6 @@ pub fn render_buffer_cpu(
     );
     // zig fmt: on
 
-    _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
-
-    ws.server_events.appendAssumeCapacity(.{ .buffer_released = .{
-        .client_id = vp_key.client_id,
-        .payload = .{
-            .viewport_id = vp_key.viewport_id,
-            .buffer_id = buffer_id,
-        },
-    } });
 }
 
 pub const Buffer = union(enum) {

@@ -26,6 +26,7 @@ pub fn init(
         .{
             .CHILD = 1,
             .VISIBLE = 1,
+            .CLIPCHILDREN = 1,
         },
 
         base.clipping_rect.x,
