@@ -220,6 +220,9 @@ pub const ViewportHandle = opaque {
 
         vp.deinit();
 
+        _ = vp.client.viewports.orderedRemove(vp.id);
+        vp.client.viewports_destroyed.putAssumeCapacityNoClobber(vp.id, vp);
+
         vp.client.connection.send_viewport_destroy(
             vp.client.io,
             vp.client.gpa,

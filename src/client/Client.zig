@@ -11,6 +11,7 @@ next_buffer_id: ptypes.BufferID,
 next_sub_viewport_id: ptypes.SubViewportID,
 
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
+viewports_destroyed: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_from_server: std.array_hash_map.Auto(ViewportID, ptypes.Size),
 sub_viewports: std.array_hash_map.Auto(SubViewportID, *SubViewport),
 
@@ -65,6 +66,7 @@ pub fn init(
         .next_buffer_id = .first,
         .next_sub_viewport_id = .first,
         .viewports = .empty,
+        .viewports_destroyed = .empty,
         .viewports_from_server = .empty,
         .sub_viewports = .empty,
         .processes = .empty,
@@ -95,6 +97,11 @@ pub fn deinit(client: *Client) void {
         client.gpa.destroy(vp);
     }
 
+    for (client.viewports_destroyed.values()) |vp| {
+        std.debug.assert(vp.deinited);
+        client.gpa.destroy(vp);
+    }
+
     for (client.sub_viewports.values()) |svp| {
         if (!svp.deinited) {
             svp.deinit();
@@ -112,6 +119,7 @@ pub fn deinit(client: *Client) void {
 
     const containers = .{
         &client.viewports,
+        &client.viewports_destroyed,
         &client.sub_viewports,
         &client.viewports_from_server,
         &client.processes,
@@ -398,6 +406,8 @@ pub fn viewport_create_with_id(
     throttle: bool,
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
+    try client.viewports_destroyed.ensureUnusedCapacity(client.gpa, 1);
+
     const vp = blk: {
         const renderer: Viewport.Renderer = switch (tag) {
             .gl => if (RendererGL == Viewport.LinuxRendererGL)
