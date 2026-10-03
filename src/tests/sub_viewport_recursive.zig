@@ -45,9 +45,6 @@ pub fn main(init: std.process.Init) !void {
 
     std.log.debug("viewport created for depth {}", .{depth});
 
-    var args_iter = try init.minimal.args.iterateAllocator(init.gpa);
-    defer args_iter.deinit();
-
     var sub_viewport: ?*agce.SubViewportHandle = null;
     var maybe_child: ?*agce.ProcessHandle = null;
     defer if (sub_viewport) |svp| svp.destroy();
@@ -58,6 +55,8 @@ pub fn main(init: std.process.Init) !void {
     const svp_width = @divFloor(viewport.size().width, 3) * 2;
     const svp_height = @divFloor(viewport.size().height, 3) * 2;
     if (depth < max_depth) {
+        var args_iter = try init.minimal.args.iterateAllocator(init.gpa);
+        defer args_iter.deinit();
         const self_path = args_iter.next().?;
 
         std.log.debug("depth {} process_create", .{depth});
@@ -67,7 +66,6 @@ pub fn main(init: std.process.Init) !void {
         std.log.debug("depth {} can_spawn poll", .{depth});
         while (child.status() != .can_spawn) {
             try handle.poll(std.math.maxInt(u64));
-            try handle.update();
         }
 
         std.log.debug("depth {} spawn", .{depth});
@@ -79,7 +77,6 @@ pub fn main(init: std.process.Init) !void {
         std.log.debug("depth {} connected poll", .{depth});
         while (child.status() != .connected) {
             try handle.poll(std.math.maxInt(u64));
-            try handle.update();
         }
 
         sub_viewport = try handle.sub_viewport_embed(viewport, child, .{
