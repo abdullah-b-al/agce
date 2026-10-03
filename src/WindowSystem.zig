@@ -392,8 +392,8 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
     }
     vp.sub_viewports.clearRetainingCapacity();
 
-    vp.destroy(ws.gpa);
     _ = rs.viewports.orderedRemove(vp.id);
+    vp.destroy(ws.gpa);
 
     log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_id });
 
