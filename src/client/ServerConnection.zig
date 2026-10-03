@@ -138,7 +138,7 @@ pub fn receive_linux(io: Io, arena: std.mem.Allocator, stream: net.Stream) !serv
     const peek = try server_to_client.operation_net_receive_peek(io, stream, .none, &buf);
 
     if (peek.data.len == 0) {
-        return error.ConnectionClosed;
+        return error.EndOfStream;
     }
 
     const header = try server_to_client.parse_message_header(peek.data);
@@ -158,7 +158,7 @@ pub fn receive_windows(
 
     const header_bytes = reader.interface.take(@sizeOf(server_to_client.MessageHeader)) catch |err|
         return switch (err) {
-            error.EndOfStream => error.ConnectionClosed,
+            error.EndOfStream => |e| e,
             error.ReadFailed => switch (reader.err.?) {
                 error.Timeout => unreachable,
 

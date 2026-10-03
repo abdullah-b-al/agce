@@ -556,7 +556,7 @@ pub fn read_thread(
             },
             else => comptime unreachable,
         } catch |err| switch (err) {
-            error.OutOfMemory => continue,
+            error.EndOfStream, error.OutOfMemory => continue,
 
             error.Unexpected,
             error.ConnectionResetByPeer,
