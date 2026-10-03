@@ -38,7 +38,7 @@ pub fn init(
     errdefer xdg_surface.destroy();
 
     const xdg_toplevel = try xdg_surface.getToplevel();
-    xdg_toplevel.setAppId(ws.class);
+    xdg_toplevel.setAppId(ws.class_of_window);
 
     const format: ptypes.BufferFormat = .argb8888;
     const size = width * height * format.bytes_per_pixel();

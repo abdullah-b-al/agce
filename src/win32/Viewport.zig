@@ -20,7 +20,7 @@ pub fn init(
     const handle = win32_win.CreateWindowExA(
         .{},
 
-        win32.class.lpszClassName,
+        win32.class_viewport.lpszClassName,
         "agce-child-window",
 
         .{

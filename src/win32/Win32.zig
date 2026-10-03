@@ -3,13 +3,14 @@ const Win32 = @This();
 gpa: std.mem.Allocator,
 
 instance: win32_foundation.HINSTANCE,
-class: win32_win.WNDCLASSA,
+class_window: win32_win.WNDCLASSA,
+class_viewport: win32_win.WNDCLASSA,
 
 pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
     const ptr = try ws.gpa.create(Win32);
     errdefer ws.gpa.destroy(ptr);
 
-    const wc: win32_win.WNDCLASSA = .{
+    const class_window: win32_win.WNDCLASSA = .{
         .style = .{},
         .cbClsExtra = 0,
         .cbWndExtra = 0,
@@ -19,10 +20,29 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         .hbrBackground = null,
         .lpfnWndProc = window_proc,
         .hInstance = instance,
-        .lpszClassName = ws.class,
+        .lpszClassName = ws.class_of_window,
     };
 
-    if (win32_win.RegisterClassA(&wc) == 0) {
+    const class_viewport: win32_win.WNDCLASSA = .{
+        .style = .{},
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .lpszMenuName = null,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpfnWndProc = viewport_proc,
+        .hInstance = instance,
+        .lpszClassName = ws.class_of_viewport,
+    };
+
+    if (win32_win.RegisterClassA(&class_window) == 0) {
+        const err = win32_foundation.GetLastError();
+        log.err("{}", .{err});
+        return error.FailedToRegisterClass;
+    }
+
+    if (win32_win.RegisterClassA(&class_viewport) == 0) {
         const err = win32_foundation.GetLastError();
         log.err("{}", .{err});
         return error.FailedToRegisterClass;
@@ -31,7 +51,8 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
     ptr.* = .{
         .gpa = ws.gpa,
         .instance = instance,
-        .class = wc,
+        .class_window = class_window,
+        .class_viewport = class_viewport,
     };
 
     return ptr;
@@ -42,6 +63,56 @@ pub fn destroy(win32: *Win32) void {
 }
 
 fn window_proc(
+    hwnd: win32_foundation.HWND,
+    msg: u32,
+    wparam: win32_foundation.WPARAM,
+    lparam: win32_foundation.LPARAM,
+) callconv(.winapi) win32_foundation.LRESULT {
+    const long: usize = @intCast(win32_win.GetWindowLongPtrA(hwnd, .P_USERDATA));
+
+    // Window has not been created yet. Pass through msg
+    if (long == 0) {
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+
+    const ws: *WindowSystem = @ptrFromInt(long);
+
+    if (ws.destroy_started) {
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+
+    const win = blk: {
+        for (ws.windows.values()) |win| {
+            if (hwnd == win.win32.handle) break :blk win;
+        }
+
+        // Window has been removed. Pass through msg
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    };
+
+    switch (msg) {
+        win32_win.WM_SIZE => {
+            const low: isize = lparam & 0xFFFF;
+            const high: isize = (lparam >> 16) & 0xFFFF;
+            const w: i16 = @truncate(low);
+            const h: i16 = @truncate(high);
+
+            ws.deferred_events.appendAssumeCapacity(.{
+                .window_resize_by_display_server = .{
+                    .id = win.id,
+                    .size = .{ .width = w, .height = h },
+                },
+            });
+            return 0;
+        },
+
+        else => {},
+    }
+
+    return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
+fn viewport_proc(
     hwnd: win32_foundation.HWND,
     msg: u32,
     wparam: win32_foundation.WPARAM,
@@ -95,15 +166,8 @@ fn window_proc(
             return 0;
         },
 
-        win32_win.WM_SIZE => {
-            const low: isize = lparam & 0xFFFF;
-            const high: isize = (lparam >> 16) & 0xFFFF;
-            const w: i16 = @truncate(low);
-            const h: i16 = @truncate(high);
-
-            log.debug("New width and height {}x{}\n", .{ w, h });
-            return 0;
-        },
+        // Child window should not get these events
+        win32_win.WM_SIZING, win32_win.WM_SIZE => {},
 
         inline win32_win.WM_MOUSEMOVE,
         win32_win.WM_LBUTTONDOWN,
@@ -179,7 +243,6 @@ fn window_proc(
 
     return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
-
 pub fn render_buffer_cpu(
     _: *Win32,
     hdc: win32_gdi.HDC,

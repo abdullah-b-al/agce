@@ -2,7 +2,9 @@ const WindowSystem = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
-class: [:0]const u8,
+class_of_window: [:0]const u8,
+/// Used in windows
+class_of_viewport: [:0]const u8,
 
 /// Used in windows to prevent accesing freed data in callbacks
 destroy_started: bool,
@@ -84,8 +86,10 @@ fn create_undefined_native(
     gpa: std.mem.Allocator,
     class: []const u8,
 ) !*WindowSystem {
-    const class_dupe = try gpa.dupeZ(u8, class);
-    errdefer gpa.free(class_dupe);
+    const class_window_dupe = try gpa.dupeZ(u8, class);
+    errdefer gpa.free(class_window_dupe);
+    const class_viewport = try std.fmt.allocPrintSentinel(gpa, "{s}-viewport", .{class_window_dupe}, 0);
+    errdefer gpa.free(class_viewport);
 
     const ws = try gpa.create(WindowSystem);
     errdefer gpa.destroy(ws);
@@ -108,7 +112,8 @@ fn create_undefined_native(
     ws.* = .{
         .io = io,
         .gpa = gpa,
-        .class = class_dupe,
+        .class_of_window = class_window_dupe,
+        .class_of_viewport = class_viewport,
         .resources = .empty,
         .windows = .empty,
         .gbm = gbm,
@@ -158,7 +163,8 @@ pub fn destroy(ws: *WindowSystem) void {
         entry.deinit(ws.gpa);
     }
 
-    ws.gpa.free(ws.class);
+    ws.gpa.free(ws.class_of_window);
+    ws.gpa.free(ws.class_of_viewport);
     ws.gpa.destroy(ws);
 }
 
@@ -1037,9 +1043,8 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
             win.linux.wayland.commit();
             _ = wl.display.flush();
         },
-        .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+        .win32 => {
+            // It seems windows changes the window's buffer however it likes, unlike wayland.
         },
     }
 
