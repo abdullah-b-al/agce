@@ -190,26 +190,7 @@ pub fn keyboard_keymap(wl: *Wayland, fd: c_int, size: usize, format: cwl.Keyboar
     log.debug("New xkb keymap and state", .{});
 }
 
-pub fn keyboard_modifiers(
-    wl: *Wayland,
-    depressed: u32,
-    latched: u32,
-    locked: u32,
-) void {
-    const state = wl.xkb_state orelse return;
-
-    _ = c_linux.xkb_state_update_mask(
-        state,
-        depressed,
-        latched,
-        locked,
-        0,
-        0,
-        0,
-    );
-}
-
-fn process_char(maybe_char: ?u32) ?u32 {
+pub fn process_char(maybe_char: ?u32) ?u32 {
     const char = maybe_char orelse return null;
 
     // filter
@@ -220,74 +201,6 @@ fn process_char(maybe_char: ?u32) ?u32 {
 
         else => char,
     };
-}
-
-pub fn keyboard_key(wl: *Wayland, ws: *WindowSystem, args: Event.TypeOf(.keyboard_key)) !void {
-    if (wl.input_repeat_future) |*future| {
-        future.cancel(wl.io);
-    }
-
-    wl.input_repeat_future = null;
-
-    const window_id = ws.input_focus_keyboard orelse return;
-    const win = ws.windows.get(window_id) orelse return;
-    const key = win.input_focus_keyboard;
-
-    const mods = c_linux.xkb_state_serialize_mods(wl.xkb_state, c_linux.XKB_STATE_MODS_EFFECTIVE);
-    const alt =
-        mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_ALT) != 0;
-    const shift =
-        mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_SHIFT) != 0;
-    const control =
-        mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
-
-    ws.server_events.appendAssumeCapacity(.{
-        .keyboard_key = .{
-            .client_id = key.client_id,
-            .payload = .{
-                .viewport_id = key.viewport_id,
-                .key = args.key,
-                .state = args.state,
-                .modifiers = .{
-                    .alt = alt,
-                    .shift = shift,
-                    .control = control,
-                },
-            },
-        },
-    });
-
-    if (process_char(args.char)) |char| {
-        ws.server_events.appendAssumeCapacity(.{
-            .keyboard_char = .{
-                .client_id = key.client_id,
-                .payload = .{
-                    .viewport_id = key.viewport_id,
-                    .char = char,
-                },
-            },
-        });
-    }
-
-    errdefer comptime unreachable;
-
-    const maybe_ms = switch (args.state) {
-        .pressed => wl.input_delay_ms,
-        .repeat => wl.input_rate_ms,
-        .released => null,
-    };
-
-    if (maybe_ms) |ms| {
-        wl.input_repeat_future = wl.io.concurrent(input_repeat, .{
-            ws,
-            ms,
-            args.key,
-            args.char,
-        }) catch |err| blk: {
-            log.err("Failed to start task input_repeat {}", .{err});
-            break :blk null;
-        };
-    }
 }
 
 pub fn keyboard_repeat_info(wl: *Wayland, rate: i32, delay: i32) void {
@@ -394,13 +307,17 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             return;
         },
         .modifiers => |e| {
-            wl.keyboard_modifiers(
+            const state = wl.xkb_state orelse return;
+
+            _ = c_linux.xkb_state_update_mask(
+                state,
                 e.mods_depressed,
                 e.mods_latched,
                 e.mods_locked,
+                0,
+                0,
+                0,
             );
-
-            return;
         },
         .repeat_info => |e| {
             wl.keyboard_repeat_info(e.rate, e.delay);
@@ -445,10 +362,19 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
                 char = c_linux.xkb_state_key_get_utf32(wl.xkb_state.?, code);
             }
 
+            const mods = c_linux.xkb_state_serialize_mods(wl.xkb_state, c_linux.XKB_STATE_MODS_EFFECTIVE);
+            const alt =
+                mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_ALT) != 0;
+            const shift =
+                mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_SHIFT) != 0;
+            const control =
+                mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
+
             ws.deferred_events.appendAssumeCapacity(.{
                 .keyboard_key = .{
                     .key = key,
                     .state = state,
+                    .modifiers = .{ .alt = alt, .shift = shift, .control = control },
                     .char = char,
                 },
             });
@@ -827,15 +753,17 @@ pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDevi
 }
 
 const InputRepeatFuture = Io.Future(@typeInfo(@TypeOf(input_repeat)).@"fn".return_type.?);
-fn input_repeat(ws: *WindowSystem, ms: i32, key: pinput.Key, char: ?u32) void {
+pub fn input_repeat(ws: *WindowSystem, ms: i32, key: pinput.Key, modifiers: pinput.Modifiers, char: ?u32) void {
     ws.io.sleep(.fromMilliseconds(ms), .awake) catch return;
 
+    // FIXME: This is not thread safe
     // FIXME: This might end up sending stale data.
     // Add some checks to make sure that doesn't happen
     ws.deferred_events.appendAssumeCapacity(.{
         .keyboard_key = .{
             .key = key,
             .state = .repeat,
+            .modifiers = modifiers,
             .char = char,
         },
     });

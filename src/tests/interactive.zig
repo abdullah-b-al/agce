@@ -7,6 +7,7 @@ test "Events" {
 
     try events_resize(handle);
     try events_mouse(handle);
+    try events_keys(handle);
     try events_cursor_shape(handle);
 
     try server.await();
@@ -99,6 +100,48 @@ fn events_mouse(handle: *client.ClientHandle) !void {
                 },
                 .mouse_enter => expect.remove(.mouse_enter),
                 .mouse_leave => expect.remove(.mouse_leave),
+                else => {},
+            }
+        }
+
+        try render_enums_with_header(vp, "Expecting:", ExpectEvent, &expect);
+    }
+}
+
+fn events_keys(handle: *client.ClientHandle) !void {
+    const ExpectEvent = enum {
+        key_a_pressed,
+        key_a_released,
+        key_a_repeat,
+    };
+    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    defer vp.destroy();
+
+    var events: std.ArrayList(client.Event) = .empty;
+    defer events.deinit(testing.allocator);
+    var expect: std.EnumSet(ExpectEvent) = .full;
+    while (expect.count() > 0) {
+        try handle.poll(0);
+
+        while (vp.event_pop()) |event| {
+            try events.append(testing.allocator, event);
+        }
+
+        for (events.items) |event| {
+            switch (event) {
+                .keyboard_key => |e| {
+                    if (e.key == .a and e.state == .pressed) {
+                        expect.remove(.key_a_pressed);
+                    }
+
+                    if (e.key == .a and e.state == .released) {
+                        expect.remove(.key_a_released);
+                    }
+
+                    if (e.key == .a and e.state == .repeat) {
+                        expect.remove(.key_a_repeat);
+                    }
+                },
                 else => {},
             }
         }

@@ -251,19 +251,77 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .cursor_shape_set => |args| try ws.cursor_shape_set(args),
 
         .keyboard_key => |args| {
+            const window_id = ws.input_focus_keyboard orelse return;
+            const win = ws.windows.get(window_id) orelse return;
+            const key = win.input_focus_keyboard;
+
+            ws.server_events.appendAssumeCapacity(.{
+                .keyboard_key = .{
+                    .client_id = key.client_id,
+                    .payload = .{
+                        .viewport_id = key.viewport_id,
+                        .key = args.key,
+                        .state = args.state,
+                        .modifiers = args.modifiers,
+                    },
+                },
+            });
+
             switch (ws.native_tag()) {
                 .wayland => |tag| {
                     const wl = tag.window_system(ws);
-                    try wl.keyboard_key(ws, args);
+                    if (wl.input_repeat_future) |*future| {
+                        future.cancel(wl.io);
+                    }
+
+                    wl.input_repeat_future = null;
+
+                    if (Wayland.process_char(args.char)) |char| {
+                        ws.server_events.appendAssumeCapacity(.{
+                            .keyboard_char = .{
+                                .client_id = key.client_id,
+                                .payload = .{ .viewport_id = key.viewport_id, .char = char },
+                            },
+                        });
+                    }
+                    const maybe_ms = switch (args.state) {
+                        .pressed => wl.input_delay_ms,
+                        .repeat => wl.input_rate_ms,
+                        .released => null,
+                    };
+
+                    if (maybe_ms) |ms| {
+                        wl.input_repeat_future = wl.io.concurrent(Wayland.input_repeat, .{
+                            ws,
+                            ms,
+                            args.key,
+                            args.modifiers,
+                            args.char,
+                        }) catch |err| blk: {
+                            log.err("Failed to start task input_repeat {}", .{err});
+                            break :blk null;
+                        };
+                    }
                 },
-                .win32 => |tag| {
-                    tag.guard();
-                    @panic("TODO");
-                },
+                .win32 => {},
             }
         },
         .keyboard_enter => |args| {
             ws.input_focus_keyboard = args.window_id;
+
+            switch (ws.native_tag()) {
+                .wayland => {},
+                .win32 => |tag| {
+                    // windows requires explict focusing to receive
+                    // keyboard events for child windows
+                    tag.guard();
+                    const win = ws.windows.get(args.window_id) orelse return;
+                    const key = win.input_focus_mouse;
+                    const vp = ws.viewport_from_key(key) orelse return;
+                    const nvp = tag.viewport(vp);
+                    _ = win32_kbm.SetFocus(nvp.child_window_handle);
+                },
+            }
         },
         .keyboard_leave => {
             ws.input_focus_keyboard = null;
@@ -1246,6 +1304,7 @@ pub const Event = union(enum) {
     pub const KeyboardKey = struct {
         key: pinput.Key,
         state: pinput.KeyState,
+        modifiers: pinput.Modifiers,
         char: ?u32,
     };
 
@@ -1387,3 +1446,4 @@ const ServerEvent = @import("server/Server.zig").Event;
 const win32_memory = @import("win32").system.memory;
 const win32_foundation = @import("win32").foundation;
 const win32_gdi = @import("win32").graphics.gdi;
+const win32_kbm = @import("win32").ui.input.keyboard_and_mouse;
