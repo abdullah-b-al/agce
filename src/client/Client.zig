@@ -419,6 +419,12 @@ pub fn viewport_create_with_id(
     };
     client.viewports.putAssumeCapacityNoClobber(vp.id, vp);
 
+    errdefer {
+        _ = client.viewports.orderedRemove(vp.id);
+        vp.deinit();
+        client.gpa.destroy(vp);
+    }
+
     try client.send_viewport_create(id, requested_size);
     try vp.buffers_create(requested_size);
 
