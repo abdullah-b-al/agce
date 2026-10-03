@@ -44,6 +44,14 @@ pub const State = enum {
             .hidden => .hidden,
         };
     }
+
+    pub fn to_display_state(s: State) ptypes.ViewportDisplayState {
+        return switch (s) {
+            .shown => .shown,
+
+            .closed, .failed, .pending, .hidden => .hidden,
+        };
+    }
 };
 
 const std = @import("std");

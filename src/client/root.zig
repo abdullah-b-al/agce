@@ -436,7 +436,7 @@ pub const SubViewportHandle = opaque {
     }
 
     pub fn display_state_get(handle: *SubViewportHandle) ptypes.ViewportDisplayState {
-        return handle.cast().state;
+        return handle.cast().state.to_display_state();
     }
 
     pub fn display_state_set(handle: *SubViewportHandle, s: ptypes.ViewportDisplayState) !void {
