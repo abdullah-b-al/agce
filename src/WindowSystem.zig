@@ -1081,7 +1081,14 @@ pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)
         },
         .win32 => |tag| {
             tag.guard();
-            @panic("TODO");
+            if (args.payload.shape == .none) {
+                _ = win32_win.SetCursor(null);
+            } else {
+                const name = Win32.from_protocol_cursor_shape(args.payload.shape);
+                const hcursor = win32_win.LoadCursorW(null, name);
+
+                _ = win32_win.SetCursor(hcursor orelse return);
+            }
         },
     }
 }

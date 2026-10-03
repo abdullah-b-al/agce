@@ -278,6 +278,57 @@ pub fn render_buffer_cpu(
 
 }
 
+pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?[*:0]align(1) const u16 {
+    return switch (shape) {
+        .none => null,
+        .default => win32_win.IDC_ARROW,
+        .context_menu => win32_win.IDC_ARROW,
+        .help => win32_win.IDC_HELP,
+        .pointer => win32_win.IDC_HAND,
+        .progress => win32_win.IDC_APPSTARTING,
+        .wait => win32_win.IDC_WAIT,
+
+        .cell => win32_win.IDC_CROSS,
+        .crosshair => win32_win.IDC_CROSS,
+        .text => win32_win.IDC_IBEAM,
+        .vertical_text => win32_win.IDC_IBEAM,
+
+        .alias => win32_win.IDC_ARROW,
+        .copy => win32_win.IDC_ARROW,
+        .move => win32_win.IDC_SIZEALL,
+        .no_drop => win32_win.IDC_NO,
+        .not_allowed => win32_win.IDC_NO,
+
+        .grab => win32_win.IDC_HAND,
+        .grabbing => win32_win.IDC_HAND,
+
+        .e_resize => win32_win.IDC_SIZEWE,
+        .w_resize => win32_win.IDC_SIZEWE,
+        .ew_resize => win32_win.IDC_SIZEWE,
+
+        .n_resize => win32_win.IDC_SIZENS,
+        .s_resize => win32_win.IDC_SIZENS,
+        .ns_resize => win32_win.IDC_SIZENS,
+
+        .ne_resize => win32_win.IDC_SIZENESW,
+        .sw_resize => win32_win.IDC_SIZENESW,
+
+        .nw_resize => win32_win.IDC_SIZENWSE,
+        .se_resize => win32_win.IDC_SIZENWSE,
+
+        .nesw_resize => win32_win.IDC_SIZENESW,
+        .nwse_resize => win32_win.IDC_SIZENWSE,
+
+        .col_resize => win32_win.IDC_SIZEWE,
+        .row_resize => win32_win.IDC_SIZENS,
+
+        .all_scroll => win32_win.IDC_SIZEALL,
+
+        .zoom_in => null,
+        .zoom_out => null,
+    };
+}
+
 pub const Buffer = union(enum) {
     cpu: Cpu,
 
