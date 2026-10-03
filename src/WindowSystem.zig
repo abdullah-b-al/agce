@@ -1005,8 +1005,13 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
             _ = wl.display.flush();
         },
         .win32 => |tag| {
-            tag.guard();
-            @panic("TODO");
+            const nsvp = tag.viewport(svp);
+            const cmd = switch (svp.state) {
+                .hidden => win32_win.SW_HIDE,
+                .shown => win32_win.SW_SHOW,
+            };
+
+            _ = win32_win.ShowWindow(nsvp.child_window_handle, cmd);
         },
     }
 
