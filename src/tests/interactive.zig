@@ -1,4 +1,65 @@
 test "Events" {
+    var server = try shared.TestServer.concurrent(@src());
+    errdefer server.await() catch {};
+
+    const handle = try shared.client_init(@src());
+    defer handle.deinit();
+
+    try events_resize(handle);
+    try events_mouse(handle);
+
+    try server.await();
+}
+
+fn events_resize(handle: *client.ClientHandle) !void {
+    const ExpectEvent = enum {
+        resize_to_480,
+        resize_to_720,
+        resize_to_900,
+    };
+
+    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    defer vp.destroy();
+
+    var events: std.ArrayList(client.Event) = .empty;
+    defer events.deinit(testing.allocator);
+    var expect: std.EnumSet(ExpectEvent) = .full;
+    var current_size = vp.size();
+    while (expect.count() > 0) {
+        try handle.poll(0);
+
+        while (vp.event_pop()) |event| {
+            const e = switch (event) {
+                .viewport_resize => |e| e,
+                else => continue,
+            };
+            current_size = e.size;
+
+            const margin = 50;
+            if (between(e.size.width, 480 - margin, 480 + margin)) {
+                expect.remove(.resize_to_480);
+            }
+
+            if (between(e.size.width, 720 - margin, 720 + margin)) {
+                expect.remove(.resize_to_720);
+            }
+
+            if (between(e.size.width, 900 - margin, 900 + margin)) {
+                expect.remove(.resize_to_900);
+            }
+        }
+
+        const current_size_text = try std.fmt.allocPrint(
+            testing.allocator,
+            "Current width {}",
+            .{current_size.width},
+        );
+        defer testing.allocator.free(current_size_text);
+        try render_enums_with_header(vp, current_size_text, ExpectEvent, &expect);
+    }
+}
+
+fn events_mouse(handle: *client.ClientHandle) !void {
     const ExpectEvent = enum {
         mouse_motion,
         mouse_enter,
@@ -8,15 +69,8 @@ test "Events" {
         mouse_right_pressed,
         mouse_right_released,
     };
-    const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
-
-    var server = try shared.TestServer.concurrent(@src());
-    errdefer server.await() catch {};
-
-    const handle = try shared.client_init(@src());
-    defer handle.deinit();
-
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
     defer events.deinit(testing.allocator);
@@ -48,49 +102,49 @@ test "Events" {
             }
         }
 
-        { // render
-            const frame = try vp.cpu_frame_begin();
-            const buffer: []z2d.pixel.ARGB = blk: {
-                const ptr: [*]z2d.pixel.ARGB = @ptrCast(@alignCast(frame.buffer));
-                std.debug.assert(frame.bytes_per_pixel == 4);
-                break :blk ptr[0 .. frame.buffer.len / 4];
-            };
+        try render_enums_with_header(vp, "Expecting:", ExpectEvent, &expect);
+    }
+}
 
-            var surface = z2d.Surface.initBuffer(
-                .image_surface_argb,
-                .{ .r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF },
-                buffer,
-                frame.width,
-                frame.height,
-            );
+fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8, comptime E: type, expect: *const std.EnumSet(E)) !void {
+    const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
 
-            var context = z2d.Context.init(testing.io, testing.allocator, &surface);
-            defer context.deinit();
+    const frame = try vp.cpu_frame_begin();
+    const buffer: []z2d.pixel.ARGB = blk: {
+        const ptr: [*]z2d.pixel.ARGB = @ptrCast(@alignCast(frame.buffer));
+        std.debug.assert(frame.bytes_per_pixel == 4);
+        break :blk ptr[0 .. frame.buffer.len / 4];
+    };
 
-            const font_size = 64;
-            context.setSourceToPixel(black);
-            context.setAntiAliasingMode(.default);
-            context.setFontSize(font_size);
-            try context.setFontToBuffer(@embedFile("ProggyClean.ttf"));
+    var surface = z2d.Surface.initBuffer(
+        .image_surface_argb,
+        .{ .r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF },
+        buffer,
+        frame.width,
+        frame.height,
+    );
 
-            try context.showText("Expecting:", 0, 0);
-            var y: i32 = font_size;
-            var iter = expect.iterator();
-            while (iter.next()) |e| {
-                try context.showText(@tagName(e), 0, y);
-                y += font_size;
-            }
+    var context = z2d.Context.init(testing.io, testing.allocator, &surface);
+    defer context.deinit();
 
-            vp.cpu_frame_end();
-            try vp.cpu_frame_present();
-        }
+    const font_size = 64;
+    context.setSourceToPixel(black);
+    context.setAntiAliasingMode(.default);
+    context.setFontSize(font_size);
+    try context.setFontToBuffer(@embedFile("ProggyClean.ttf"));
 
-        try testing.io.sleep(.fromMilliseconds(16), .awake);
+    try context.showText(header_text, 0, 0);
+    var y: i32 = font_size;
+    var iter = expect.iterator();
+    while (iter.next()) |e| {
+        try context.showText(@tagName(e), 0, y);
+        y += font_size;
     }
 
-    vp.destroy();
+    vp.cpu_frame_end();
+    try vp.cpu_frame_present();
 
-    try server.await();
+    try testing.io.sleep(.fromMilliseconds(33), .awake);
 }
 
 fn inside(x: i32, y: i32, rect: client.Rect) bool {
@@ -107,6 +161,10 @@ fn draw_rect(ctx: *z2d.Context, rect: client.Rect) !void {
     try ctx.lineTo(rect.x, rect.y + rect.height);
     try ctx.closePath();
     try ctx.stroke();
+}
+
+fn between(value: anytype, min: @TypeOf(value), max: @TypeOf(value)) bool {
+    return value >= min and value <= max;
 }
 
 const std = @import("std");
