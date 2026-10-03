@@ -7,6 +7,7 @@ test "Events" {
 
     try events_resize(handle);
     try events_mouse(handle);
+    try events_cursor_shape(handle);
 
     try server.await();
 }
@@ -106,6 +107,86 @@ fn events_mouse(handle: *client.ClientHandle) !void {
     }
 }
 
+fn events_cursor_shape(handle: *client.ClientHandle) !void {
+    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    defer vp.destroy();
+
+    var events: std.ArrayList(client.Event) = .empty;
+    defer events.deinit(testing.allocator);
+    var expect: std.EnumSet(client.CursorShape) = .full;
+    var mouse_x: i32 = 0;
+    var mouse_y: i32 = 0;
+    var current_cursor: ?client.CursorShape = null;
+    var hover_time: Io.Timestamp = .now(testing.io, .awake);
+    while (expect.count() > 0) {
+        try handle.poll(0);
+        try handle.update();
+
+        var clicked = false;
+        while (vp.event_pop()) |event| {
+            switch (event) {
+                .mouse_motion => |e| {
+                    mouse_x = @trunc(e.x);
+                    mouse_y = @trunc(e.y);
+                },
+                .viewport_resize => |e| vp.resize(e.size),
+                .mouse_button => |e| clicked = e.button == .left and e.state == .pressed,
+                else => {},
+            }
+        }
+
+        const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
+
+        const frame = try vp.cpu_frame_begin();
+        const buffer: []z2d.pixel.ARGB = blk: {
+            const ptr: [*]z2d.pixel.ARGB = @ptrCast(@alignCast(frame.buffer));
+            std.debug.assert(frame.bytes_per_pixel == 4);
+            break :blk ptr[0 .. frame.buffer.len / 4];
+        };
+
+        var surface = z2d.Surface.initBuffer(
+            .image_surface_argb,
+            .{ .r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF },
+            buffer,
+            frame.width,
+            frame.height,
+        );
+
+        var context = z2d.Context.init(testing.io, testing.allocator, &surface);
+        defer context.deinit();
+
+        const line_size = 64;
+        context.setSourceToPixel(black);
+        context.setAntiAliasingMode(.default);
+        context.setFontSize(line_size);
+        try context.setFontToBuffer(@embedFile("ProggyClean.ttf"));
+
+        try context.showText("Click to remove", 0, 0);
+        var y: i32 = line_size;
+        var iter = expect.iterator();
+        while (iter.next()) |e| {
+            try context.showText(@tagName(e), 0, y);
+            if (mouse_y >= y and mouse_y <= y + line_size) {
+                try handle.cursor_shape_set(vp.id(), e);
+                if (current_cursor == null) {
+                    hover_time = .now(testing.io, .awake);
+                    current_cursor = e;
+                }
+
+                if (clicked) {
+                    expect.remove(e);
+                    current_cursor = null;
+                }
+            }
+            y += line_size;
+        }
+
+        vp.cpu_frame_end();
+        try vp.cpu_frame_present();
+
+        try testing.io.sleep(.fromMilliseconds(33), .awake);
+    }
+}
 fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8, comptime E: type, expect: *const std.EnumSet(E)) !void {
     const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
 
