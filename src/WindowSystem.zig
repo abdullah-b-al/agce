@@ -633,9 +633,10 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
 
             switch (buffer.*) {
                 .cpu => |*cpu| {
-                    const hdc = win32_gdi.GetDC(nvp.child_window_handle).?;
-                    win32.render_buffer_cpu(hdc, vp, cpu);
-                    _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
+                    if (win32_gdi.GetDC(nvp.child_window_handle)) |hdc| {
+                        win32.render_buffer_cpu(hdc, vp, cpu);
+                        _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
+                    }
                 },
             }
 
