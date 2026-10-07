@@ -1,34 +1,100 @@
-test "Create a viewport" {
-    var server = try shared.TestServer.concurrent(@src());
+const this_file = @This();
 
-    const handle = try shared.client_init(@src());
+const files = .{
+    this_file,
+    @import("embeding.zig"),
+    @import("interactive.zig"),
+};
+
+const Case = enum {
+    create_a_viewport,
+    render_few_frame_cpu,
+    render_few_frame_gl,
+    interactive_events,
+    embed_sub_viewports,
+    hide_sub_viewports,
+};
+
+comptime {
+    for (@typeInfo(Case).@"enum".fields) |field| {
+        var found = false;
+        for (files) |file| {
+            if (@hasDecl(file, field.name)) {
+                found = true;
+            }
+        }
+
+        if (!found) @compileError("Cannot find case " ++ field.name ++ ". Either it does not exist or its function is private");
+    }
+}
+
+pub fn main(init: std.process.Init) !void {
+    var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
+    _ = args.skip();
+
+    var cases: std.EnumSet(Case) = .empty;
+
+    while (args.next()) |arg| {
+        const case = std.meta.stringToEnum(Case, arg) orelse {
+            std.process.fatal("Unknown test case {s}", .{arg});
+        };
+
+        cases.insert(case);
+    }
+
+    if (cases.count() == 0) {
+        cases = .full;
+    }
+
+    var iter = cases.iterator();
+
+    while (iter.next()) |case| {
+        inline for (@typeInfo(Case).@"enum".fields) |field| {
+            if (field.value == @intFromEnum(case)) {
+                const file = blk: inline for (files) |file| {
+                    if (@hasDecl(file, field.name)) {
+                        break :blk file;
+                    }
+                } else @panic("Cannot find case " ++ field.name);
+
+                const func = @field(file, field.name);
+                try func(init);
+            }
+        }
+    }
+}
+
+fn create_a_viewport(init: std.process.Init) !void {
+    var server = try shared.TestServer.concurrent(@src(), init);
+
+    const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
     vp.destroy();
 
-    try server.await();
+    try server.await(init);
 }
 
-test "Render few frames - cpu" {
-    var server = try shared.TestServer.concurrent(@src());
+fn render_few_frame_cpu(init: std.process.Init) !void {
+    var server = try shared.TestServer.concurrent(@src(), init);
 
-    const handle = try shared.client_init(@src());
+    const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
 
     for (0..60) |_| {
         try shared.render_cpu(vp, 0xFFFFFFFF);
-        try testing.io.sleep(.fromMilliseconds(16), .awake);
+        try init.io.sleep(.fromMilliseconds(16), .awake);
     }
 
     vp.destroy();
 
-    try server.await();
+    try server.await(init);
 }
 
-test "Render few frames - gl" {
+fn render_few_frame_gl(init: std.process.Init) !void {
     switch (@import("builtin").os.tag) {
         .linux => {},
         else => {
@@ -36,9 +102,9 @@ test "Render few frames - gl" {
         },
     }
 
-    var server = try shared.TestServer.concurrent(@src());
+    var server = try shared.TestServer.concurrent(@src(), init);
 
-    const handle = try shared.client_init(@src());
+    const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
     try handle.init_opengl(3, 3);
@@ -47,12 +113,12 @@ test "Render few frames - gl" {
 
     for (0..60) |_| {
         try shared.render_gl(vp);
-        try testing.io.sleep(.fromMilliseconds(16), .awake);
+        try init.io.sleep(.fromMilliseconds(16), .awake);
     }
 
     vp.destroy();
 
-    try server.await();
+    try server.await(init);
 }
 
 const std = @import("std");
@@ -68,3 +134,5 @@ const WindowSystem = @import("main").WindowSystem;
 const Server = @import("main").Server;
 const zio = @import("main").zio;
 const tick = @import("main").tick;
+
+const log = std.log;

@@ -1,17 +1,17 @@
-pub fn environ_map_create(src: std.builtin.SourceLocation) !std.process.Environ.Map {
-    var environ_map = try testing.environ.createMap(testing.allocator);
+pub fn environ_map_create(src: std.builtin.SourceLocation, init: std.process.Init) !std.process.Environ.Map {
+    var environ_map = try init.environ_map.clone(init.gpa);
 
     var buf: [constants.socket_max_path]u8 = undefined;
     const testing_path_len = try std.process.executableDirPath(
-        testing.io,
+        init.io,
         &buf,
     );
 
-    const path = try std.fs.path.join(testing.allocator, &.{
+    const path = try std.fs.path.join(init.gpa, &.{
         buf[0..testing_path_len],
         src.fn_name,
     });
-    defer testing.allocator.free(path);
+    defer init.gpa.free(path);
 
     try environ_map.put(constants.env_agce_socket_path, path);
 
@@ -22,28 +22,28 @@ pub const TestServer = struct {
     future: Io.Future(@typeInfo(@TypeOf(server_spawn)).@"fn".return_type.?),
     exit: *Io.Event,
 
-    pub fn concurrent(src: std.builtin.SourceLocation) !TestServer {
+    pub fn concurrent(src: std.builtin.SourceLocation, init: std.process.Init) !TestServer {
         // Wait between tests to prevent race conditions in windows
-        try testing.io.sleep(.fromSeconds(1), .awake);
+        try init.io.sleep(.fromSeconds(1), .awake);
 
-        const exit = try testing.allocator.create(Io.Event);
+        const exit = try init.gpa.create(Io.Event);
         exit.* = .unset;
 
-        const server = try testing.io.concurrent(server_spawn, .{ src, exit });
+        const server = try init.io.concurrent(server_spawn, .{ src, exit, init });
 
         return .{ .future = server, .exit = exit };
     }
 
-    pub fn await(ctx: *TestServer) !void {
-        ctx.exit.set(testing.io);
-        defer testing.allocator.destroy(ctx.exit);
+    pub fn await(ctx: *TestServer, init: std.process.Init) !void {
+        ctx.exit.set(init.io);
+        defer init.gpa.destroy(ctx.exit);
 
-        try ctx.future.await(testing.io);
+        try ctx.future.await(init.io);
     }
 
-    fn server_spawn(src: std.builtin.SourceLocation, exit: *Io.Event) !void {
-        const gpa = testing.allocator;
-        var environ_map = try environ_map_create(src);
+    fn server_spawn(src: std.builtin.SourceLocation, exit: *Io.Event, init: std.process.Init) !void {
+        const gpa = init.gpa;
+        var environ_map = try environ_map_create(src, init);
         defer environ_map.deinit();
 
         const rt = try zio.Runtime.init(gpa, .{});
@@ -74,13 +74,13 @@ pub const TestServer = struct {
     }
 };
 
-pub fn client_init(src: std.builtin.SourceLocation) !*client.ClientHandle {
-    var environ_map = try environ_map_create(src);
+pub fn client_init(src: std.builtin.SourceLocation, init: std.process.Init) !*client.ClientHandle {
+    var environ_map = try environ_map_create(src, init);
     defer environ_map.deinit();
 
     // wait for the server to spawn
-    try testing.io.sleep(.fromMilliseconds(100), .awake);
-    return try client.init(testing.io, testing.allocator, &environ_map);
+    try init.io.sleep(.fromMilliseconds(100), .awake);
+    return try client.init(init.io, init.gpa, &environ_map);
 }
 
 pub fn render_cpu(vp: *client.ViewportHandle, color: u32) !void {

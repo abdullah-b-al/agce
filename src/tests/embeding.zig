@@ -1,58 +1,58 @@
-test "Embed sub-viewports" {
+pub fn embed_sub_viewports(init: std.process.Init) !void {
     var buf: [constants.socket_max_path]u8 = undefined;
     const testing_path_len = try std.process.executableDirPath(
-        testing.io,
+        init.io,
         &buf,
     );
-    const path = try std.fs.path.join(testing.allocator, &.{
+    const path = try std.fs.path.join(init.gpa, &.{
         buf[0..testing_path_len],
         "sub_viewport_recursive",
     });
-    defer testing.allocator.free(path);
+    defer init.gpa.free(path);
 
-    var server = try shared.TestServer.concurrent(@src());
-    errdefer server.await() catch {};
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
 
-    try testing.io.sleep(.fromMilliseconds(500), .awake); // wait for server to start up
+    try init.io.sleep(.fromMilliseconds(500), .awake); // wait for server to start up
 
-    var environ_map = try shared.environ_map_create(@src());
+    var environ_map = try shared.environ_map_create(@src(), init);
     defer environ_map.deinit();
     try environ_map.put(@import("sub_viewport_recursive.zig").env_depth_key, "0");
 
-    var child = try std.process.spawn(testing.io, .{
+    var child = try std.process.spawn(init.io, .{
         .argv = &.{path},
         .environ_map = &environ_map,
     });
-    const exit = try child.wait(testing.io);
-    try testing.expect(exit == .exited);
-    try testing.expect(exit.exited == 0);
+    const exit = try child.wait(init.io);
+    std.debug.assert(exit == .exited);
+    std.debug.assert(exit.exited == 0);
 
-    try server.await();
+    try server.await(init);
 }
 
-test "Hide sub-viewports" {
+pub fn hide_sub_viewports(init: std.process.Init) !void {
     var buf: [constants.socket_max_path]u8 = undefined;
     const testing_path_len = try std.process.executableDirPath(
-        testing.io,
+        init.io,
         &buf,
     );
-    const path = try std.fs.path.join(testing.allocator, &.{
+    const path = try std.fs.path.join(init.gpa, &.{
         buf[0..testing_path_len],
         "sub_viewport_filled_rect",
     });
-    defer testing.allocator.free(path);
+    defer init.gpa.free(path);
 
-    var server = try shared.TestServer.concurrent(@src());
-    errdefer server.await() catch {};
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
 
-    try testing.io.sleep(.fromMilliseconds(500), .awake); // wait for server to start up
+    try init.io.sleep(.fromMilliseconds(500), .awake); // wait for server to start up
 
-    var environ_map = try shared.environ_map_create(@src());
+    var environ_map = try shared.environ_map_create(@src(), init);
     defer environ_map.deinit();
 
     const handle = try client.init(
-        testing.io,
-        testing.allocator,
+        init.io,
+        init.gpa,
         &environ_map,
     );
     defer handle.deinit();
@@ -77,7 +77,7 @@ test "Hide sub-viewports" {
         .height = svp_height,
     });
 
-    var ts: Io.Timestamp = .now(testing.io, .awake);
+    var ts: Io.Timestamp = .now(init.io, .awake);
     outer: while (true) {
         try handle.poll(0);
 
@@ -90,9 +90,9 @@ test "Hide sub-viewports" {
         }
 
         try shared.render_cpu(vp, 0x00_00_00_00);
-        try testing.io.sleep(.fromMilliseconds(33), .awake);
+        try init.io.sleep(.fromMilliseconds(33), .awake);
 
-        const until_now = ts.untilNow(testing.io, .awake).toSeconds();
+        const until_now = ts.untilNow(init.io, .awake).toSeconds();
         // toggle every second
         const state: client.ViewportDisplayState =
             if (@mod(until_now, 2) == 0) .shown else .hidden;
@@ -103,7 +103,7 @@ test "Hide sub-viewports" {
     sub_viewport.destroy();
     child.kill();
 
-    try server.await();
+    try server.await(init);
 }
 
 const std = @import("std");

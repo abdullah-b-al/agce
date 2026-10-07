@@ -1,8 +1,13 @@
-test "Events" {
-    var server = try shared.TestServer.concurrent(@src());
-    errdefer server.await() catch {};
+var io: Io = undefined;
+var gpa: std.mem.Allocator = undefined;
 
-    const handle = try shared.client_init(@src());
+pub fn interactive_events(init: std.process.Init) !void {
+    io = init.io;
+    gpa = init.gpa;
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
+
+    const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
     try events_resize(handle);
@@ -10,7 +15,7 @@ test "Events" {
     try events_keys(handle);
     try events_cursor_shape(handle);
 
-    try server.await();
+    try server.await(init);
 }
 
 fn events_resize(handle: *client.ClientHandle) !void {
@@ -24,7 +29,7 @@ fn events_resize(handle: *client.ClientHandle) !void {
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
-    defer events.deinit(testing.allocator);
+    defer events.deinit(gpa);
     var expect: std.EnumSet(ExpectEvent) = .full;
     var current_size = vp.size();
     while (expect.count() > 0) {
@@ -52,11 +57,11 @@ fn events_resize(handle: *client.ClientHandle) !void {
         }
 
         const current_size_text = try std.fmt.allocPrint(
-            testing.allocator,
+            gpa,
             "Current width {}",
             .{current_size.width},
         );
-        defer testing.allocator.free(current_size_text);
+        defer gpa.free(current_size_text);
         try render_enums_with_header(vp, current_size_text, ExpectEvent, &expect);
     }
 }
@@ -75,13 +80,13 @@ fn events_mouse(handle: *client.ClientHandle) !void {
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
-    defer events.deinit(testing.allocator);
+    defer events.deinit(gpa);
     var expect: std.EnumSet(ExpectEvent) = .full;
     while (expect.count() > 0) {
         try handle.poll(0);
 
         while (vp.event_pop()) |event| {
-            try events.append(testing.allocator, event);
+            try events.append(gpa, event);
         }
 
         for (events.items) |event| {
@@ -118,13 +123,13 @@ fn events_keys(handle: *client.ClientHandle) !void {
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
-    defer events.deinit(testing.allocator);
+    defer events.deinit(gpa);
     var expect: std.EnumSet(ExpectEvent) = .full;
     while (expect.count() > 0) {
         try handle.poll(0);
 
         while (vp.event_pop()) |event| {
-            try events.append(testing.allocator, event);
+            try events.append(gpa, event);
         }
 
         for (events.items) |event| {
@@ -155,12 +160,12 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
-    defer events.deinit(testing.allocator);
+    defer events.deinit(gpa);
     var expect: std.EnumSet(client.CursorShape) = .full;
     var mouse_x: i32 = 0;
     var mouse_y: i32 = 0;
     var current_cursor: ?client.CursorShape = null;
-    var hover_time: Io.Timestamp = .now(testing.io, .awake);
+    var hover_time: Io.Timestamp = .now(io, .awake);
     while (expect.count() > 0) {
         try handle.poll(0);
         try handle.update();
@@ -195,7 +200,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
             frame.height,
         );
 
-        var context = z2d.Context.init(testing.io, testing.allocator, &surface);
+        var context = z2d.Context.init(io, gpa, &surface);
         defer context.deinit();
 
         const line_size = 64;
@@ -212,7 +217,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
             if (mouse_y >= y and mouse_y <= y + line_size) {
                 try handle.cursor_shape_set(vp.id(), e);
                 if (current_cursor == null) {
-                    hover_time = .now(testing.io, .awake);
+                    hover_time = .now(io, .awake);
                     current_cursor = e;
                 }
 
@@ -227,7 +232,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
         vp.cpu_frame_end();
         try vp.cpu_frame_present();
 
-        try testing.io.sleep(.fromMilliseconds(33), .awake);
+        try io.sleep(.fromMilliseconds(33), .awake);
     }
 }
 fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8, comptime E: type, expect: *const std.EnumSet(E)) !void {
@@ -248,7 +253,7 @@ fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8,
         frame.height,
     );
 
-    var context = z2d.Context.init(testing.io, testing.allocator, &surface);
+    var context = z2d.Context.init(io, gpa, &surface);
     defer context.deinit();
 
     const font_size = 64;
@@ -268,7 +273,7 @@ fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8,
     vp.cpu_frame_end();
     try vp.cpu_frame_present();
 
-    try testing.io.sleep(.fromMilliseconds(33), .awake);
+    try io.sleep(.fromMilliseconds(33), .awake);
 }
 
 fn inside(x: i32, y: i32, rect: client.Rect) bool {
