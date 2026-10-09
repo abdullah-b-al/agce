@@ -163,6 +163,12 @@ pub const GpuBufferFd = enum(c_int) {
     _,
 };
 
+pub const D3DTextureHandle = enum(HandleBackingInt) {
+    pub const is_fd = false;
+
+    _,
+};
+
 pub const AcquireTimelineFd = enum(c_int) {
     pub const is_fd = true;
 
@@ -178,6 +184,10 @@ pub const ReleaseTimelineFd = enum(c_int) {
 };
 
 pub const Status = enum { success, failure };
+
+pub const D3DVersion = enum {
+    d3d11,
+};
 
 pub const AcquireTimelineHandle = enum(u32) { _ };
 pub const ReleaseTimelineHandle = enum(u32) { _ };

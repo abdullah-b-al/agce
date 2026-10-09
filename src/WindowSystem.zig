@@ -200,6 +200,9 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .buffer_present_with_sync => |args| try ws.buffer_present(.{ .sync = args }),
 
         .buffer_destroy => |args| try ws.buffer_destroy(args),
+
+        .texture_create_d3d => |args| try ws.texture_create_d3d(args),
+
         .viewport_create => |args| {
             const result = try ws.viewport_create(args);
 
@@ -588,6 +591,73 @@ fn buffer_create_gbm_bo(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_gbm
             rs.gbm_bos.putAssumeCapacityNoClobber(id, bo);
         },
     }
+}
+
+fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)) !void {
+    std.debug.assert(args.payload.version == .d3d11);
+
+    const win32 = switch (ws.native_tag()) {
+        .win32 => |tag| tag.window_system(ws),
+        else => return error.MessageUnsupportedByOS,
+    };
+
+    if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
+
+    const rs = ws.resources.getPtr(args.client_id).?;
+
+    var desc: d11.D3D11_TEXTURE2D_DESC = .{
+        .Width = @intCast(args.payload.size.width),
+        .Height = @intCast(args.payload.size.height),
+        .MipLevels = 1,
+        .ArraySize = 1,
+        .Format = switch (args.payload.format) {
+            .argb8888 => .R8G8B8A8_UNORM,
+        },
+        .SampleDesc = .{ .Count = 1, .Quality = 0 },
+        .Usage = .DEFAULT,
+        .BindFlags = .{ .SHADER_RESOURCE = 1, .RENDER_TARGET = 1 },
+        .CPUAccessFlags = .{},
+        .MiscFlags = .{
+            .SHARED = 1,
+            .SHARED_NTHANDLE = 1,
+        },
+    };
+
+    var texture: *d11.ID3D11Texture2D = undefined;
+    const create_result = win32.device_d11.CreateTexture2D(&desc, null, &texture);
+    if (create_result != win32_foundation.S_OK) {
+        return error.FailedToCreateD3DTexture;
+    }
+
+    var resource: *dxgi.IDXGIResource1 = undefined;
+    const query_result = texture.IUnknown.QueryInterface(dxgi.IID_IDXGIResource1, @ptrCast(&resource));
+    std.debug.assert(query_result == win32_foundation.S_OK);
+    defer _ = resource.IUnknown.Release();
+
+    var handle: ?win32_foundation.HANDLE = undefined;
+    const handle_result = resource.CreateSharedHandle(
+        null,
+        dxgi.DXGI_SHARED_RESOURCE_READ | dxgi.DXGI_SHARED_RESOURCE_WRITE,
+        null,
+        &handle,
+    );
+
+    std.debug.assert(handle_result == win32_foundation.S_OK);
+    std.debug.assert(handle != null);
+
+    ws.server_events.appendAssumeCapacity(.{
+        .texture_created_d3d = .{
+            .client_id = args.client_id,
+            .payload = .{
+                .viewport_id = args.payload.viewport_id,
+                .buffer_id = rs.next_buffer_id.increment(),
+                .handle = @enumFromInt(@intFromPtr(handle.?)),
+                .size = args.payload.size,
+                .format = args.payload.format,
+                .version = .d3d11,
+            },
+        },
+    });
 }
 
 const BufferPresent = union(enum) {
@@ -1252,6 +1322,8 @@ pub const Event = union(enum) {
     buffer_present_with_sync: ptypes.WithClientID(client_to_server.BufferPresentWithSync),
     buffer_destroy: ptypes.WithClientID(client_to_server.BufferDestroy),
 
+    texture_create_d3d: ptypes.WithClientID(client_to_server.TextureCreateD3D),
+
     viewport_create: ptypes.WithClientID(client_to_server.ViewportCreate),
     viewport_destroy: ptypes.WithClientID(client_to_server.ViewportDestroy),
     sub_viewport_embed: ptypes.WithClientID(client_to_server.SubViewportEmbed),
@@ -1447,3 +1519,6 @@ const win32_memory = @import("win32").system.memory;
 const win32_foundation = @import("win32").foundation;
 const win32_gdi = @import("win32").graphics.gdi;
 const win32_kbm = @import("win32").ui.input.keyboard_and_mouse;
+const d11 = @import("win32").graphics.direct3d11;
+const d3d = @import("win32").graphics.direct3d;
+const dxgi = @import("win32").graphics.dxgi;

@@ -155,6 +155,8 @@ pub const MessagePayload = union(enum(u32)) {
     buffer_created_cpu: BufferCreatedCpu,
     buffer_created_gbm_bo: BufferCreatedGbmBo,
 
+    texture_created_d3d: TextureCreatedD3D,
+
     frame_render: FrameRender,
 
     keyboard_char: KeyboardChar,
@@ -194,6 +196,15 @@ pub const BufferCreatedGbmBo = struct {
     size: types.Size,
     stride: u32,
     format: types.BufferFormat,
+};
+
+pub const TextureCreatedD3D = struct {
+    viewport_id: types.ViewportID,
+    buffer_id: types.BufferID,
+    handle: types.D3DTextureHandle,
+    size: types.Size,
+    format: types.BufferFormat,
+    version: types.D3DVersion,
 };
 
 pub const ViewportResize = struct {

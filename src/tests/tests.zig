@@ -1,9 +1,14 @@
 const this_file = @This();
 
+pub const std_options: std.Options = .{
+    .log_level = .info,
+};
+
 const files = .{
     this_file,
     @import("embeding.zig"),
     @import("interactive.zig"),
+    @import("d3d.zig"),
 };
 
 const Case = enum {
@@ -13,6 +18,7 @@ const Case = enum {
     interactive_events,
     embed_sub_viewports,
     hide_sub_viewports,
+    share_d3d11_texture,
 };
 
 comptime {

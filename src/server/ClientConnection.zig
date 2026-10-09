@@ -135,31 +135,11 @@ pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Alloca
             try c.send_with_fd(ptypes.CpuBufferHandle, const_payload.handle, gpa, message);
         },
         .windows => {
-            const client_pid = c.pid orelse @panic("Must be provided in windows");
-            const client_handle = win32.system.threading.OpenProcess(
-                win32.system.threading.PROCESS_DUP_HANDLE,
-                @intFromEnum(std.os.windows.BOOL.FALSE),
-                @intFromEnum(client_pid),
-            ) orelse return error.Win32OpenProcessFailed;
-            defer _ = win32.foundation.CloseHandle(client_handle);
-
-            var duplicated: ?*anyopaque = null;
-            const result = win32.foundation.DuplicateHandle(
-                win32.system.threading.GetCurrentProcess(),
-                @ptrFromInt(@intFromEnum(const_payload.handle)),
-                client_handle,
-                &duplicated,
-                0,
-                @intFromEnum(std.os.windows.BOOL.FALSE),
-                win32.foundation.DUPLICATE_SAME_ACCESS,
-            );
-
-            if (result == 0) {
-                return error.DuplicateHandleFailed;
-            }
+            const duplicate = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.handle)));
+            errdefer _ = win32.foundation.CloseHandle(duplicate);
 
             var payload = const_payload;
-            payload.handle = @enumFromInt(@intFromPtr(duplicated.?));
+            payload.handle = @enumFromInt(@intFromPtr(duplicate));
             const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
             try c.send(io, gpa, message);
         },
@@ -172,6 +152,23 @@ pub fn send_buffer_created_gbm_bo(c: *ClientConnection, _: Io, gpa: std.mem.Allo
 
     const message = try c.stringify(gpa, .{ .buffer_created_gbm_bo = payload });
     try c.send_with_fd(ptypes.BufferAndTimelineFds, payload.fds, gpa, message);
+}
+
+pub fn send_texture_created_d3d(
+    c: *ClientConnection,
+    io: Io,
+    gpa: std.mem.Allocator,
+    const_payload: server_to_client.TextureCreatedD3D,
+) !void {
+    if (!constants.os_has_d3d) @compileError("OS does not support d3d");
+
+    const duplicate = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.handle)));
+    errdefer _ = win32.foundation.CloseHandle(duplicate);
+
+    var payload = const_payload;
+    payload.handle = @enumFromInt(@intFromPtr(duplicate));
+    const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
+    try c.send(io, gpa, message);
 }
 
 pub fn send_frame_render(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.FrameRender) !void {
@@ -274,6 +271,33 @@ fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, gpa: std.mem.Al
     if (result < 0) {
         return error.FailedToSendFds;
     }
+}
+
+fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
+    const client_pid = c.pid orelse @panic("Must be provided in windows");
+    const client_handle = win32.system.threading.OpenProcess(
+        win32.system.threading.PROCESS_DUP_HANDLE,
+        @intFromEnum(std.os.windows.BOOL.FALSE),
+        @intFromEnum(client_pid),
+    ) orelse return error.Win32OpenProcessFailed;
+    defer _ = win32.foundation.CloseHandle(client_handle);
+
+    var duplicated: ?*anyopaque = null;
+    const result = win32.foundation.DuplicateHandle(
+        win32.system.threading.GetCurrentProcess(),
+        handle,
+        client_handle,
+        &duplicated,
+        0,
+        @intFromEnum(std.os.windows.BOOL.FALSE),
+        win32.foundation.DUPLICATE_SAME_ACCESS,
+    );
+
+    if (result == 0) {
+        return error.DuplicateHandleFailed;
+    }
+
+    return duplicated.?;
 }
 
 pub const CloseError =

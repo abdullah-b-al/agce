@@ -15,6 +15,7 @@ current_buffer: ?BufferID,
 status: Client.CreateStatus,
 pending_buffers_cpu: std.ArrayList(BufferCreatedCpu),
 pending_buffers_gbm_bo: std.ArrayList(BufferCreatedGbmBo),
+pending_textures_d3d: std.ArrayList(TextureCreatedD3D),
 
 messages: std.ArrayList(Client.Message),
 events: std.ArrayList(Client.Event),
@@ -38,6 +39,7 @@ pub fn init(
         .throttle_frames = throttle,
         .pending_buffers_cpu = .empty,
         .pending_buffers_gbm_bo = .empty,
+        .pending_textures_d3d = .empty,
 
         .should_close = false,
         .refresh_cycle = 0,
@@ -58,6 +60,7 @@ pub fn deinit(vp: *Viewport) void {
 
     vp.pending_buffers_cpu.deinit(gpa);
     vp.pending_buffers_gbm_bo.deinit(gpa);
+    vp.pending_textures_d3d.deinit(gpa);
 
     switch (vp.renderer) {
         inline else => |*r| r.deinit(gpa),
@@ -145,6 +148,9 @@ pub fn buffer_present(vp: *Viewport) !void {
 
                 break :blk buffer;
             },
+            .d11 => {
+                @panic("TODO");
+            },
         };
 
     switch (vp.renderer) {
@@ -157,6 +163,7 @@ pub fn buffer_present(vp: *Viewport) !void {
             b.acquire.point.advance();
             b.released = false;
         },
+        .d11 => @panic("TODO"),
     }
 
     vp.frame_number += 1;
@@ -220,6 +227,34 @@ pub fn buffers_create(
                 else => @compileError("Unsupported OS"),
             }
         },
+
+        .d11 => {
+            if (!constants.os_has_d3d) {
+                @panic("OS does not support d3d");
+            }
+
+            for (0..buffer_count) |_| {
+                try client.connection.send_texture_create_d3d(
+                    client.io,
+                    client.gpa,
+                    .{
+                        .viewport_id = vp.id,
+                        .format = vp.format,
+                        .size = .{ .width = width, .height = height },
+                        .version = .d3d11,
+                    },
+                );
+            }
+
+            std.debug.assert(vp.pending_textures_d3d.items.len == 0);
+            while (vp.pending_textures_d3d.items.len != buffer_count) {
+                try client.poll(.none);
+            }
+            std.debug.assert(vp.pending_textures_d3d.items.len >= buffer_count);
+
+            try vp.renderer_buffers_create(TextureCreatedD3D, vp.pending_textures_d3d.items);
+            vp.pending_textures_d3d.clearRetainingCapacity();
+        },
     }
 }
 pub fn renderer_buffers_create(
@@ -245,6 +280,7 @@ pub fn renderer_buffers_create(
                 },
                 // TODO: Close fds here
                 BufferCreatedGbmBo => {},
+                TextureCreatedD3D => {},
                 else => comptime unreachable,
             }
         }
@@ -283,6 +319,19 @@ pub fn renderer_buffers_create(
                 }
             }
         },
+        .d11 => |*r| {
+            if (!constants.os_has_d3d) {
+                @panic("OS does not support d3d");
+            }
+
+            if (Buffer == TextureCreatedD3D) {
+                try r.buffers.ensureUnusedCapacity(gpa, created.len);
+                for (created) |b| {
+                    const buffer: RendererD11.Buffer = try .init(vp.client.device1_d11.?, b);
+                    r.buffers.putAssumeCapacityNoClobber(buffer.id, buffer);
+                }
+            }
+        },
     }
 }
 
@@ -298,7 +347,7 @@ pub fn buffer_resize(
 
     if (buffer_size.width < new_width or buffer_size.height < new_height) {
         switch (vp.renderer) {
-            inline .gl, .cpu => |*r| {
+            inline .gl, .cpu, .d11 => |*r| {
                 var old_buffers = r.buffers;
                 r.buffers = .empty;
 
@@ -340,11 +389,13 @@ pub const Renderer = union(enum) {
 
     gl: RendererGL,
     cpu: RendererCpu,
+    d11: RendererD11,
 
     pub fn RendererBuffer(comptime tag: Tag) type {
         return switch (tag) {
             .gl => RendererGL.Buffer,
             .cpu => RendererCpu.Buffer,
+            .d11 => RendererD11.Buffer,
         };
     }
 };
@@ -353,6 +404,7 @@ pub const LinuxRendererGL = @import("LinuxRendererGL.zig");
 pub const LinuxRendererCpu = @import("LinuxRendererCpu.zig");
 pub const Win32RendererGL = @import("Win32RendererGL.zig");
 pub const Win32RendererCpu = @import("Win32RendererCpu.zig");
+pub const RendererD11 = @import("RendererD11.zig");
 
 const std = @import("std");
 const Io = std.Io;
@@ -365,11 +417,13 @@ const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");
+const constants = @import("constants");
 const CreateStatus = Client.CreateStatus;
 const BufferPresented = server_to_client.MessagePayload.BufferPresented;
 const log = std.log.scoped(.Viewport);
 const os = @import("builtin").os.tag;
 const BufferCreatedCpu = server_to_client.BufferCreatedCpu;
 const BufferCreatedGbmBo = server_to_client.BufferCreatedGbmBo;
+const TextureCreatedD3D = server_to_client.TextureCreatedD3D;
 const utils = @import("utils");
 const win32 = @import("win32");

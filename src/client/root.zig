@@ -78,6 +78,10 @@ pub const ClientHandle = opaque {
         }
     }
 
+    pub fn init_d3d11(handle: *ClientHandle) !void {
+        try handle.cast().init_d3d11();
+    }
+
     pub fn poll(handle: *ClientHandle, timeout_ns: u64) !void {
         const client = handle.cast();
 

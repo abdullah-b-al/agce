@@ -197,6 +197,21 @@ pub fn handle_event(
                 else => comptime unreachable,
             }
         },
+        .texture_created_d3d => |e| {
+            if (!constants.os_has_d3d) @panic("OS does not support d3d");
+
+            const client = server.clients.known.get(e.client_id) orelse return;
+            client.connection.send_texture_created_d3d(server.io, server.gpa, e.payload) catch |err|
+                return switch (err) {
+                    error.OutOfMemory => error.OutOfMemory,
+
+                    error.Win32OpenProcessFailed,
+                    error.DuplicateHandleFailed,
+                    => error.FailedToSendHandle,
+
+                    else => error.ConnectionClosed,
+                };
+        },
 
         inline else => |e, tag| {
             const client = server.clients.known.get(e.client_id) orelse return;
@@ -315,6 +330,7 @@ pub fn window_system_event_from_message(
         .viewport_destroy,
         .buffer_create_cpu,
         .buffer_create_gbm_bo,
+        .texture_create_d3d,
         => |msg, tag| {
             return @unionInit(
                 WindowSystemEvent,
@@ -479,6 +495,7 @@ pub const Event = union(enum) {
     buffer_released: ptypes.WithClientID(server_to_client.BufferReleased),
     buffer_created_cpu: ptypes.WithClientID(server_to_client.BufferCreatedCpu),
     buffer_created_gbm_bo: ptypes.WithClientID(server_to_client.BufferCreatedGbmBo),
+    texture_created_d3d: ptypes.WithClientID(server_to_client.TextureCreatedD3D),
 
     keyboard_key: ptypes.WithClientID(server_to_client.KeyboardKey),
     keyboard_char: ptypes.WithClientID(server_to_client.KeyboardChar),

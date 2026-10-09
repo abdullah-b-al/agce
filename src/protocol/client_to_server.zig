@@ -16,6 +16,7 @@ pub const MessagePayload = union(enum(u32)) {
 
     buffer_create_cpu: BufferCreateCpu,
     buffer_create_gbm_bo: BufferCreateGbmBo,
+    texture_create_d3d: TextureCreateD3D,
 
     buffer_destroy: BufferDestroy,
 
@@ -92,6 +93,13 @@ pub const BufferCreateGbmBo = struct {
     viewport_id: types.ViewportID,
     size: types.Size,
     format: types.BufferFormat,
+};
+
+pub const TextureCreateD3D = struct {
+    viewport_id: types.ViewportID,
+    size: types.Size,
+    format: types.BufferFormat,
+    version: types.D3DVersion,
 };
 
 pub const BufferPresent = struct {

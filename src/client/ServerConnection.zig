@@ -21,6 +21,7 @@ pub fn receive_with_reader(_: Io, arena: std.mem.Allocator, reader: *Io.Reader) 
         inline else => |tag| {
             switch (header.format) {
                 .json => {
+                    @setEvalBranchQuota(2000);
                     const T = utils.TypeOfField(server_to_client.MessagePayload, @tagName(tag));
                     const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
                         .allocate = .alloc_if_needed,
@@ -51,6 +52,12 @@ pub fn send_buffer_create_cpu(c: *ServerConnection, io: Io, gpa: std.mem.Allocat
 pub fn send_buffer_create_gbm_bo(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.BufferCreateGbmBo) !void {
     if (!constants.os_has_gbm) @compileError("OS does not support gbm");
     const message = try c.stringify(gpa, .{ .buffer_create_gbm_bo = payload });
+    try c.send(io, gpa, message);
+}
+
+pub fn send_texture_create_d3d(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.TextureCreateD3D) !void {
+    if (!constants.os_has_d3d) @compileError("OS does not support d3d");
+    const message = try c.stringify(gpa, .{ .texture_create_d3d = payload });
     try c.send(io, gpa, message);
 }
 

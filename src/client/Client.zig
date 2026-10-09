@@ -7,7 +7,6 @@ connection: ServerConnection,
 registered: bool,
 
 next_viewport_id: ptypes.ViewportID,
-next_buffer_id: ptypes.BufferID,
 next_sub_viewport_id: ptypes.SubViewportID,
 
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
@@ -21,6 +20,8 @@ messages_arena: std.heap.ArenaAllocator,
 
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
+device_d11: ?*ID3D11Device,
+device1_d11: ?*ID3D11Device1,
 
 env: Env,
 
@@ -63,7 +64,6 @@ pub fn init(
         .registered = false,
         .messages_arena = .init(gpa),
         .next_viewport_id = .first_for_client,
-        .next_buffer_id = .first,
         .next_sub_viewport_id = .first,
         .viewports = .empty,
         .viewports_destroyed = .empty,
@@ -72,6 +72,8 @@ pub fn init(
         .processes = .empty,
         .gbm = null,
         .gl_context = null,
+        .device_d11 = null,
+        .device1_d11 = null,
 
         .env = env,
         .read_future = future,
@@ -117,6 +119,11 @@ pub fn deinit(client: *Client) void {
         }
     }
 
+    if (constants.os_has_d3d) {
+        if (client.device_d11) |d| _ = d.IUnknown.Release();
+        if (client.device1_d11) |d| _ = d.IUnknown.Release();
+    }
+
     const containers = .{
         &client.viewports,
         &client.viewports_destroyed,
@@ -151,6 +158,45 @@ pub fn init_gbm(client: *Client) !void {
         .dri = dri,
         .device = device,
     };
+}
+
+pub fn init_d3d11(client: *Client) !void {
+    std.debug.assert(client.device_d11 == null);
+    std.debug.assert(client.device1_d11 == null);
+    if (!constants.os_has_d3d) {
+        @panic("OS does not have d3d");
+    }
+
+    var device: *d11.ID3D11Device = undefined;
+    var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
+
+    const create_device_result = d11.D3D11CreateDevice(
+        null,
+        .HARDWARE,
+        null,
+        .{},
+        null,
+        0,
+        d11.D3D11_SDK_VERSION,
+        &device,
+        &feature_level,
+        null,
+    );
+
+    if (create_device_result != win32_foundation.S_OK) {
+        log.err("FailedToCreateD3D11Device: 0x{x}", .{create_device_result});
+        return error.FailedToCreateD3D11Device;
+    }
+
+    var device1: *d11.ID3D11Device1 = undefined;
+    const device1_result = device.IUnknown.QueryInterface(d11.IID_ID3D11Device1, @ptrCast(&device1));
+    if (device1_result != win32_foundation.S_OK) {
+        log.err("FailedToCreateD3D11Device1: 0x{x}", .{create_device_result});
+        return error.FailedToCreateD3D11Device1;
+    }
+
+    client.device_d11 = device;
+    client.device1_d11 = device1;
 }
 
 pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
@@ -212,6 +258,7 @@ pub fn poll(client: *Client, timeout: Io.Timeout) error{ Timeout, Canceled, OutO
         try vp.events.ensureUnusedCapacity(client.gpa, len);
         try vp.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, len);
         try vp.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, len);
+        try vp.pending_textures_d3d.ensureUnusedCapacity(client.gpa, len);
     }
 
     while (client.messages_queue.messages.pop()) |message| {
@@ -337,6 +384,15 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             vp.pending_buffers_gbm_bo.appendAssumeCapacity(e);
         },
 
+        .texture_created_d3d => |e, tag| {
+            if (!constants.os_has_d3d) {
+                @panic("Received invalid message on os " ++ @tagName(tag));
+            }
+
+            const vp = client.viewports.get(e.viewport_id) orelse return;
+            vp.pending_textures_d3d.appendAssumeCapacity(e);
+        },
+
         .viewport_created => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             std.debug.assert(vp.status == .pending);
@@ -351,6 +407,9 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             switch (vp.renderer) {
                 .gl => {}, // relies on timelines
                 .cpu => |*r| r.buffer_released(e.buffer_id),
+                .d11 => {
+                    @panic("TODO");
+                },
             }
         },
 
@@ -370,8 +429,7 @@ pub fn viewport_create(
     const id = client.next_viewport_id.increment_for_client();
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, size, throttle),
-        .cpu => try client.viewport_create_with_id(.cpu, id, size, throttle),
+        inline else => |t| try client.viewport_create_with_id(t, id, size, throttle),
     };
 
     return vp;
@@ -389,8 +447,7 @@ pub fn viewport_create_from_pending(
     );
 
     const vp = switch (tag) {
-        .gl => try client.viewport_create_with_id(.gl, id, size, throttle),
-        .cpu => try client.viewport_create_with_id(.cpu, id, size, throttle),
+        inline else => |t| try client.viewport_create_with_id(t, id, size, throttle),
     };
 
     _ = client.viewports_from_server.orderedRemove(id);
@@ -415,6 +472,7 @@ pub fn viewport_create_with_id(
             else
                 @panic("TODO"),
             .cpu => .{ .cpu = .init() },
+            .d11 => .{ .d11 = .init() },
         };
         const vp = try client.gpa.create(Viewport);
         vp.* = .init(
@@ -476,6 +534,7 @@ pub fn send_viewport_create(
         break :blk switch (vp.renderer) {
             .gl => true,
             .cpu => false,
+            .d11 => false, // TODO: Set to true
         };
     };
 
@@ -583,6 +642,9 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
     device: *c_linux.struct_gbm_device,
 };
 
+pub const ID3D11Device = if (!constants.os_has_d3d) void else d11.ID3D11Device;
+pub const ID3D11Device1 = if (!constants.os_has_d3d) void else d11.ID3D11Device1;
+
 pub const Event = union(enum) {
     viewport_resize: server_to_client.ViewportResize,
     viewport_close: server_to_client.ViewportClose,
@@ -684,3 +746,6 @@ const RendererCpu = Viewport.RendererCpu;
 const Process = @import("Process.zig");
 const ServerConnection = @import("ServerConnection.zig");
 const os = @import("builtin").os.tag;
+const d11 = @import("win32").graphics.direct3d11;
+const d3d = @import("win32").graphics.direct3d;
+const win32_foundation = @import("win32").foundation;

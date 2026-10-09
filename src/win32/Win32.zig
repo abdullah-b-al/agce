@@ -6,6 +6,8 @@ instance: win32_foundation.HINSTANCE,
 class_window: win32_win.WNDCLASSA,
 class_viewport: win32_win.WNDCLASSA,
 
+device_d11: *d11.ID3D11Device,
+
 pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
     const ptr = try ws.gpa.create(Win32);
     errdefer ws.gpa.destroy(ptr);
@@ -48,17 +50,40 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         return error.FailedToRegisterClass;
     }
 
+    var device_d11: *d11.ID3D11Device = undefined;
+    var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
+
+    const create_device_result = d11.D3D11CreateDevice(
+        null,
+        .HARDWARE,
+        null,
+        .{},
+        null,
+        0,
+        d11.D3D11_SDK_VERSION,
+        &device_d11,
+        &feature_level,
+        null,
+    );
+
+    if (create_device_result != win32_foundation.S_OK) {
+        log.err("FailedToCreateD3D11Device: 0x{x}", .{create_device_result});
+        return error.FailedToCreateD3D11Device;
+    }
+
     ptr.* = .{
         .gpa = ws.gpa,
         .instance = instance,
         .class_window = class_window,
         .class_viewport = class_viewport,
+        .device_d11 = device_d11,
     };
 
     return ptr;
 }
 
 pub fn destroy(win32: *Win32) void {
+    _ = win32.device_d11.IUnknown.Release();
     win32.gpa.destroy(win32);
 }
 
@@ -566,6 +591,31 @@ fn get_modifires() pinput.Modifiers {
     // zig fmt: on
 }
 
+fn log_d3d11_errors(win32: *Win32) void {
+    var info_queue: *d11.ID3D11InfoQueue = undefined;
+
+    const hr = win32.device_d11.IUnknown.QueryInterface(
+        d11.IID_ID3D11InfoQueue,
+        @ptrCast(&info_queue),
+    );
+    std.debug.assert(hr == win32_foundation.S_OK);
+    for (0..info_queue.GetMessageCountLimit()) |i| {
+        var size: usize = 0;
+
+        _ = info_queue.GetMessage(i, null, &size);
+
+        const buf = try win32.gpa.alloc(u8, size);
+        defer win32.gpa.free(buf);
+
+        const msg: *d11.D3D11_MESSAGE = @ptrCast(@alignCast(buf.ptr));
+
+        _ = info_queue.GetMessage(i, msg, &size);
+        const ptr: [*]const u8 = @ptrCast((msg.pDescription.?));
+
+        log.err("{s}", .{ptr[0..msg.DescriptionByteLength]});
+    }
+}
+
 pub const HINSTANCE = win32_foundation.HINSTANCE;
 pub const Window = @import("Window.zig");
 pub const Viewport = @import("Viewport.zig");
@@ -584,3 +634,6 @@ const pinput = @import("protocol").input;
 const BufferID = ptypes.BufferID;
 const win32_gdi = @import("win32").graphics.gdi;
 const log = std.log.scoped(.win32);
+const d11 = @import("win32").graphics.direct3d11;
+const d3d = @import("win32").graphics.direct3d;
+const dxgi = @import("win32").graphics.dxgi;

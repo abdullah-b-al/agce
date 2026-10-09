@@ -10,6 +10,11 @@ pub const os_has_gbm = switch (os) {
     else => false,
 };
 
+pub const os_has_d3d = switch (os) {
+    .windows => true,
+    else => false,
+};
+
 pub const os_supports_fd = switch (os) {
     .linux => true,
     else => false,
