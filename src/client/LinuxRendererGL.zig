@@ -168,9 +168,9 @@ pub const Buffer = struct {
 
 pub const AcquireTimeline = struct {
     point: ptypes.AcquireTimelinePoint,
-    handle: ptypes.AcquireTimelineHandle,
+    handle: ptypes.DrmSyncobjAcquireTimelineHandle,
 
-    pub fn from_fd(gbm: Client.Gbm, fd: ptypes.AcquireTimelineFd) AcquireTimeline {
+    pub fn from_fd(gbm: Client.Gbm, fd: ptypes.DrmSyncobjAcquireTimelineFd) AcquireTimeline {
         var handle: u32 = undefined;
         const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @intFromEnum(fd), &handle);
         std.debug.assert(result == 0);
@@ -186,9 +186,9 @@ pub const AcquireTimeline = struct {
 
 pub const ReleaseTimeline = struct {
     point: ptypes.ReleaseTimelinePoint,
-    handle: ptypes.ReleaseTimelineHandle,
+    handle: ptypes.DrmSyncobjReleaseTimelineHandle,
 
-    pub fn from_fd(gbm: Client.Gbm, fd: ptypes.ReleaseTimelineFd) ReleaseTimeline {
+    pub fn from_fd(gbm: Client.Gbm, fd: ptypes.DrmSyncobjReleaseTimelineFd) ReleaseTimeline {
         var handle: u32 = undefined;
         const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @intFromEnum(fd), &handle);
         std.debug.assert(result == 0);

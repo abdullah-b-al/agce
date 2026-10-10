@@ -2,7 +2,8 @@ pub fn parse_message_header(data: []const u8) !MessageHeader {
     return try common.parse_message_header(MessageHeader, data);
 }
 
-pub const MessageHeader = types.MessageHeaderGeneric(MessageTag);
+pub const MessageHeader = common.MessageHeaderGeneric(MessageTag);
+pub const WithClientID = common.WithClientID;
 
 pub const Message = struct {
     header: MessageHeader,

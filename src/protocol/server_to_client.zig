@@ -126,7 +126,8 @@ fn recv_fd_peek(comptime Fd: type, socket: c_int) !Fd {
     return data.*;
 }
 
-pub const MessageHeader = types.MessageHeaderGeneric(MessageTag);
+pub const MessageHeader = common.MessageHeaderGeneric(MessageTag);
+pub const WithClientID = common.WithClientID;
 
 pub const Message = struct {
     header: MessageHeader,
@@ -201,7 +202,7 @@ pub const BufferCreatedGbmBo = struct {
 pub const TextureCreatedD3D = struct {
     viewport_id: types.ViewportID,
     buffer_id: types.BufferID,
-    handle: types.D3DTextureHandle,
+    handle: types.D3DTextureSharedHandle,
     size: types.Size,
     format: types.BufferFormat,
     version: types.D3DVersion,

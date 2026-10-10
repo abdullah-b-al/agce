@@ -113,7 +113,7 @@ pub fn min_source_size_with_buffer(vp: *const Viewport, window: *Window, buffer:
 pub const AcquireTimeline = struct {
     acquire: *wp.LinuxDrmSyncobjTimelineV1,
 
-    pub fn init(m: *wp.LinuxDrmSyncobjManagerV1, acquire: ptypes.AcquireTimelineFd) !AcquireTimeline {
+    pub fn init(m: *wp.LinuxDrmSyncobjManagerV1, acquire: ptypes.DrmSyncobjAcquireTimelineFd) !AcquireTimeline {
         return .{
             .acquire = try m.importTimeline(@intFromEnum(acquire)),
         };
@@ -130,7 +130,7 @@ pub const AcquireTimeline = struct {
 pub const ReleaseTimeline = struct {
     release: *wp.LinuxDrmSyncobjTimelineV1,
 
-    pub fn init(m: *wp.LinuxDrmSyncobjManagerV1, release: ptypes.ReleaseTimelineFd) !ReleaseTimeline {
+    pub fn init(m: *wp.LinuxDrmSyncobjManagerV1, release: ptypes.DrmSyncobjReleaseTimelineFd) !ReleaseTimeline {
         return .{
             .release = try m.importTimeline(@intFromEnum(release)),
         };

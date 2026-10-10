@@ -140,57 +140,7 @@ pub const BufferID = enum(u32) {
     }
 };
 
-const HandleBackingInt = switch (os) {
-    .linux => c_int,
-    .windows => blk: {
-        std.debug.assert(@sizeOf(std.os.windows.HANDLE) == @sizeOf(usize));
-        break :blk usize;
-    },
-    else => unreachable,
-};
-
-pub const CpuBufferHandle = enum(HandleBackingInt) {
-    pub const is_fd = os == .linux;
-
-    invalid = 0,
-    _,
-};
-
-pub const GpuBufferFd = enum(c_int) {
-    pub const is_fd = true;
-
-    invalid = -1,
-    _,
-};
-
-pub const D3DTextureHandle = enum(HandleBackingInt) {
-    pub const is_fd = false;
-
-    _,
-};
-
-pub const AcquireTimelineFd = enum(c_int) {
-    pub const is_fd = true;
-
-    invalid = -1,
-    _,
-};
-
-pub const ReleaseTimelineFd = enum(c_int) {
-    pub const is_fd = true;
-
-    invalid = -1,
-    _,
-};
-
 pub const Status = enum { success, failure };
-
-pub const D3DVersion = enum {
-    d3d11,
-};
-
-pub const AcquireTimelineHandle = enum(u32) { _ };
-pub const ReleaseTimelineHandle = enum(u32) { _ };
 
 pub const AcquireTimelinePoint = enum(u64) {
     _,
@@ -261,24 +211,6 @@ pub const BufferFormat = enum {
     }
 };
 
-pub const BufferAndTimelineFds = extern struct {
-    pub const invalid: BufferAndTimelineFds = .{
-        .buffer = .invalid,
-        .acquire_timeline = .invalid,
-        .release_timeline = .invalid,
-    };
-
-    buffer: GpuBufferFd,
-    acquire_timeline: AcquireTimelineFd,
-    release_timeline: ReleaseTimelineFd,
-};
-
-pub const WindowCreate = struct {
-    viewport_id: ViewportID,
-    create_sync_timeline: bool,
-    size: Size,
-};
-
 pub const ViewportDisplayState = enum {
     shown,
     hidden,
@@ -328,68 +260,70 @@ pub const CursorShape = enum {
     zoom_out,
 };
 
-pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
-    return extern struct {
-        const Header = @This();
+pub const CpuBufferHandle = switch (os) {
+    .linux => Fd(opaque {}),
+    .windows => enum(WindowsHandleBackingInt) { _ },
+    else => unreachable,
+};
 
-        payload_len: u32,
-        format: MessageFormat,
-        message_tag: MessageTag,
+////////////////////////////////////////////////////////////////////////////////
+// Linux types
+
+pub const GbmBoFd = Fd(opaque {});
+pub const DrmSyncobjAcquireTimelineFd = Fd(opaque {});
+pub const DrmSyncobjReleaseTimelineFd = Fd(opaque {});
+pub const DrmSyncobjAcquireTimelineHandle = enum(u32) { _ };
+pub const DrmSyncobjReleaseTimelineHandle = enum(u32) { _ };
+
+pub const BufferAndTimelineFds = extern struct {
+    pub const invalid: BufferAndTimelineFds = .{
+        .buffer = .invalid,
+        .acquire_timeline = .invalid,
+        .release_timeline = .invalid,
+    };
+
+    buffer: GbmBoFd,
+    acquire_timeline: DrmSyncobjAcquireTimelineFd,
+    release_timeline: DrmSyncobjReleaseTimelineFd,
+};
+
+comptime {
+    const A = Fd(opaque {});
+    const B = Fd(opaque {});
+    std.debug.assert(A != B);
+}
+pub fn Fd(comptime Opaque: type) type {
+    return enum(c_int) {
+        pub const is_fd = true;
+
+        invalid = -1,
+        _,
 
         comptime {
-            if (@sizeOf(Header) != 12) {
-                @compileError("Header size changed. It must always be 12 bytes long");
-            }
-        }
-
-        pub fn parse(data: []const u8) !Header {
-            std.debug.assert(@sizeOf(Header) == data.len);
-
-            const head_payload_len = parse_len(data);
-            const header_format = try parse_format(data);
-            const header_message_tag = try parse_message_tag(data);
-
-            return .{
-                .payload_len = head_payload_len,
-                .format = header_format,
-                .message_tag = header_message_tag,
-            };
-        }
-
-        fn parse_len(data: []const u8) @FieldType(Header, "payload_len") {
-            return parse_int_of("payload_len", data);
-        }
-
-        fn parse_format(data: []const u8) error{HeaderInvalidFormat}!@FieldType(Header, "format") {
-            const int = parse_int_of("format", data);
-            return std.enums.fromInt(MessageFormat, int) orelse error.HeaderInvalidFormat;
-        }
-
-        fn parse_message_tag(data: []const u8) error{HeaderInvalidMessageTag}!@FieldType(Header, "message_tag") {
-            const int = parse_int_of("message_tag", data);
-            return std.enums.fromInt(MessageTag, int) orelse error.HeaderInvalidMessageTag;
-        }
-
-        fn parse_int_of(comptime name: []const u8, data: []const u8) u32 {
-            std.debug.assert(data.len >= @sizeOf(Header));
-
-            const F = @FieldType(Header, name);
-            const offset = @offsetOf(Header, name);
-            const len = @sizeOf(F);
-
-            const slice = data[offset..][0..len];
-            const int = std.mem.bytesToValue(u32, slice);
-            return int;
+            _ = Opaque;
         }
     };
 }
 
-pub fn WithClientID(comptime T: type) type {
-    return struct {
-        client_id: ClientID,
-        payload: T,
-    };
-}
+// Linux types
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+// Windows types
+
+const WindowsHandleBackingInt = switch (@sizeOf(std.os.windows.HANDLE)) {
+    8 => usize,
+    else => unreachable,
+};
+
+pub const D3DVersion = enum {
+    d3d11,
+};
+
+pub const D3DTextureSharedHandle = enum(WindowsHandleBackingInt) { _ };
+
+// Windows types
+////////////////////////////////////////////////////////////////////////////////
 
 const std = @import("std");
 const os = @import("builtin").os.tag;

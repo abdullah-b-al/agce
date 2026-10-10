@@ -480,30 +480,30 @@ pub const MessageSource = union(enum) {
 pub const Event = union(enum) {
     unknown_client_connected: zio.net.Stream,
 
-    viewport_create: ptypes.WithClientID(server_to_client.ViewportCreate),
-    viewport_created: ptypes.WithClientID(server_to_client.ViewportCreated),
-    viewport_resize: ptypes.WithClientID(server_to_client.ViewportResize),
-    viewport_close: ptypes.WithClientID(server_to_client.ViewportClose),
-    viewport_display_state: ptypes.WithClientID(server_to_client.ViewportDisplayState),
+    viewport_create: server_to_client.WithClientID(server_to_client.ViewportCreate),
+    viewport_created: server_to_client.WithClientID(server_to_client.ViewportCreated),
+    viewport_resize: server_to_client.WithClientID(server_to_client.ViewportResize),
+    viewport_close: server_to_client.WithClientID(server_to_client.ViewportClose),
+    viewport_display_state: server_to_client.WithClientID(server_to_client.ViewportDisplayState),
 
-    sub_viewport_embeded: ptypes.WithClientID(server_to_client.SubViewportEmbeded),
-    sub_viewport_display_state: ptypes.WithClientID(server_to_client.SubViewportDisplayState),
-    sub_viewport_closed: ptypes.WithClientID(server_to_client.SubviewportClosed),
+    sub_viewport_embeded: server_to_client.WithClientID(server_to_client.SubViewportEmbeded),
+    sub_viewport_display_state: server_to_client.WithClientID(server_to_client.SubViewportDisplayState),
+    sub_viewport_closed: server_to_client.WithClientID(server_to_client.SubviewportClosed),
 
-    frame_render: ptypes.WithClientID(server_to_client.FrameRender),
+    frame_render: server_to_client.WithClientID(server_to_client.FrameRender),
 
-    buffer_released: ptypes.WithClientID(server_to_client.BufferReleased),
-    buffer_created_cpu: ptypes.WithClientID(server_to_client.BufferCreatedCpu),
-    buffer_created_gbm_bo: ptypes.WithClientID(server_to_client.BufferCreatedGbmBo),
-    texture_created_d3d: ptypes.WithClientID(server_to_client.TextureCreatedD3D),
+    buffer_released: server_to_client.WithClientID(server_to_client.BufferReleased),
+    buffer_created_cpu: server_to_client.WithClientID(server_to_client.BufferCreatedCpu),
+    buffer_created_gbm_bo: server_to_client.WithClientID(server_to_client.BufferCreatedGbmBo),
+    texture_created_d3d: server_to_client.WithClientID(server_to_client.TextureCreatedD3D),
 
-    keyboard_key: ptypes.WithClientID(server_to_client.KeyboardKey),
-    keyboard_char: ptypes.WithClientID(server_to_client.KeyboardChar),
-    mouse_enter: ptypes.WithClientID(server_to_client.MouseEnter),
-    mouse_leave: ptypes.WithClientID(server_to_client.MouseLeave),
-    mouse_motion: ptypes.WithClientID(server_to_client.MouseMotion),
-    mouse_button: ptypes.WithClientID(server_to_client.MouseButton),
-    mouse_scroll: ptypes.WithClientID(server_to_client.MouseScroll),
+    keyboard_key: server_to_client.WithClientID(server_to_client.KeyboardKey),
+    keyboard_char: server_to_client.WithClientID(server_to_client.KeyboardChar),
+    mouse_enter: server_to_client.WithClientID(server_to_client.MouseEnter),
+    mouse_leave: server_to_client.WithClientID(server_to_client.MouseLeave),
+    mouse_motion: server_to_client.WithClientID(server_to_client.MouseMotion),
+    mouse_button: server_to_client.WithClientID(server_to_client.MouseButton),
+    mouse_scroll: server_to_client.WithClientID(server_to_client.MouseScroll),
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);

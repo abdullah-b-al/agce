@@ -140,8 +140,8 @@ pub const SubViewportPending = struct {
 
 pub const GbmBo = if (!constants.os_has_gbm) void else struct {
     bo: *c_linux.struct_gbm_bo,
-    acquire: ptypes.AcquireTimelineHandle,
-    release: ptypes.ReleaseTimelineHandle,
+    acquire: ptypes.DrmSyncobjAcquireTimelineHandle,
+    release: ptypes.DrmSyncobjReleaseTimelineHandle,
 
     pub fn init(gbm: WindowSystem.Gbm, size: ptypes.Size, format: ptypes.BufferFormat) !GbmBo {
         const bo_format = switch (format) {
@@ -184,7 +184,7 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
         c_linux.gbm_bo_destroy(bo.bo);
     }
 
-    pub fn acquire_fd(bo: *const GbmBo, gbm: WindowSystem.Gbm) ptypes.AcquireTimelineFd {
+    pub fn acquire_fd(bo: *const GbmBo, gbm: WindowSystem.Gbm) ptypes.DrmSyncobjAcquireTimelineFd {
         return @enumFromInt(
             gbm.syncobj_fd_from_handle(
                 @intFromEnum(bo.acquire),
@@ -192,7 +192,7 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
         );
     }
 
-    pub fn release_fd(bo: *const GbmBo, gbm: WindowSystem.Gbm) ptypes.ReleaseTimelineFd {
+    pub fn release_fd(bo: *const GbmBo, gbm: WindowSystem.Gbm) ptypes.DrmSyncobjReleaseTimelineFd {
         return @enumFromInt(
             gbm.syncobj_fd_from_handle(
                 @intFromEnum(bo.release),

@@ -659,8 +659,8 @@ pub fn buffer_create_and_register_gpu_async(
     try rs.buffers.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
     try wl.buffer_set_listener_prepare(ws);
 
-    const acquire_fd: ptypes.AcquireTimelineFd = buffer.acquire_fd(ws.gbm);
-    const release_fd: ptypes.ReleaseTimelineFd = buffer.release_fd(ws.gbm);
+    const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
+    const release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(ws.gbm);
     const acquire: Viewport.AcquireTimeline = try .init(wl.sync_object_manager, acquire_fd);
     errdefer {
         acquire.acquire.destroy();
@@ -865,9 +865,9 @@ pub const RegisterGpuBuffer = struct {
     viewport_id: ptypes.ViewportID,
     size: ptypes.Size,
     gpu: Buffer.Gpu,
-    buffer_fd: ptypes.GpuBufferFd,
-    acquire_timeline: ptypes.AcquireTimelineFd,
-    release_timeline: ptypes.ReleaseTimelineFd,
+    buffer_fd: ptypes.GbmBoFd,
+    acquire_timeline: ptypes.DrmSyncobjAcquireTimelineFd,
+    release_timeline: ptypes.DrmSyncobjReleaseTimelineFd,
     stride: u32,
     format: ptypes.BufferFormat,
 

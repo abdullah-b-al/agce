@@ -49,7 +49,7 @@ pub const Buffer = struct {
 
 pub const AcquireTimeline = struct {
     point: ptypes.AcquireTimelinePoint,
-    handle: ptypes.AcquireTimelineHandle,
+    handle: ptypes.DrmSyncobjAcquireTimelineHandle,
 
     pub fn init() AcquireTimeline {
         unreachable;
@@ -58,7 +58,7 @@ pub const AcquireTimeline = struct {
 
 pub const ReleaseTimeline = struct {
     point: ptypes.ReleaseTimelinePoint,
-    handle: ptypes.ReleaseTimelineHandle,
+    handle: ptypes.DrmSyncobjReleaseTimelineHandle,
 
     pub fn init() ReleaseTimeline {
         unreachable;
