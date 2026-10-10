@@ -18,7 +18,8 @@ const Case = enum {
     interactive_events,
     embed_sub_viewports,
     hide_sub_viewports,
-    share_d3d11_texture,
+    d3d11_share_texture,
+    d3d11_clear_screen,
 };
 
 comptime {
@@ -55,17 +56,17 @@ pub fn main(init: std.process.Init) !void {
     var iter = cases.iterator();
 
     while (iter.next()) |case| {
-        inline for (@typeInfo(Case).@"enum".fields) |field| {
-            if (field.value == @intFromEnum(case)) {
+        switch (case) {
+            inline else => |tag| {
                 const file = blk: inline for (files) |file| {
-                    if (@hasDecl(file, field.name)) {
+                    if (@hasDecl(file, @tagName(tag))) {
                         break :blk file;
                     }
-                } else @panic("Cannot find case " ++ field.name);
+                } else @panic("Cannot find case " ++ @tagName(tag));
 
-                const func = @field(file, field.name);
+                const func = @field(file, @tagName(tag));
                 try func(init);
-            }
+            },
         }
     }
 }

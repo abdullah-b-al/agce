@@ -148,8 +148,21 @@ pub fn buffer_present(vp: *Viewport) !void {
 
                 break :blk buffer;
             },
-            .d11 => {
-                @panic("TODO");
+            .d11 => |*r| {
+                const buffer = r.buffers.getPtr(vp.current_buffer.?).?;
+                std.debug.assert(buffer.released);
+
+                try vp.client.connection.send_buffer_present(
+                    vp.client.io,
+                    vp.client.gpa,
+                    .{
+                        .viewport_id = vp.id,
+                        .buffer_id = buffer.id,
+                        .viewport_size = vp.size,
+                    },
+                );
+
+                break :blk buffer;
             },
         };
 
@@ -163,7 +176,10 @@ pub fn buffer_present(vp: *Viewport) !void {
             b.acquire.point.advance();
             b.released = false;
         },
-        .d11 => @panic("TODO"),
+        .d11 => |_, tag| {
+            const b: *Renderer.RendererBuffer(tag) = @ptrCast(@alignCast(buffer));
+            b.released = false;
+        },
     }
 
     vp.frame_number += 1;
@@ -327,7 +343,11 @@ pub fn renderer_buffers_create(
             if (Buffer == TextureCreatedD3D) {
                 try r.buffers.ensureUnusedCapacity(gpa, created.len);
                 for (created) |b| {
-                    const buffer: RendererD11.Buffer = try .init(vp.client.device1_d11.?, b);
+                    const buffer: RendererD11.Buffer = try .init(
+                        vp.client.device_d11.?,
+                        vp.client.device1_d11.?,
+                        b,
+                    );
                     r.buffers.putAssumeCapacityNoClobber(buffer.id, buffer);
                 }
             }

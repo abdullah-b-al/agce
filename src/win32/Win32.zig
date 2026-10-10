@@ -6,7 +6,11 @@ instance: win32_foundation.HINSTANCE,
 class_window: win32_win.WNDCLASSA,
 class_viewport: win32_win.WNDCLASSA,
 
-device_d11: *d11.ID3D11Device,
+d11_device: *d11.ID3D11Device,
+d11_device_context: *d11.ID3D11DeviceContext,
+dxgi_device: *dxgi.IDXGIDevice,
+dxgi_adapter: *dxgi.IDXGIAdapter,
+dxgi_factory: *dxgi.IDXGIFactory2,
 
 pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
     const ptr = try ws.gpa.create(Win32);
@@ -50,20 +54,21 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         return error.FailedToRegisterClass;
     }
 
-    var device_d11: *d11.ID3D11Device = undefined;
+    var d11_device: *d11.ID3D11Device = undefined;
+    var d11_device_context: *d11.ID3D11DeviceContext = undefined;
     var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
 
     const create_device_result = d11.D3D11CreateDevice(
         null,
         .HARDWARE,
         null,
-        .{},
+        .{ .DEBUG = 0 },
         null,
         0,
         d11.D3D11_SDK_VERSION,
-        &device_d11,
+        &d11_device,
         &feature_level,
-        null,
+        &d11_device_context,
     );
 
     if (create_device_result != win32_foundation.S_OK) {
@@ -71,19 +76,48 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         return error.FailedToCreateD3D11Device;
     }
 
+    var dxgi_device: *dxgi.IDXGIDevice = undefined;
+    if (d11_device.IUnknown.QueryInterface(dxgi.IID_IDXGIDevice, @ptrCast(&dxgi_device)) !=
+        win32_foundation.S_OK)
+    {
+        return error.FailedToCreateDXGIDevice;
+    }
+
+    var dxgi_adapter: *dxgi.IDXGIAdapter = undefined;
+    if (dxgi_device.GetAdapter(&dxgi_adapter) !=
+        win32_foundation.S_OK)
+    {
+        return error.FailedToCreateDXGIAdapter;
+    }
+
+    var dxgi_factory: *dxgi.IDXGIFactory2 = undefined;
+    if (dxgi_adapter.IDXGIObject.GetParent(dxgi.IID_IDXGIFactory2, @ptrCast(&dxgi_factory)) !=
+        win32_foundation.S_OK)
+    {
+        return error.FailedToCreateDXGIFactory2;
+    }
+
     ptr.* = .{
         .gpa = ws.gpa,
         .instance = instance,
         .class_window = class_window,
         .class_viewport = class_viewport,
-        .device_d11 = device_d11,
+        .d11_device = d11_device,
+        .d11_device_context = d11_device_context,
+        .dxgi_device = dxgi_device,
+        .dxgi_adapter = dxgi_adapter,
+        .dxgi_factory = dxgi_factory,
     };
 
     return ptr;
 }
 
 pub fn destroy(win32: *Win32) void {
-    _ = win32.device_d11.IUnknown.Release();
+    _ = win32.dxgi_factory.IUnknown.Release();
+    _ = win32.dxgi_adapter.IUnknown.Release();
+    _ = win32.dxgi_device.IUnknown.Release();
+    _ = win32.d11_device_context.IUnknown.Release();
+    _ = win32.d11_device.IUnknown.Release();
     win32.gpa.destroy(win32);
 }
 
@@ -390,12 +424,16 @@ pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?[*:0]align(1) cons
 
 pub const Buffer = union(enum) {
     cpu: Cpu,
+    d11: D11,
 
     pub fn deinit(buffer: *Buffer) void {
         switch (buffer.*) {
             .cpu => |cpu| {
                 _ = win32_memory.UnmapViewOfFile(cpu.pixels);
                 _ = win32_foundation.CloseHandle(@ptrFromInt(@intFromEnum(cpu.handle)));
+            },
+            .d11 => |d| {
+                _ = d.texture.IUnknown.Release();
             },
         }
     }
@@ -405,6 +443,10 @@ pub const Buffer = union(enum) {
         pixels: *anyopaque,
         size: ptypes.Size,
         format: ptypes.BufferFormat,
+    };
+
+    pub const D11 = struct {
+        texture: *d11.ID3D11Texture2D,
     };
 };
 
@@ -591,28 +633,53 @@ fn get_modifires() pinput.Modifiers {
     // zig fmt: on
 }
 
-fn log_d3d11_errors(win32: *Win32) void {
-    var info_queue: *d11.ID3D11InfoQueue = undefined;
+pub fn log_d3d11_errors(win32: *Win32) !void {
+    {
+        var info_queue: *d11.ID3D11InfoQueue = undefined;
 
-    const hr = win32.device_d11.IUnknown.QueryInterface(
-        d11.IID_ID3D11InfoQueue,
-        @ptrCast(&info_queue),
-    );
-    std.debug.assert(hr == win32_foundation.S_OK);
-    for (0..info_queue.GetMessageCountLimit()) |i| {
-        var size: usize = 0;
+        const hr = win32.d11_device.IUnknown.QueryInterface(
+            d11.IID_ID3D11InfoQueue,
+            @ptrCast(&info_queue),
+        );
+        std.debug.assert(hr == win32_foundation.S_OK);
+        const count = info_queue.GetNumStoredMessages();
+        for (0..count) |i| {
+            var size: usize = 0;
+            _ = info_queue.GetMessage(i, null, &size);
 
-        _ = info_queue.GetMessage(i, null, &size);
+            const buf = try win32.gpa.alloc(u8, size);
+            defer win32.gpa.free(buf);
 
-        const buf = try win32.gpa.alloc(u8, size);
-        defer win32.gpa.free(buf);
+            const msg: *d11.D3D11_MESSAGE = @ptrCast(@alignCast(buf.ptr));
 
-        const msg: *d11.D3D11_MESSAGE = @ptrCast(@alignCast(buf.ptr));
+            _ = info_queue.GetMessage(i, msg, &size);
 
-        _ = info_queue.GetMessage(i, msg, &size);
-        const ptr: [*]const u8 = @ptrCast((msg.pDescription.?));
+            const ptr: [*]const u8 = @ptrCast(msg.pDescription.?);
+            log.err("{s}", .{ptr[0..msg.DescriptionByteLength]});
+        }
+    }
 
-        log.err("{s}", .{ptr[0..msg.DescriptionByteLength]});
+    {
+        var info_queue: *dxgi.IDXGIInfoQueue = undefined;
+        const hr = dxgi.DXGIGetDebugInterface1(0, dxgi.IID_IDXGIInfoQueue, @ptrCast(&info_queue));
+
+        std.debug.assert(hr == win32_foundation.S_OK);
+        const count = info_queue.GetNumStoredMessages(dxgi.DXGI_DEBUG_ALL);
+        for (0..count) |i| {
+            var size: usize = 0;
+
+            _ = info_queue.GetMessage(dxgi.DXGI_DEBUG_ALL, i, null, &size);
+
+            const buf = try win32.gpa.alloc(u8, size);
+            defer win32.gpa.free(buf);
+
+            const msg: *dxgi.DXGI_INFO_QUEUE_MESSAGE = @ptrCast(@alignCast(buf.ptr));
+
+            _ = info_queue.GetMessage(dxgi.DXGI_DEBUG_ALL, i, msg, &size);
+
+            const ptr: [*]const u8 = @ptrCast(msg.pDescription.?);
+            log.err("{s}", .{ptr[0..msg.DescriptionByteLength]});
+        }
     }
 }
 

@@ -345,6 +345,42 @@ pub const ViewportHandle = opaque {
         try handle.cast().buffer_present();
     }
 
+    pub fn d11_frame_begin(handle: *ViewportHandle) !D11FrameBegin {
+        std.debug.assert(!handle.destroyed());
+        const vp = handle.cast();
+
+        const client = vp.client;
+        std.debug.assert(vp.renderer == .d11);
+        const r = &vp.renderer.d11;
+
+        std.debug.assert(vp.current_buffer == null);
+        var buffer: ?*RendererD11.Buffer = null;
+        while (buffer == null) {
+            buffer = r.get_buffer() orelse {
+                std.debug.assert(r.buffers.count() > 0);
+                try client.poll(.none); // poll for buffer_released
+                continue;
+            };
+        }
+
+        vp.current_buffer = buffer.?.id;
+
+        return .{
+            .rtv = buffer.?.rtv,
+            .context = client.device_context_d11.?,
+        };
+    }
+
+    pub fn d11_frame_end(_: *ViewportHandle) void {}
+    pub fn d11_frame_present(handle: *ViewportHandle) !void {
+        try handle.cast().buffer_present();
+    }
+
+    pub const D11FrameBegin = struct {
+        rtv: *d11.ID3D11RenderTargetView,
+        context: *d11.ID3D11DeviceContext,
+    };
+
     pub const CpuFrameBegin = struct {
         buffer: []u8,
         width: i32,
@@ -502,6 +538,7 @@ const server_to_client = @import("protocol").server_to_client;
 const Client = @import("Client.zig");
 const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
+const RendererD11 = Viewport.RendererD11;
 const Viewport = @import("Viewport.zig");
 const SubViewport = @import("SubViewport.zig");
 const Process = @import("Process.zig");
@@ -509,3 +546,6 @@ const constants = @import("constants");
 const log = std.log.scoped(.agce);
 const win32 = @import("win32");
 const os = @import("builtin").os.tag;
+const win32_foundation = @import("win32").foundation;
+const d11 = @import("win32").graphics.direct3d11;
+const d3d = @import("win32").graphics.direct3d;

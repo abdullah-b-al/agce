@@ -604,6 +604,7 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
 
     const rs = ws.resources.getPtr(args.client_id).?;
+    try rs.buffers.ensureUnusedCapacity(ws.gpa, 1);
 
     var desc: d11.D3D11_TEXTURE2D_DESC = .{
         .Width = @intCast(args.payload.size.width),
@@ -624,7 +625,7 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
     };
 
     var texture: *d11.ID3D11Texture2D = undefined;
-    const create_result = win32.device_d11.CreateTexture2D(&desc, null, &texture);
+    const create_result = win32.d11_device.CreateTexture2D(&desc, null, &texture);
     if (create_result != win32_foundation.S_OK) {
         return error.FailedToCreateD3DTexture;
     }
@@ -645,12 +646,20 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
     std.debug.assert(handle_result == win32_foundation.S_OK);
     std.debug.assert(handle != null);
 
+    const buffer_id = rs.next_buffer_id.increment();
+
+    rs.buffers.putAssumeCapacityNoClobber(buffer_id, .{
+        .d11 = .{
+            .texture = texture,
+        },
+    });
+
     ws.server_events.appendAssumeCapacity(.{
         .texture_created_d3d = .{
             .client_id = args.client_id,
             .payload = .{
                 .viewport_id = args.payload.viewport_id,
-                .buffer_id = rs.next_buffer_id.increment(),
+                .buffer_id = buffer_id,
                 .handle = @enumFromInt(@intFromPtr(handle.?)),
                 .size = args.payload.size,
                 .format = args.payload.format,
@@ -765,6 +774,39 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
                         win32.render_buffer_cpu(hdc, vp, cpu);
                         _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
                     }
+                },
+                .d11 => {
+                    var back_buffer: *d11.ID3D11Texture2D = undefined;
+                    const hr = nvp.swap_chain.IDXGISwapChain.GetBuffer(
+                        0,
+                        d11.IID_ID3D11Texture2D,
+                        @ptrCast(&back_buffer),
+                    );
+                    // TODO: Error handle
+                    std.debug.assert(hr == win32_foundation.S_OK);
+                    defer _ = back_buffer.IUnknown.Release();
+
+                    var box: d11.D3D11_BOX = .{
+                        .left = 0,
+                        .top = 0,
+                        .front = 0,
+                        .right = @intCast(vp.clipping_rect.width),
+                        .bottom = @intCast(vp.clipping_rect.height),
+                        .back = 1,
+                    };
+                    // TODO: Figure out a way to not copy when presenting
+                    win32.d11_device_context.CopySubresourceRegion(
+                        @ptrCast(back_buffer),
+                        0,
+                        0,
+                        0,
+                        0,
+                        @ptrCast(buffer.d11.texture),
+                        0,
+                        &box,
+                    );
+
+                    _ = nvp.swap_chain.IDXGISwapChain.Present(0, 0);
                 },
             }
 

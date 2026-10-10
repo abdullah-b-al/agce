@@ -18,8 +18,12 @@ pub fn buffer_size(r: *const RendererD11) ptypes.Size {
     return r.buffers.values()[0].size;
 }
 
-pub fn get_buffer(_: *RendererD11, _: i64) error{Timeout}!*Buffer {
-    unreachable;
+pub fn get_buffer(r: *RendererD11) ?*Buffer {
+    for (r.buffers.values()) |*b| {
+        if (b.released) return b;
+    }
+
+    return null;
 }
 
 pub const Buffer = struct {
@@ -30,8 +34,9 @@ pub const Buffer = struct {
     released: bool,
 
     texture: if (constants.os_has_d3d) *d11.ID3D11Texture2D else void,
+    rtv: if (constants.os_has_d3d) *d11.ID3D11RenderTargetView else void,
 
-    pub fn init(device1: *d11.ID3D11Device1, created: server_to_client.TextureCreatedD3D) !Buffer {
+    pub fn init(device: *d11.ID3D11Device, device1: *d11.ID3D11Device1, created: server_to_client.TextureCreatedD3D) !Buffer {
         std.debug.assert(created.version == .d3d11);
 
         var texture: *d11.ID3D11Texture2D = undefined;
@@ -42,17 +47,27 @@ pub const Buffer = struct {
         );
         std.debug.assert(open_result == win32_foundation.S_OK);
 
+        var rtv: *d11.ID3D11RenderTargetView = undefined;
+        const hr = device.CreateRenderTargetView(
+            @ptrCast(texture),
+            null,
+            &rtv,
+        );
+        std.debug.assert(hr == win32_foundation.S_OK);
+
         return .{
             .id = created.buffer_id,
             .size = created.size,
             .format = created.format,
             .released = true,
             .texture = texture,
+            .rtv = rtv,
         };
     }
 
     pub fn deinit(b: *Buffer) void {
         if (constants.os_has_d3d) {
+            _ = b.rtv.IUnknown.Release();
             _ = b.texture.IUnknown.Release();
         }
     }

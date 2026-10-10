@@ -21,6 +21,7 @@ messages_arena: std.heap.ArenaAllocator,
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
 device_d11: ?*ID3D11Device,
+device_context_d11: ?*ID3D11DeviceContext,
 device1_d11: ?*ID3D11Device1,
 
 env: Env,
@@ -73,6 +74,7 @@ pub fn init(
         .gbm = null,
         .gl_context = null,
         .device_d11 = null,
+        .device_context_d11 = null,
         .device1_d11 = null,
 
         .env = env,
@@ -120,6 +122,7 @@ pub fn deinit(client: *Client) void {
     }
 
     if (constants.os_has_d3d) {
+        if (client.device_context_d11) |d| _ = d.IUnknown.Release();
         if (client.device_d11) |d| _ = d.IUnknown.Release();
         if (client.device1_d11) |d| _ = d.IUnknown.Release();
     }
@@ -162,12 +165,14 @@ pub fn init_gbm(client: *Client) !void {
 
 pub fn init_d3d11(client: *Client) !void {
     std.debug.assert(client.device_d11 == null);
+    std.debug.assert(client.device_context_d11 == null);
     std.debug.assert(client.device1_d11 == null);
     if (!constants.os_has_d3d) {
         @panic("OS does not have d3d");
     }
 
-    var device: *d11.ID3D11Device = undefined;
+    var device: *ID3D11Device = undefined;
+    var context: *ID3D11DeviceContext = undefined;
     var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
 
     const create_device_result = d11.D3D11CreateDevice(
@@ -180,7 +185,7 @@ pub fn init_d3d11(client: *Client) !void {
         d11.D3D11_SDK_VERSION,
         &device,
         &feature_level,
-        null,
+        &context,
     );
 
     if (create_device_result != win32_foundation.S_OK) {
@@ -196,6 +201,7 @@ pub fn init_d3d11(client: *Client) !void {
     }
 
     client.device_d11 = device;
+    client.device_context_d11 = context;
     client.device1_d11 = device1;
 }
 
@@ -407,8 +413,10 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             switch (vp.renderer) {
                 .gl => {}, // relies on timelines
                 .cpu => |*r| r.buffer_released(e.buffer_id),
-                .d11 => {
-                    @panic("TODO");
+                .d11 => |*r| {
+                    if (r.buffers.getPtr(e.buffer_id)) |p| {
+                        p.released = true;
+                    }
                 },
             }
         },
@@ -644,6 +652,7 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
 
 pub const ID3D11Device = if (!constants.os_has_d3d) void else d11.ID3D11Device;
 pub const ID3D11Device1 = if (!constants.os_has_d3d) void else d11.ID3D11Device1;
+pub const ID3D11DeviceContext = if (!constants.os_has_d3d) void else d11.ID3D11DeviceContext;
 
 pub const Event = union(enum) {
     viewport_resize: server_to_client.ViewportResize,
