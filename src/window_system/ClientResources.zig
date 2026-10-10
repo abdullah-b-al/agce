@@ -103,6 +103,7 @@ pub fn viewport_create(
     render_size: ptypes.Size,
     create_sync_timeline: bool,
     parent_key: ?ViewportKey,
+    format: ptypes.BufferFormat,
 ) !void {
     try rs.viewports.ensureUnusedCapacity(ws.gpa, 1);
     const vp = try Viewport.create(
@@ -114,6 +115,7 @@ pub fn viewport_create(
         render_size,
         parent_key,
         create_sync_timeline,
+        format,
     );
 
     rs.viewports.putAssumeCapacity(viewport_id, vp);

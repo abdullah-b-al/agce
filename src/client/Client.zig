@@ -550,6 +550,7 @@ pub fn send_viewport_create(
         .viewport_id = viewport_id,
         .create_sync_timeline = create_sync_timeline,
         .size = size,
+        .format = vp.format,
     });
 }
 

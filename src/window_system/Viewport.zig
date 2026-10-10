@@ -7,6 +7,7 @@ render_size: ptypes.Size,
 state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
+format: ptypes.BufferFormat,
 
 attached_buffer: ?ptypes.BufferID,
 
@@ -22,6 +23,7 @@ pub fn create(
     render_size: ptypes.Size,
     parent_key: ?ViewportKey,
     create_sync_timeline: bool,
+    format: ptypes.BufferFormat,
 ) !*Viewport {
     const vp = try ws.gpa.create(Viewport);
     errdefer ws.gpa.destroy(vp);
@@ -40,6 +42,7 @@ pub fn create(
         .render_size = render_size,
         .sub_viewports = .empty,
         .attached_buffer = null,
+        .format = format,
 
         .win32 = undefined,
         .linux = undefined,

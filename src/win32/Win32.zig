@@ -426,6 +426,12 @@ pub const Buffer = union(enum) {
     cpu: Cpu,
     d11: D11,
 
+    pub fn format(b: Buffer) ptypes.BufferFormat {
+        return switch (b) {
+            inline else => |v| v.format,
+        };
+    }
+
     pub fn deinit(buffer: *Buffer) void {
         switch (buffer.*) {
             .cpu => |cpu| {
@@ -447,6 +453,7 @@ pub const Buffer = union(enum) {
 
     pub const D11 = struct {
         texture: *d11.ID3D11Texture2D,
+        format: ptypes.BufferFormat,
     };
 };
 
@@ -633,6 +640,12 @@ fn get_modifires() pinput.Modifiers {
     // zig fmt: on
 }
 
+pub fn buffer_format_to_dxgi_format(format: ptypes.BufferFormat) dxgi.common.DXGI_FORMAT {
+    return switch (format) {
+        .argb8888 => .R8G8B8A8_UNORM,
+    };
+}
+
 pub fn log_d3d11_errors(win32: *Win32) !void {
     {
         var info_queue: *d11.ID3D11InfoQueue = undefined;
@@ -704,3 +717,4 @@ const log = std.log.scoped(.win32);
 const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
 const dxgi = @import("win32").graphics.dxgi;
+const g = @import("win32").graphics;

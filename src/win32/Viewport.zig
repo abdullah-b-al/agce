@@ -53,11 +53,10 @@ pub fn init(
 
     var swap_chain: *dxgi.IDXGISwapChain1 = undefined;
 
-    // TODO: Ask for the viewport format in the protocol
     var desc: dxgi.DXGI_SWAP_CHAIN_DESC1 = .{
         .Width = @intCast(base.clipping_rect.width),
         .Height = @intCast(base.clipping_rect.height),
-        .Format = .R8G8B8A8_UNORM,
+        .Format = Win32.buffer_format_to_dxgi_format(base.format),
         .Stereo = 0,
         .SampleDesc = .{ .Count = 1, .Quality = 0 },
         .BufferUsage = dxgi.DXGI_USAGE_RENDER_TARGET_OUTPUT,

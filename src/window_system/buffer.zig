@@ -1,5 +1,12 @@
 pub const Linux = union(enum) {
     wayland: Wayland.Buffer,
+
+    pub fn format(b: Linux) ptypes.BufferFormat {
+        return switch (b) {
+            inline else => |v| v.format(),
+        };
+        
+    }
 };
 
 

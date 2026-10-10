@@ -611,9 +611,7 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
         .Height = @intCast(args.payload.size.height),
         .MipLevels = 1,
         .ArraySize = 1,
-        .Format = switch (args.payload.format) {
-            .argb8888 => .R8G8B8A8_UNORM,
-        },
+        .Format = Win32.buffer_format_to_dxgi_format(args.payload.format),
         .SampleDesc = .{ .Count = 1, .Quality = 0 },
         .Usage = .DEFAULT,
         .BindFlags = .{ .SHADER_RESOURCE = 1, .RENDER_TARGET = 1 },
@@ -651,6 +649,7 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
     rs.buffers.putAssumeCapacityNoClobber(buffer_id, .{
         .d11 = .{
             .texture = texture,
+            .format = args.payload.format,
         },
     });
 
@@ -716,6 +715,10 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
         }
         return;
     };
+
+    if (buffer.format() != vp.format) {
+        return error.BufferAndViewportFormatMismatch;
+    }
 
     errdefer comptime unreachable;
 
@@ -878,6 +881,7 @@ fn viewport_create_with_sub_viewport(
         args.payload.size,
         args.payload.create_sync_timeline,
         .{ .client_id = embeder.client_id, .viewport_id = embeder_viewport.id },
+        args.payload.format,
     );
 
     embeder_viewport.sub_viewports.putAssumeCapacityNoClobber(
@@ -931,6 +935,7 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
         args.payload.size,
         args.payload.create_sync_timeline,
         null,
+        args.payload.format,
     );
 
     ws.windows.putAssumeCapacityNoClobber(id, win);

@@ -681,6 +681,7 @@ pub fn buffer_create_and_register_gpu_async(
         .timeline_acquire = acquire,
         .timeline_release = release,
         .size = size,
+        .format = b_format,
     };
 
     const buffer_fd = c_linux.gbm_bo_get_fd(buffer.bo);
@@ -825,11 +826,18 @@ pub const Buffer = union(enum) {
         };
     }
 
+    pub fn format(b: Buffer) ptypes.BufferFormat {
+        return switch (b) {
+            inline else => |v| v.format,
+        };
+    }
+
     pub const Gpu = struct {
         wl_buffer: *cwl.Buffer,
         timeline_acquire: ?Wayland.Viewport.AcquireTimeline,
         timeline_release: ?Wayland.Viewport.ReleaseTimeline,
         size: ptypes.Size,
+        format: BufferFormat,
 
         pub fn destroy(gpu: Gpu) void {
             gpu.wl_buffer.destroy();
@@ -892,6 +900,7 @@ pub const RegisterGpuBuffer = struct {
                                 .size = data.gpu.size,
                                 .timeline_acquire = data.gpu.timeline_acquire,
                                 .timeline_release = data.gpu.timeline_release,
+                                .format = data.format,
                             },
                         },
                     },
