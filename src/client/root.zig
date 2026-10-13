@@ -346,6 +346,10 @@ pub const ViewportHandle = opaque {
     }
 
     pub fn d11_frame_begin(handle: *ViewportHandle) !D11FrameBegin {
+        if (!constants.os_has_d3d) {
+            @panic("OS does not have d3d");
+        }
+
         std.debug.assert(!handle.destroyed());
         const vp = handle.cast();
 
@@ -354,24 +358,34 @@ pub const ViewportHandle = opaque {
         const r = &vp.renderer.d11;
 
         std.debug.assert(vp.current_buffer == null);
-        var buffer: ?*RendererD11.Buffer = null;
-        while (buffer == null) {
-            buffer = r.get_buffer() orelse {
-                std.debug.assert(r.buffers.count() > 0);
-                try client.poll(.none); // poll for buffer_released
-                continue;
-            };
-        }
+        const buffer: *RendererD11.Buffer = try r.get_buffer();
 
-        vp.current_buffer = buffer.?.id;
+        vp.current_buffer = buffer.id;
 
         return .{
-            .rtv = buffer.?.rtv,
-            .context = client.device_context_d11.?,
+            .rtv = buffer.rtv,
+            .context = client.d11_device.?.context,
         };
     }
 
-    pub fn d11_frame_end(_: *ViewportHandle) void {}
+    pub fn d11_frame_end(handle: *ViewportHandle) void {
+        if (!constants.os_has_d3d) {
+            @panic("OS does not have d3d");
+        }
+
+        const vp = handle.cast();
+        const d11_device = vp.client.d11_device.?;
+
+        std.debug.assert(vp.current_buffer != null);
+
+        const buffer = vp.renderer.d11.buffers.getPtr(vp.current_buffer.?).?;
+        const hr = d11_device.context4.Signal(
+            buffer.acquire.fence.acquire,
+            @intFromEnum(buffer.acquire.point),
+        );
+        std.debug.assert(hr == win32_foundation.S_OK);
+    }
+
     pub fn d11_frame_present(handle: *ViewportHandle) !void {
         try handle.cast().buffer_present();
     }

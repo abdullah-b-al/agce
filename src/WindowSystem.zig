@@ -17,6 +17,9 @@ window_next_id: WindowID,
 server_events: std.ArrayList(ServerEvent),
 deferred_events: std.ArrayList(Event),
 
+/// A list of os handles to close at the end of tick()
+handles_to_close: std.ArrayList(HandleToClose),
+
 gbm: Gbm,
 
 win32: if (os == .windows) *Win32 else void,
@@ -123,10 +126,13 @@ fn create_undefined_native(
 
         .server_events = .empty,
         .deferred_events = .empty,
-        .win32 = undefined,
-        .linux = undefined,
+        .handles_to_close = .empty,
+
         .input_focus_mouse = null,
         .input_focus_keyboard = null,
+
+        .win32 = undefined,
+        .linux = undefined,
     };
 
     return ws;
@@ -154,11 +160,16 @@ pub fn destroy(ws: *WindowSystem) void {
         },
     }
 
+    while (ws.handles_to_close.pop()) |handle| {
+        handle.close();
+    }
+
     inline for (.{
         &ws.resources,
         &ws.windows,
         &ws.deferred_events,
         &ws.server_events,
+        &ws.handles_to_close,
     }) |entry| {
         entry.deinit(ws.gpa);
     }
@@ -542,7 +553,7 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
                 @intCast(size_bytes),
             ) orelse return error.FailedToMapViewOfFile;
 
-            const handle: ptypes.CpuBufferHandle = @enumFromInt(@intFromPtr(handle_ptr));
+            const handle: ptypes.CpuBufferHandle = .from_HANDLE(handle_ptr);
 
             const buffer_id = rs.next_buffer_id.increment();
             rs.buffers.putAssumeCapacity(buffer_id, .{ .cpu = .{
@@ -595,6 +606,7 @@ fn buffer_create_gbm_bo(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_gbm
 
 fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)) !void {
     std.debug.assert(args.payload.version == .d3d11);
+    try ws.handles_to_close.ensureUnusedCapacity(ws.gpa, 3);
 
     const win32 = switch (ws.native_tag()) {
         .win32 => |tag| tag.window_system(ws),
@@ -622,33 +634,31 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
         },
     };
 
-    var texture: *d11.ID3D11Texture2D = undefined;
-    const create_result = win32.d11_device.CreateTexture2D(&desc, null, &texture);
-    if (create_result != win32_foundation.S_OK) {
-        return error.FailedToCreateD3DTexture;
-    }
+    const texture = try win32.d11_context.create_texture_2d(&desc);
+    errdefer _ = texture.IUnknown.Release();
 
-    var resource: *dxgi.IDXGIResource1 = undefined;
-    const query_result = texture.IUnknown.QueryInterface(dxgi.IID_IDXGIResource1, @ptrCast(&resource));
-    std.debug.assert(query_result == win32_foundation.S_OK);
-    defer _ = resource.IUnknown.Release();
+    const acquire = try win32.d11_context.create_shared_fence_acquire();
+    errdefer _ = acquire.acquire.IUnknown.Release();
 
-    var handle: ?win32_foundation.HANDLE = undefined;
-    const handle_result = resource.CreateSharedHandle(
-        null,
-        dxgi.DXGI_SHARED_RESOURCE_READ | dxgi.DXGI_SHARED_RESOURCE_WRITE,
-        null,
-        &handle,
-    );
+    const release = try win32.d11_context.create_shared_fence_release();
+    errdefer _ = release.release.IUnknown.Release();
 
-    std.debug.assert(handle_result == win32_foundation.S_OK);
-    std.debug.assert(handle != null);
+    const acquire_shared_handle = try acquire.create_shared_handle();
+    ws.handles_to_close.appendAssumeCapacity(.{ .windows_handle = acquire_shared_handle.to_HANDLE() });
+
+    const release_shared_handle = try release.create_shared_handle();
+    ws.handles_to_close.appendAssumeCapacity(.{ .windows_handle = release_shared_handle.to_HANDLE() });
+
+    const texture_shared_handle = win32.d11_context.shared_handle_from_texture_2d(texture);
+    ws.handles_to_close.appendAssumeCapacity(.{ .windows_handle = texture_shared_handle.to_HANDLE() });
 
     const buffer_id = rs.next_buffer_id.increment();
 
     rs.buffers.putAssumeCapacityNoClobber(buffer_id, .{
         .d11 = .{
             .texture = texture,
+            .acquire = acquire,
+            .release = release,
             .format = args.payload.format,
         },
     });
@@ -659,7 +669,9 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
             .payload = .{
                 .viewport_id = args.payload.viewport_id,
                 .buffer_id = buffer_id,
-                .handle = @enumFromInt(@intFromPtr(handle.?)),
+                .texture_handle = texture_shared_handle,
+                .acquire_fence_handle = acquire_shared_handle,
+                .release_fence_handle = release_shared_handle,
                 .size = args.payload.size,
                 .format = args.payload.format,
                 .version = .d3d11,
@@ -778,7 +790,14 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
                         _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
                     }
                 },
-                .d11 => {
+                .d11 => |*_b| {
+                    // TODO: Do not block thread when copying and presenting
+
+                    const b: *Win32.Buffer.D11 = _b;
+                    const sync: client_to_server.BufferPresentWithSync = args.sync.payload;
+
+                    while (b.acquire.acquire.GetCompletedValue() != @intFromEnum(sync.acquire_point)) {}
+
                     var back_buffer: *d11.ID3D11Texture2D = undefined;
                     const hr = nvp.swap_chain.IDXGISwapChain.GetBuffer(
                         0,
@@ -798,7 +817,7 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
                         .back = 1,
                     };
                     // TODO: Figure out a way to not copy when presenting
-                    win32.d11_device_context.CopySubresourceRegion(
+                    win32.d11_context.device_context.CopySubresourceRegion(
                         @ptrCast(back_buffer),
                         0,
                         0,
@@ -810,6 +829,10 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
                     );
 
                     _ = nvp.swap_chain.IDXGISwapChain.Present(0, 0);
+                    _ = win32.d11_context.device_context4.Signal(
+                        b.release.release,
+                        @intFromEnum(sync.release_point),
+                    );
                 },
             }
 
@@ -1545,6 +1568,26 @@ pub const Wayland = @import("wayland/Wayland.zig");
 pub const Win32 = @import("win32/Win32.zig");
 pub const Viewport = @import("window_system/Viewport.zig");
 pub const Window = @import("window_system/Window.zig");
+
+pub const HandleToClose = union(enum) {
+    windows_handle: *anyopaque,
+    fd: std.posix.fd_t,
+
+    pub fn close(handle: HandleToClose) void {
+        switch (handle) {
+            .windows_handle => |h| {
+                if (os == .windows) {
+                    _ = win32_foundation.CloseHandle(h);
+                }
+            },
+            .fd => |fd| {
+                if (os == .linux) {
+                    _ = std.os.linux.close(fd);
+                }
+            },
+        }
+    }
+};
 
 const std = @import("std");
 const Io = std.Io;

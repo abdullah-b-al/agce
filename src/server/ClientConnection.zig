@@ -139,7 +139,7 @@ pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Alloca
             errdefer _ = win32.foundation.CloseHandle(duplicate);
 
             var payload = const_payload;
-            payload.handle = @enumFromInt(@intFromPtr(duplicate));
+            payload.handle = .from_HANDLE(duplicate);
             const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
             try c.send(io, gpa, message);
         },
@@ -162,11 +162,19 @@ pub fn send_texture_created_d3d(
 ) !void {
     if (!constants.os_has_d3d) @compileError("OS does not support d3d");
 
-    const duplicate = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.handle)));
-    errdefer _ = win32.foundation.CloseHandle(duplicate);
+    const duplicate_texture = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.texture_handle)));
+    errdefer _ = win32.foundation.CloseHandle(duplicate_texture);
+
+    const duplicate_acquire = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.acquire_fence_handle)));
+    errdefer _ = win32.foundation.CloseHandle(duplicate_acquire);
+
+    const duplicate_release = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.release_fence_handle)));
+    errdefer _ = win32.foundation.CloseHandle(duplicate_release);
 
     var payload = const_payload;
-    payload.handle = @enumFromInt(@intFromPtr(duplicate));
+    payload.texture_handle = .from_HANDLE(duplicate_texture);
+    payload.acquire_fence_handle = .from_HANDLE(duplicate_acquire);
+    payload.release_fence_handle = .from_HANDLE(duplicate_release);
     const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
     try c.send(io, gpa, message);
 }
@@ -275,6 +283,7 @@ fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, gpa: std.mem.Al
 
 fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
     const client_pid = c.pid orelse @panic("Must be provided in windows");
+    // TODO: Do not recreate the hande everytime
     const client_handle = win32.system.threading.OpenProcess(
         win32.system.threading.PROCESS_DUP_HANDLE,
         @intFromEnum(std.os.windows.BOOL.FALSE),

@@ -262,7 +262,7 @@ pub const CursorShape = enum {
 
 pub const CpuBufferHandle = switch (os) {
     .linux => Fd(opaque {}),
-    .windows => enum(WindowsHandleBackingInt) { _ },
+    .windows => WindowsHandle(opaque {}),
     else => unreachable,
 };
 
@@ -311,16 +311,40 @@ pub fn Fd(comptime Opaque: type) type {
 ////////////////////////////////////////////////////////////////////////////////
 // Windows types
 
-const WindowsHandleBackingInt = switch (@sizeOf(std.os.windows.HANDLE)) {
-    8 => usize,
-    else => unreachable,
-};
+pub fn WindowsHandle(comptime Opaque: type) type {
+    const BackingInt = switch (@sizeOf(std.os.windows.HANDLE)) {
+        8 => usize,
+        else => unreachable,
+    };
+
+    return enum(BackingInt) {
+        _,
+
+        pub fn to_HANDLE(h: @This()) std.os.windows.HANDLE {
+            if (os != .windows) @compileError("Windows only");
+
+            return @ptrFromInt(@intFromEnum(h));
+        }
+
+        pub fn from_HANDLE(h: std.os.windows.HANDLE) @This() {
+            if (os != .windows) @compileError("Windows only");
+
+            return @enumFromInt(@intFromPtr(h));
+        }
+
+        comptime {
+            _ = Opaque;
+        }
+    };
+}
 
 pub const D3DVersion = enum {
     d3d11,
 };
 
-pub const D3DTextureSharedHandle = enum(WindowsHandleBackingInt) { _ };
+pub const D3DTextureSharedHandle = WindowsHandle(opaque {});
+pub const D3DAcquireFenceSharedHandle = WindowsHandle(opaque {});
+pub const D3DReleaseFenceSharedHandle = WindowsHandle(opaque {});
 
 // Windows types
 ////////////////////////////////////////////////////////////////////////////////

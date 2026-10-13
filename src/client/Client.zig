@@ -20,9 +20,7 @@ messages_arena: std.heap.ArenaAllocator,
 
 gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
-device_d11: ?*ID3D11Device,
-device_context_d11: ?*ID3D11DeviceContext,
-device1_d11: ?*ID3D11Device1,
+d11_device: ?D11Device,
 
 env: Env,
 
@@ -73,9 +71,7 @@ pub fn init(
         .processes = .empty,
         .gbm = null,
         .gl_context = null,
-        .device_d11 = null,
-        .device_context_d11 = null,
-        .device1_d11 = null,
+        .d11_device = null,
 
         .env = env,
         .read_future = future,
@@ -122,9 +118,7 @@ pub fn deinit(client: *Client) void {
     }
 
     if (constants.os_has_d3d) {
-        if (client.device_context_d11) |d| _ = d.IUnknown.Release();
-        if (client.device_d11) |d| _ = d.IUnknown.Release();
-        if (client.device1_d11) |d| _ = d.IUnknown.Release();
+        if (client.d11_device) |ctx| ctx.deinit();
     }
 
     const containers = .{
@@ -164,45 +158,12 @@ pub fn init_gbm(client: *Client) !void {
 }
 
 pub fn init_d3d11(client: *Client) !void {
-    std.debug.assert(client.device_d11 == null);
-    std.debug.assert(client.device_context_d11 == null);
-    std.debug.assert(client.device1_d11 == null);
+    std.debug.assert(client.d11_device == null);
     if (!constants.os_has_d3d) {
         @panic("OS does not have d3d");
     }
 
-    var device: *ID3D11Device = undefined;
-    var context: *ID3D11DeviceContext = undefined;
-    var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
-
-    const create_device_result = d11.D3D11CreateDevice(
-        null,
-        .HARDWARE,
-        null,
-        .{},
-        null,
-        0,
-        d11.D3D11_SDK_VERSION,
-        &device,
-        &feature_level,
-        &context,
-    );
-
-    if (create_device_result != win32_foundation.S_OK) {
-        log.err("FailedToCreateD3D11Device: 0x{x}", .{create_device_result});
-        return error.FailedToCreateD3D11Device;
-    }
-
-    var device1: *d11.ID3D11Device1 = undefined;
-    const device1_result = device.IUnknown.QueryInterface(d11.IID_ID3D11Device1, @ptrCast(&device1));
-    if (device1_result != win32_foundation.S_OK) {
-        log.err("FailedToCreateD3D11Device1: 0x{x}", .{create_device_result});
-        return error.FailedToCreateD3D11Device1;
-    }
-
-    client.device_d11 = device;
-    client.device_context_d11 = context;
-    client.device1_d11 = device1;
+    client.d11_device = try .init();
 }
 
 pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
@@ -411,13 +372,9 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         .buffer_released => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             switch (vp.renderer) {
+                .d11 => {}, // relies on fences
                 .gl => {}, // relies on timelines
                 .cpu => |*r| r.buffer_released(e.buffer_id),
-                .d11 => |*r| {
-                    if (r.buffers.getPtr(e.buffer_id)) |p| {
-                        p.released = true;
-                    }
-                },
             }
         },
 
@@ -651,9 +608,98 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
     device: *c_linux.struct_gbm_device,
 };
 
-pub const ID3D11Device = if (!constants.os_has_d3d) void else d11.ID3D11Device;
-pub const ID3D11Device1 = if (!constants.os_has_d3d) void else d11.ID3D11Device1;
-pub const ID3D11DeviceContext = if (!constants.os_has_d3d) void else d11.ID3D11DeviceContext;
+pub const D11Device = if (!constants.os_has_d3d) void else struct {
+    device: *d11.ID3D11Device,
+    device1: *d11.ID3D11Device1,
+    device5: *d11.ID3D11Device5,
+
+    context: *d11.ID3D11DeviceContext,
+    context4: *d11.ID3D11DeviceContext4,
+
+    pub fn init() !D11Device {
+        const device, const context = blk: {
+            var device: *d11.ID3D11Device = undefined;
+            var context: *d11.ID3D11DeviceContext = undefined;
+            var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
+
+            const result = d11.D3D11CreateDevice(
+                null,
+                .HARDWARE,
+                null,
+                .{},
+                null,
+                0,
+                d11.D3D11_SDK_VERSION,
+                &device,
+                &feature_level,
+                &context,
+            );
+
+            if (result != win32_foundation.S_OK) {
+                log.err("FailedToCreateD3D11Device: 0x{x}", .{result});
+                return error.FailedToCreateD3D11Device;
+            }
+
+            break :blk .{ device, context };
+        };
+
+        const device1 = blk: {
+            var device1: *d11.ID3D11Device1 = undefined;
+            const result = device.IUnknown.QueryInterface(
+                d11.IID_ID3D11Device1,
+                @ptrCast(&device1),
+            );
+            if (result != win32_foundation.S_OK) {
+                log.err("FailedToQueryD3D11Device1: 0x{x}", .{result});
+                return error.FailedToQueryD3D11Device1;
+            }
+            break :blk device1;
+        };
+
+        const device5 = blk: {
+            var device5: *d11.ID3D11Device5 = undefined;
+            const result = device.IUnknown.QueryInterface(
+                d11.IID_ID3D11Device5,
+                @ptrCast(&device5),
+            );
+            if (result != win32_foundation.S_OK) {
+                log.err("FailedToQueryD3D11Device5: 0x{x}", .{result});
+                return error.FailedToQueryD3D11Device5;
+            }
+            break :blk device5;
+        };
+
+        const context4 = blk: {
+            var context4: *d11.ID3D11DeviceContext4 = undefined;
+            const result = context.IUnknown.QueryInterface(
+                d11.IID_ID3D11DeviceContext4,
+                @ptrCast(&context4),
+            );
+            if (result != win32_foundation.S_OK) {
+                log.err("FailedToQueryD3D11Context4: 0x{x}", .{result});
+                return error.FailedToQueryD3D11Context4;
+            }
+            break :blk context4;
+        };
+
+        return .{
+            .device = device,
+            .context = context,
+            .device1 = device1,
+            .device5 = device5,
+            .context4 = context4,
+        };
+    }
+
+    pub fn deinit(ctx: D11Device) void {
+        _ = ctx.device1.IUnknown.Release();
+        _ = ctx.device5.IUnknown.Release();
+
+        _ = ctx.context4.IUnknown.Release();
+        _ = ctx.context.IUnknown.Release();
+        _ = ctx.device.IUnknown.Release();
+    }
+};
 
 pub const Event = union(enum) {
     viewport_resize: server_to_client.ViewportResize,

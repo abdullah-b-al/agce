@@ -1,4 +1,6 @@
 pub fn d3d11_share_texture(init: std.process.Init) !void {
+    if (!constants.os_has_d3d) return;
+
     var server = try shared.TestServer.concurrent(@src(), init);
     errdefer server.await(init) catch {};
 
@@ -17,6 +19,8 @@ pub fn d3d11_share_texture(init: std.process.Init) !void {
 }
 
 pub fn d3d11_clear_screen(init: std.process.Init) !void {
+    if (!constants.os_has_d3d) return;
+
     var server = try shared.TestServer.concurrent(@src(), init);
     errdefer server.await(init) catch {};
 
@@ -35,8 +39,9 @@ pub fn d3d11_clear_screen(init: std.process.Init) !void {
         const color = ([_][4]f32{ red, green, blue })[i % 3];
 
         const frame = try vp.d11_frame_begin();
+
         frame.context.ClearRenderTargetView(frame.rtv, @ptrCast(&color));
-        frame.context.Flush();
+
         vp.d11_frame_end();
         try vp.d11_frame_present();
 

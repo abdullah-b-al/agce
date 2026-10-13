@@ -79,6 +79,22 @@ pub fn build(b: *std.Build) !void {
         break :blk module;
     };
 
+    const d3d = blk: {
+        if (target.result.os.tag != .windows) break :blk null;
+
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/d3d/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "protocol", .module = protocol },
+                .{ .name = "win32", .module = win32.module("win32") },
+            },
+        });
+
+        break :blk module;
+    };
+
     const client = blk: {
         const module = b.addModule("client", .{
             .root_source_file = b.path("src/client/root.zig"),
@@ -93,7 +109,10 @@ pub fn build(b: *std.Build) !void {
         });
 
         if (c_linux) |c| module.addImport("c_linux", c);
-        if (target.result.os.tag == .windows) module.addImport("win32", win32.module("win32"));
+        if (target.result.os.tag == .windows) {
+            module.addImport("win32", win32.module("win32"));
+            module.addImport("d3d", d3d.?);
+        }
 
         module.linkLibrary(glad.lib);
 
@@ -138,6 +157,7 @@ pub fn build(b: *std.Build) !void {
     switch (target.result.os.tag) {
         .windows => {
             main.addImport("win32", win32.module("win32"));
+            main.addImport("d3d", d3d.?);
         },
         .linux => {
             const Scanner = @import("wayland").Scanner;
@@ -215,7 +235,7 @@ fn build_tests(
         test_step.dependOn(&artifact.step);
         step_all.dependOn(&artifact.step);
 
-        const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
+        const t_check = b.addExecutable(.{ .name = "tests-check", .root_module = module, .use_llvm = false });
         step_check.dependOn(&t_check.step);
     }
 

@@ -51,8 +51,6 @@ pub fn init(
     // TODO: Check return value
     _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
 
-    var swap_chain: *dxgi.IDXGISwapChain1 = undefined;
-
     var desc: dxgi.DXGI_SWAP_CHAIN_DESC1 = .{
         .Width = @intCast(base.clipping_rect.width),
         .Height = @intCast(base.clipping_rect.height),
@@ -67,18 +65,7 @@ pub fn init(
         .Flags = 0,
     };
 
-    const swap_chain_result = win32.dxgi_factory.CreateSwapChainForHwnd(
-        @ptrCast(win32.d11_device),
-        handle,
-        &desc,
-        null,
-        null,
-        &swap_chain,
-    );
-
-    if (swap_chain_result != win32_foundation.S_OK) {
-        return error.FailedToCreateDXGISwapChain1;
-    }
+    const swap_chain = try win32.d11_context.create_swap_chain_for_hwnd(handle, &desc);
 
     return .{
         .base = base,

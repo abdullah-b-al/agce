@@ -6,11 +6,7 @@ instance: win32_foundation.HINSTANCE,
 class_window: win32_win.WNDCLASSA,
 class_viewport: win32_win.WNDCLASSA,
 
-d11_device: *d11.ID3D11Device,
-d11_device_context: *d11.ID3D11DeviceContext,
-dxgi_device: *dxgi.IDXGIDevice,
-dxgi_adapter: *dxgi.IDXGIAdapter,
-dxgi_factory: *dxgi.IDXGIFactory2,
+d11_context: D11Context,
 
 pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
     const ptr = try ws.gpa.create(Win32);
@@ -54,70 +50,20 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         return error.FailedToRegisterClass;
     }
 
-    var d11_device: *d11.ID3D11Device = undefined;
-    var d11_device_context: *d11.ID3D11DeviceContext = undefined;
-    var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
-
-    const create_device_result = d11.D3D11CreateDevice(
-        null,
-        .HARDWARE,
-        null,
-        .{ .DEBUG = 0 },
-        null,
-        0,
-        d11.D3D11_SDK_VERSION,
-        &d11_device,
-        &feature_level,
-        &d11_device_context,
-    );
-
-    if (create_device_result != win32_foundation.S_OK) {
-        log.err("FailedToCreateD3D11Device: 0x{x}", .{create_device_result});
-        return error.FailedToCreateD3D11Device;
-    }
-
-    var dxgi_device: *dxgi.IDXGIDevice = undefined;
-    if (d11_device.IUnknown.QueryInterface(dxgi.IID_IDXGIDevice, @ptrCast(&dxgi_device)) !=
-        win32_foundation.S_OK)
-    {
-        return error.FailedToCreateDXGIDevice;
-    }
-
-    var dxgi_adapter: *dxgi.IDXGIAdapter = undefined;
-    if (dxgi_device.GetAdapter(&dxgi_adapter) !=
-        win32_foundation.S_OK)
-    {
-        return error.FailedToCreateDXGIAdapter;
-    }
-
-    var dxgi_factory: *dxgi.IDXGIFactory2 = undefined;
-    if (dxgi_adapter.IDXGIObject.GetParent(dxgi.IID_IDXGIFactory2, @ptrCast(&dxgi_factory)) !=
-        win32_foundation.S_OK)
-    {
-        return error.FailedToCreateDXGIFactory2;
-    }
-
+    const d11_context: D11Context = try .init();
     ptr.* = .{
         .gpa = ws.gpa,
         .instance = instance,
         .class_window = class_window,
         .class_viewport = class_viewport,
-        .d11_device = d11_device,
-        .d11_device_context = d11_device_context,
-        .dxgi_device = dxgi_device,
-        .dxgi_adapter = dxgi_adapter,
-        .dxgi_factory = dxgi_factory,
+        .d11_context = d11_context,
     };
 
     return ptr;
 }
 
 pub fn destroy(win32: *Win32) void {
-    _ = win32.dxgi_factory.IUnknown.Release();
-    _ = win32.dxgi_adapter.IUnknown.Release();
-    _ = win32.dxgi_device.IUnknown.Release();
-    _ = win32.d11_device_context.IUnknown.Release();
-    _ = win32.d11_device.IUnknown.Release();
+    win32.d11_context.deinit();
     win32.gpa.destroy(win32);
 }
 
@@ -436,7 +382,7 @@ pub const Buffer = union(enum) {
         switch (buffer.*) {
             .cpu => |cpu| {
                 _ = win32_memory.UnmapViewOfFile(cpu.pixels);
-                _ = win32_foundation.CloseHandle(@ptrFromInt(@intFromEnum(cpu.handle)));
+                _ = win32_foundation.CloseHandle(cpu.handle.to_HANDLE());
             },
             .d11 => |d| {
                 _ = d.texture.IUnknown.Release();
@@ -453,6 +399,8 @@ pub const Buffer = union(enum) {
 
     pub const D11 = struct {
         texture: *d11.ID3D11Texture2D,
+        acquire: AcquireFence,
+        release: ReleaseFence,
         format: ptypes.BufferFormat,
     };
 };
@@ -696,6 +644,178 @@ pub fn log_d3d11_errors(win32: *Win32) !void {
     }
 }
 
+pub const D11Context = struct {
+    device: *d11.ID3D11Device,
+    device5: *d11.ID3D11Device5,
+    device_context: *d11.ID3D11DeviceContext,
+    device_context4: *d11.ID3D11DeviceContext4,
+    dxgi_device: *dxgi.IDXGIDevice,
+    dxgi_adapter: *dxgi.IDXGIAdapter,
+    dxgi_factory: *dxgi.IDXGIFactory2,
+
+    pub fn init() !D11Context {
+        var device: *d11.ID3D11Device = undefined;
+        var device_context: *d11.ID3D11DeviceContext = undefined;
+        var feature_level: d3d.D3D_FEATURE_LEVEL = undefined;
+
+        const create_device_result = d11.D3D11CreateDevice(
+            null,
+            .HARDWARE,
+            null,
+            .{ .DEBUG = 0 },
+            null,
+            0,
+            d11.D3D11_SDK_VERSION,
+            &device,
+            &feature_level,
+            &device_context,
+        );
+
+        if (create_device_result != win32_foundation.S_OK) {
+            log.err("FailedToCreateD3D11Device: 0x{x}", .{create_device_result});
+            return error.FailedToCreateD3D11Device;
+        }
+
+        var device5: *d11.ID3D11Device5 = undefined;
+        if (device.IUnknown.QueryInterface(d11.IID_ID3D11Device5, @ptrCast(&device5)) !=
+            win32_foundation.S_OK)
+        {
+            return error.FailedToCreateD3D11Device5;
+        }
+
+        var dxgi_device: *dxgi.IDXGIDevice = undefined;
+        if (device.IUnknown.QueryInterface(dxgi.IID_IDXGIDevice, @ptrCast(&dxgi_device)) !=
+            win32_foundation.S_OK)
+        {
+            return error.FailedToCreateDXGIDevice;
+        }
+
+        var dxgi_adapter: *dxgi.IDXGIAdapter = undefined;
+        if (dxgi_device.GetAdapter(&dxgi_adapter) !=
+            win32_foundation.S_OK)
+        {
+            return error.FailedToCreateDXGIAdapter;
+        }
+
+        var dxgi_factory: *dxgi.IDXGIFactory2 = undefined;
+        if (dxgi_adapter.IDXGIObject.GetParent(dxgi.IID_IDXGIFactory2, @ptrCast(&dxgi_factory)) !=
+            win32_foundation.S_OK)
+        {
+            return error.FailedToCreateDXGIFactory2;
+        }
+
+        var device_context4: *d11.ID3D11DeviceContext4 = undefined;
+        if (device_context.IUnknown.QueryInterface(d11.IID_ID3D11DeviceContext4, @ptrCast(&device_context4)) !=
+            win32_foundation.S_OK)
+        {
+            return error.FailedToQueryD3D11Context4;
+        }
+
+        return .{
+            .device = device,
+            .device5 = device5,
+            .device_context = device_context,
+            .device_context4 = device_context4,
+            .dxgi_device = dxgi_device,
+            .dxgi_adapter = dxgi_adapter,
+            .dxgi_factory = dxgi_factory,
+        };
+    }
+
+    pub fn deinit(ctx: D11Context) void {
+        _ = ctx.dxgi_factory.IUnknown.Release();
+        _ = ctx.dxgi_adapter.IUnknown.Release();
+        _ = ctx.dxgi_device.IUnknown.Release();
+
+        _ = ctx.device5.IUnknown.Release();
+
+        _ = ctx.device_context4.IUnknown.Release();
+        _ = ctx.device_context.IUnknown.Release();
+        _ = ctx.device.IUnknown.Release();
+    }
+
+    pub fn create_texture_2d(ctx: D11Context, desc: *d11.D3D11_TEXTURE2D_DESC) !*d11.ID3D11Texture2D {
+        var texture: *d11.ID3D11Texture2D = undefined;
+        const create_result = ctx.device.CreateTexture2D(desc, null, &texture);
+        if (create_result != win32_foundation.S_OK) {
+            return error.FailedToCreateD3DTexture;
+        }
+        return texture;
+    }
+
+    pub fn create_shared_fence_acquire(ctx: D11Context) !AcquireFence {
+        var fence: *d11.ID3D11Fence = undefined;
+        const create_result = ctx.device5.CreateFence(
+            0,
+            d11.D3D11_FENCE_FLAG_SHARED,
+            d11.IID_ID3D11Fence,
+            @ptrCast(&fence),
+        );
+        if (create_result != win32_foundation.S_OK) {
+            return error.FailedToCreateFence;
+        }
+
+        return .{ .acquire = fence };
+    }
+
+    pub fn create_shared_fence_release(ctx: D11Context) !ReleaseFence {
+        var fence: *d11.ID3D11Fence = undefined;
+        const create_result = ctx.device5.CreateFence(
+            0,
+            d11.D3D11_FENCE_FLAG_SHARED,
+            d11.IID_ID3D11Fence,
+            @ptrCast(&fence),
+        );
+        if (create_result != win32_foundation.S_OK) {
+            return error.FailedToCreateFence;
+        }
+
+        return .{ .release = fence };
+    }
+
+    pub fn shared_handle_from_texture_2d(_: D11Context, texture: *d11.ID3D11Texture2D) ptypes.D3DTextureSharedHandle {
+        var resource: *dxgi.IDXGIResource1 = undefined;
+        const query_result = texture.IUnknown.QueryInterface(dxgi.IID_IDXGIResource1, @ptrCast(&resource));
+        std.debug.assert(query_result == win32_foundation.S_OK);
+        defer _ = resource.IUnknown.Release();
+
+        var handle: ?win32_foundation.HANDLE = undefined;
+        const handle_result = resource.CreateSharedHandle(
+            null,
+            dxgi.DXGI_SHARED_RESOURCE_READ | dxgi.DXGI_SHARED_RESOURCE_WRITE,
+            null,
+            &handle,
+        );
+
+        std.debug.assert(handle_result == win32_foundation.S_OK);
+        std.debug.assert(handle != null);
+
+        return .from_HANDLE(handle.?);
+    }
+
+    pub fn create_swap_chain_for_hwnd(
+        ctx: D11Context,
+        handle: win32_foundation.HWND,
+        desc: *dxgi.DXGI_SWAP_CHAIN_DESC1,
+    ) !*dxgi.IDXGISwapChain1 {
+        var swap_chain: *dxgi.IDXGISwapChain1 = undefined;
+        const swap_chain_result = ctx.dxgi_factory.CreateSwapChainForHwnd(
+            @ptrCast(ctx.device),
+            handle,
+            desc,
+            null,
+            null,
+            &swap_chain,
+        );
+
+        if (swap_chain_result != win32_foundation.S_OK) {
+            return error.FailedToCreateDXGISwapChain1;
+        }
+
+        return swap_chain;
+    }
+};
+
 pub const HINSTANCE = win32_foundation.HINSTANCE;
 pub const Window = @import("Window.zig");
 pub const Viewport = @import("Viewport.zig");
@@ -717,4 +837,5 @@ const log = std.log.scoped(.win32);
 const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
 const dxgi = @import("win32").graphics.dxgi;
-const g = @import("win32").graphics;
+const AcquireFence = @import("d3d").d11.AcquireFence;
+const ReleaseFence = @import("d3d").d11.ReleaseFence;

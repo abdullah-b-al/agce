@@ -202,7 +202,9 @@ pub const BufferCreatedGbmBo = struct {
 pub const TextureCreatedD3D = struct {
     viewport_id: types.ViewportID,
     buffer_id: types.BufferID,
-    handle: types.D3DTextureSharedHandle,
+    texture_handle: types.D3DTextureSharedHandle,
+    acquire_fence_handle: types.D3DAcquireFenceSharedHandle,
+    release_fence_handle: types.D3DReleaseFenceSharedHandle,
     size: types.Size,
     format: types.BufferFormat,
     version: types.D3DVersion,
