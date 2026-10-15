@@ -207,6 +207,22 @@ pub const ClientHandle = opaque {
             .{ .viewport_id = viewport_id, .shape = shape },
         );
     }
+
+    pub fn d11_device(handle: *ClientHandle) *d11.ID3D11Device {
+        if (handle.cast().d11_device == null) {
+            @panic("Direct11 not initialized");
+        }
+
+        return handle.cast().d11_device.?.device;
+    }
+
+    pub fn d11_device_context(handle: *ClientHandle) *d11.ID3D11DeviceContext {
+        if (handle.cast().d11_device == null) {
+            @panic("Direct11 not initialized");
+        }
+
+        return handle.cast().d11_device.?.context;
+    }
 };
 
 pub const ViewportHandle = opaque {
@@ -388,6 +404,19 @@ pub const ViewportHandle = opaque {
 
     pub fn d11_frame_present(handle: *ViewportHandle) !void {
         try handle.cast().buffer_present();
+    }
+
+    pub fn d11_render_target_view(handle: *ViewportHandle) *d11.ID3D11RenderTargetView {
+        const vp = handle.cast();
+        if (vp.client.d11_device == null) {
+            @panic("Direct11 not initialized");
+        }
+
+        std.debug.assert(vp.renderer == .d11);
+        std.debug.assert(vp.current_buffer != null);
+
+        const buffer = vp.renderer.d11.buffers.get(vp.current_buffer.?).?;
+        return buffer.rtv;
     }
 
     pub const D11FrameBegin = struct {
