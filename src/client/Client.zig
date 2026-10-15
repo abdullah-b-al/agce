@@ -483,8 +483,7 @@ pub fn throttle_frames(client: *Client, vp: *Viewport) !void {
     std.debug.assert(vp.throttle_frames);
 
     while (vp.frame_number > vp.refresh_cycle) {
-        try client.wait_for(vp.id, .frame_render);
-        try client.update_by_tag(vp.id, .frame_render);
+        try client.poll(.none);
     }
 }
 
