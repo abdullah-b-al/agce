@@ -13,8 +13,8 @@ const files = .{
 
 const Case = enum {
     create_a_viewport,
-    render_few_frame_cpu,
-    render_few_frame_gl,
+    render_few_frames_cpu,
+    render_few_frames_gl,
     interactive_events,
     embed_sub_viewports,
     hide_sub_viewports,
@@ -83,7 +83,7 @@ fn create_a_viewport(init: std.process.Init) !void {
     try server.await(init);
 }
 
-fn render_few_frame_cpu(init: std.process.Init) !void {
+fn render_few_frames_cpu(init: std.process.Init) !void {
     var server = try shared.TestServer.concurrent(@src(), init);
 
     const handle = try shared.client_init(@src(), init);
@@ -101,7 +101,7 @@ fn render_few_frame_cpu(init: std.process.Init) !void {
     try server.await(init);
 }
 
-fn render_few_frame_gl(init: std.process.Init) !void {
+fn render_few_frames_gl(init: std.process.Init) !void {
     switch (@import("builtin").os.tag) {
         .linux => {},
         else => {
