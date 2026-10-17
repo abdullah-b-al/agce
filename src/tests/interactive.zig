@@ -185,7 +185,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
 
         const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
 
-        const frame = try vp.cpu_frame_begin();
+        const frame = try vp.cpu_buffer_get();
         const buffer: []z2d.pixel.ARGB = blk: {
             const ptr: [*]z2d.pixel.ARGB = @ptrCast(@alignCast(frame.buffer));
             std.debug.assert(frame.bytes_per_pixel == 4);
@@ -229,8 +229,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
             y += line_size;
         }
 
-        vp.cpu_frame_end();
-        try vp.cpu_frame_present();
+        try vp.cpu_present();
 
         try io.sleep(.fromMilliseconds(33), .awake);
     }
@@ -238,7 +237,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
 fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8, comptime E: type, expect: *const std.EnumSet(E)) !void {
     const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
 
-    const frame = try vp.cpu_frame_begin();
+    const frame = try vp.cpu_buffer_get();
     const buffer: []z2d.pixel.ARGB = blk: {
         const ptr: [*]z2d.pixel.ARGB = @ptrCast(@alignCast(frame.buffer));
         std.debug.assert(frame.bytes_per_pixel == 4);
@@ -270,8 +269,7 @@ fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8,
         y += font_size;
     }
 
-    vp.cpu_frame_end();
-    try vp.cpu_frame_present();
+    try vp.cpu_present();
 
     try io.sleep(.fromMilliseconds(33), .awake);
 }

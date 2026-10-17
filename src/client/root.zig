@@ -288,7 +288,7 @@ pub const ViewportHandle = opaque {
         handle.cast().viewport_resize(s);
     }
 
-    pub fn gl_frame_begin(handle: *ViewportHandle) !GlFrameBegin {
+    pub fn gl_buffer_get(handle: *ViewportHandle) !GlBuffer {
         std.debug.assert(!handle.destroyed());
 
         const vp = handle.cast();
@@ -309,7 +309,7 @@ pub const ViewportHandle = opaque {
         };
     }
 
-    pub fn gl_frame_end(handle: *ViewportHandle) void {
+    pub fn gl_present(handle: *ViewportHandle) !void {
         const vp = handle.cast();
         std.debug.assert(vp.renderer == .gl);
         const gl = &vp.renderer.gl;
@@ -318,13 +318,11 @@ pub const ViewportHandle = opaque {
             @panic("Buffer prematurely destroyed");
 
         gl.frame_end(buffer);
+
+        try vp.buffer_present(.gl);
     }
 
-    pub fn gl_frame_present(handle: *ViewportHandle) !void {
-        try handle.cast().buffer_present();
-    }
-
-    pub fn cpu_frame_begin(handle: *ViewportHandle) !CpuFrameBegin {
+    pub fn cpu_buffer_get(handle: *ViewportHandle) !CpuBuffer {
         std.debug.assert(!handle.destroyed());
 
         const vp = handle.cast();
@@ -355,13 +353,11 @@ pub const ViewportHandle = opaque {
         };
     }
 
-    pub fn cpu_frame_end(_: *ViewportHandle) void {}
-
-    pub fn cpu_frame_present(handle: *ViewportHandle) !void {
-        try handle.cast().buffer_present();
+    pub fn cpu_present(handle: *ViewportHandle) !void {
+        try handle.cast().buffer_present(.cpu);
     }
 
-    pub fn d11_frame_begin(handle: *ViewportHandle) !D11FrameBegin {
+    pub fn d11_buffer_get(handle: *ViewportHandle) !D11Buffer {
         if (!constants.os_has_d3d) {
             @panic("OS does not have d3d");
         }
@@ -384,7 +380,7 @@ pub const ViewportHandle = opaque {
         };
     }
 
-    pub fn d11_frame_end(handle: *ViewportHandle) void {
+    pub fn d11_present(handle: *ViewportHandle) !void {
         if (!constants.os_has_d3d) {
             @panic("OS does not have d3d");
         }
@@ -400,10 +396,8 @@ pub const ViewportHandle = opaque {
             @intFromEnum(buffer.acquire.point),
         );
         std.debug.assert(hr == win32_foundation.S_OK);
-    }
 
-    pub fn d11_frame_present(handle: *ViewportHandle) !void {
-        try handle.cast().buffer_present();
+        try vp.buffer_present(.d11);
     }
 
     pub fn d11_render_target_view(handle: *ViewportHandle) *d11.ID3D11RenderTargetView {
@@ -419,12 +413,12 @@ pub const ViewportHandle = opaque {
         return buffer.rtv;
     }
 
-    pub const D11FrameBegin = struct {
+    pub const D11Buffer = struct {
         rtv: *d11.ID3D11RenderTargetView,
         context: *d11.ID3D11DeviceContext,
     };
 
-    pub const CpuFrameBegin = struct {
+    pub const CpuBuffer = struct {
         buffer: []u8,
         width: i32,
         height: i32,
@@ -432,7 +426,7 @@ pub const ViewportHandle = opaque {
         viewport_size: Size,
     };
 
-    pub const GlFrameBegin = struct {
+    pub const GlBuffer = struct {
         fbo: c_uint,
         viewport_size: Size,
     };

@@ -84,7 +84,7 @@ pub fn client_init(src: std.builtin.SourceLocation, init: std.process.Init) !*cl
 }
 
 pub fn render_cpu(vp: *client.ViewportHandle, color: u32) !void {
-    const frame = try vp.cpu_frame_begin();
+    const frame = try vp.cpu_buffer_get();
 
     const ptr: [*]u32 = @ptrCast(@alignCast(frame.buffer.ptr));
     const buffer: []u32 = ptr[0 .. frame.buffer.len / frame.bytes_per_pixel];
@@ -97,12 +97,11 @@ pub fn render_cpu(vp: *client.ViewportHandle, color: u32) !void {
         p.* = a | r | g | b;
     }
 
-    vp.cpu_frame_end();
-    try vp.cpu_frame_present();
+    try vp.cpu_present();
 }
 
 pub fn render_gl(vp: *client.ViewportHandle) !void {
-    const frame = try vp.gl_frame_begin();
+    const frame = try vp.gl_buffer_get();
 
     const fr = 0;
     const fg = 0;
@@ -114,8 +113,7 @@ pub fn render_gl(vp: *client.ViewportHandle) !void {
     glad.glClearColor(fr, fg, fb, fa);
     glad.glClear(glad.GL_COLOR_BUFFER_BIT);
 
-    vp.gl_frame_end();
-    try vp.gl_frame_present();
+    try vp.gl_present();
 }
 
 const std = @import("std");

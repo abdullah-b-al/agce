@@ -105,15 +105,21 @@ pub fn viewport_resize(vp: *Viewport, size: ptypes.Size) void {
     vp.size = .{ .width = width, .height = height };
 }
 
-pub fn buffer_present(vp: *Viewport) !void {
+pub fn buffer_present(vp: *Viewport, comptime renderer_tag: Renderer.Tag) !void {
+    std.debug.assert(vp.renderer == renderer_tag);
+
+    if (renderer_tag == .d11 and !constants.os_has_d3d) {
+        @compileError("OS does not have d3d");
+    }
+
     defer {
         vp.current_buffer = null;
     }
 
-    const buffer: *anyopaque =
-        blk: switch (vp.renderer) {
-            .cpu => |*cpu| {
-                const buffer = cpu.buffers.getPtr(vp.current_buffer.?).?;
+    const buffer: *Renderer.RendererBuffer(renderer_tag) =
+        blk: switch (renderer_tag) {
+            .cpu => {
+                const buffer = vp.renderer.cpu.buffers.getPtr(vp.current_buffer.?).?;
                 std.debug.assert(buffer.released);
 
                 try vp.client.connection.send_buffer_present(
@@ -128,8 +134,14 @@ pub fn buffer_present(vp: *Viewport) !void {
 
                 break :blk buffer;
             },
-            .gl => |*gl| {
-                const buffer = gl.buffers.getPtr(vp.current_buffer.?) orelse
+
+            .gl, .d11 => |tag| {
+                const renderer = switch (tag) {
+                    .d11, .gl => @field(vp.renderer, @tagName(tag)),
+                    .cpu => comptime unreachable,
+                };
+
+                const buffer = renderer.buffers.getPtr(vp.current_buffer.?) orelse
                     @panic("Buffer prematurely destroyed");
                 std.debug.assert(buffer.released);
 
@@ -144,31 +156,6 @@ pub fn buffer_present(vp: *Viewport) !void {
                         .acquire_point = buffer.acquire.point,
                         .release_point = buffer.release.point,
                         .viewport_size = vp.size,
-                    },
-                );
-
-                break :blk buffer;
-            },
-            .d11 => |*r| {
-                if (!constants.os_has_d3d) {
-                    @panic("OS does not have d3d");
-                }
-
-                const buffer = r.buffers.getPtr(vp.current_buffer.?) orelse
-                    @panic("Buffer prematurely destroyed");
-                std.debug.assert(buffer.released);
-
-                buffer.release.point.advance();
-
-                try vp.client.connection.send_buffer_present_with_sync(
-                    vp.client.io,
-                    vp.client.gpa,
-                    .{
-                        .viewport_id = vp.id,
-                        .buffer_id = buffer.id,
-                        .viewport_size = vp.size,
-                        .acquire_point = buffer.acquire.point,
-                        .release_point = buffer.release.point,
                     },
                 );
 
@@ -176,24 +163,10 @@ pub fn buffer_present(vp: *Viewport) !void {
             },
         };
 
-    switch (vp.renderer) {
-        .cpu => |_, tag| {
-            const b: *Renderer.RendererBuffer(tag) = @ptrCast(@alignCast(buffer));
-            b.released = false;
-        },
-        .gl => |_, tag| {
-            const b: *Renderer.RendererBuffer(tag) = @ptrCast(@alignCast(buffer));
-            b.acquire.point.advance();
-            b.released = false;
-        },
-        .d11 => |_, tag| {
-            if (!constants.os_has_d3d) {
-                @panic("OS does not have d3d");
-            }
-            const b: *Renderer.RendererBuffer(tag) = @ptrCast(@alignCast(buffer));
-            b.acquire.point.advance();
-            b.released = false;
-        },
+    buffer.released = false;
+    switch (renderer_tag) {
+        .d11, .gl => buffer.acquire.point.advance(),
+        .cpu => {},
     }
 
     vp.frame_number += 1;

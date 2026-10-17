@@ -38,12 +38,11 @@ pub fn d3d11_clear_screen(init: std.process.Init) !void {
     for (0..30) |i| {
         const color = ([_][4]f32{ red, green, blue })[i % 3];
 
-        const frame = try vp.d11_frame_begin();
+        const frame = try vp.d11_buffer_get();
 
         frame.context.ClearRenderTargetView(frame.rtv, @ptrCast(&color));
 
-        vp.d11_frame_end();
-        try vp.d11_frame_present();
+        try vp.d11_present();
 
         try init.io.sleep(.fromSeconds(1), .awake);
     }
