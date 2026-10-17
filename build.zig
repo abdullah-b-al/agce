@@ -124,24 +124,6 @@ pub fn build(b: *std.Build) !void {
     step_check = b.step("check", "Check the compilation");
     step_all = b.step("all", "Build everything");
 
-    { // client cli
-        const module = b.createModule(.{
-            .root_source_file = b.path("src/main_client.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            .imports = &.{
-                .{ .name = "glad", .module = glad.c },
-                .{ .name = "client", .module = client },
-            },
-        });
-
-        if (c_linux) |c| module.addImport("c_linux", c);
-        module.linkLibrary(glad.lib);
-
-        install_exe(b, "agce-client", module, null);
-    }
-
     const main = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
