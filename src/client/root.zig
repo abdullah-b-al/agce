@@ -94,17 +94,21 @@ pub const ClientHandle = opaque {
 
     pub fn poll_for_events(handle: *ClientHandle, id: ViewportID, timeout_ns: u64) !void {
         const client = handle.cast();
-        const timeout: std.Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(timeout_ns), .clock = .awake } };
-        const ts: std.Io.Timestamp = .now(client.io, .awake);
         const vp = client.viewports.get(id) orelse return;
 
         // In a loop to ignore messages that are not events
+        var timeout: std.Io.Timeout = .{ .duration = .{ .raw = .fromNanoseconds(timeout_ns), .clock = .awake } };
         while (vp.events.items.len == 0) {
-            if (ts.untilNow(client.io, .awake).nanoseconds >= timeout_ns) {
-                break;
-            }
+            const ts: std.Io.Timestamp = .now(client.io, .awake);
 
             try client.poll(timeout);
+
+            const until_now = ts.untilNow(client.io, .awake).nanoseconds;
+            if (until_now < timeout.duration.raw.nanoseconds) {
+                timeout.duration.raw.nanoseconds -= until_now;
+            } else {
+                break;
+            }
         }
     }
 
