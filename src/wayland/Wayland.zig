@@ -116,6 +116,55 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
+pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+    for (ws.present_queue.items) |*item| {
+        std.debug.assert(item.state == .new);
+
+        const win = ws.windows.get(item.window_id).?;
+
+        const rs = ws.resources.getPtr(item.client_id).?;
+        const vp = rs.viewports.get(item.viewport_id).?;
+        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+
+        const nvp = native_tag.viewport(vp);
+        const nw = native_tag.window(win);
+        const b = &buffer.wayland;
+
+        nvp.surface.damage(0, 0, b.width(), b.height());
+        nvp.surface.attach(b.wl_buffer(), 0, 0);
+
+        if (item.sync) |sync| {
+            // TODO: Should we add a check to make sure we are not presenting
+            // a non-released buffer, or is the timeline sufficient ?
+
+            if (nvp.sync_surface) |sync_surface| {
+                switch (b.*) {
+                    .gpu => |gpu| {
+                        gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
+                        gpu.timeline_release.?.set(sync_surface, sync.release_point);
+                    },
+                    .cpu => {},
+                }
+            }
+        } else {
+            rs.buffers_commited.putAssumeCapacityNoClobber(item.buffer_id, item.viewport_id);
+        }
+
+        const size = nvp.min_source_size_with_buffer(nw, b);
+        nvp.viewport.setSource(
+            .fromInt(0),
+            .fromInt(0),
+            .fromInt(@intCast(size.width)),
+            .fromInt(@intCast(size.height)),
+        );
+
+        nvp.surface.commit();
+        item.state = .presented;
+    }
+
+    _ = wl.display.flush();
+}
+
 pub fn buffer_set_listener_prepare(wl: *Wayland, ws: *WindowSystem) !void {
     var total: usize = 0;
 

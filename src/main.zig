@@ -63,6 +63,7 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
     const messages = try server.messages_receive(arena, poll_result.clients);
     const ws_events = try server.messages_handle(arena, messages);
     ws.events_handle(ws_events);
+    ws.present();
 
     if (poll_result.window_system) {
         switch (ws.native_tag()) {

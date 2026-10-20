@@ -281,15 +281,6 @@ fn inside(x: i32, y: i32, rect: client.Rect) bool {
     return x >= rect.x and x <= right and y >= rect.y and y <= bottom;
 }
 
-fn draw_rect(ctx: *z2d.Context, rect: client.Rect) !void {
-    try ctx.moveTo(rect.x, rect.y);
-    try ctx.lineTo(rect.x + rect.width, rect.y);
-    try ctx.lineTo(rect.x + rect.width, rect.y + rect.height);
-    try ctx.lineTo(rect.x, rect.y + rect.height);
-    try ctx.closePath();
-    try ctx.stroke();
-}
-
 fn between(value: anytype, min: @TypeOf(value), max: @TypeOf(value)) bool {
     return value >= min and value <= max;
 }
@@ -302,9 +293,3 @@ const shared = @import("shared.zig");
 
 const z2d = @import("z2d");
 const client = @import("client");
-const constants = @import("constants");
-const glad = @import("glad");
-const WindowSystem = @import("main").WindowSystem;
-const Server = @import("main").Server;
-const zio = @import("main").zio;
-const tick = @import("main").tick;

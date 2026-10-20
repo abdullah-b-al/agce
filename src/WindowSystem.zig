@@ -16,6 +16,7 @@ window_next_id: WindowID,
 
 server_events: std.ArrayList(ServerEvent),
 deferred_events: std.ArrayList(Event),
+present_queue: std.ArrayList(BufferPresent),
 
 /// A list of os handles to close at the end of tick()
 handles_to_close: std.ArrayList(HandleToClose),
@@ -126,6 +127,7 @@ fn create_undefined_native(
 
         .server_events = .empty,
         .deferred_events = .empty,
+        .present_queue = .empty,
         .handles_to_close = .empty,
 
         .input_focus_mouse = null,
@@ -170,6 +172,7 @@ pub fn destroy(ws: *WindowSystem) void {
         &ws.deferred_events,
         &ws.server_events,
         &ws.handles_to_close,
+        &ws.present_queue,
     }) |entry| {
         entry.deinit(ws.gpa);
     }
@@ -207,8 +210,8 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
             try ws.buffer_create_gbm_bo(args);
         },
 
-        .buffer_present => |args| try ws.buffer_present(.{ .no_sync = args }),
-        .buffer_present_with_sync => |args| try ws.buffer_present(.{ .sync = args }),
+        .buffer_present => |args| try ws.present_queue_push(.{ .no_sync = args }),
+        .buffer_present_with_sync => |args| try ws.present_queue_push(.{ .sync = args }),
 
         .buffer_destroy => |args| try ws.buffer_destroy(args),
 
@@ -680,24 +683,22 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
     });
 }
 
-const BufferPresent = union(enum) {
+const BufferQueuePresent = union(enum) {
     no_sync: Event.TypeOf(.buffer_present),
     sync: Event.TypeOf(.buffer_present_with_sync),
 };
 
-fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
-    const client_id, const viewport_id, const viewport_size, const buffer_id = switch (args) {
+fn present_queue_push(ws: *WindowSystem, args: BufferQueuePresent) !void {
+    try ws.present_queue.ensureUnusedCapacity(ws.gpa, 1);
+
+    const client_id, const viewport_id, const render_size, const buffer_id = switch (args) {
         inline else => |v| .{
             v.client_id,             v.payload.viewport_id,
             v.payload.viewport_size, v.payload.buffer_id,
         },
     };
 
-    const viewport_key: ViewportKey = .{
-        .client_id = client_id,
-        .viewport_id = viewport_id,
-    };
-
+    const viewport_key: ViewportKey = .{ .client_id = client_id, .viewport_id = viewport_id };
     const vp = ws.viewport_from_key(viewport_key) orelse {
         log.err("Viewport does not exist {f} {f}", .{ viewport_key.client_id, viewport_key.viewport_id });
         return;
@@ -707,14 +708,13 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
 
     const rs = ws.resources.getPtr(client_id) orelse return;
 
-    vp.render_size = viewport_size;
-
+    vp.render_size = render_size;
     if (vp.parent_key == null) {
         vp.clipping_rect = .{
             .x = 0,
             .y = 0,
-            .width = viewport_size.width,
-            .height = viewport_size.height,
+            .width = render_size.width,
+            .height = render_size.height,
         };
     }
 
@@ -732,122 +732,40 @@ fn buffer_present(ws: *WindowSystem, args: BufferPresent) !void {
         return error.BufferAndViewportFormatMismatch;
     }
 
-    errdefer comptime unreachable;
+    ws.present_queue.appendAssumeCapacity(.init(
+        client_id,
+        viewport_id,
+        buffer_id,
+        win.id,
+        render_size,
 
-    const released_buffer = vp.attached_buffer;
-    vp.attached_buffer = buffer_id;
-
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            const wl = tag.window_system(ws);
-            const nvp = tag.viewport(vp);
-            const nw = tag.window(win);
-            const b = &buffer.wayland;
-
-            nvp.surface.damage(0, 0, b.width(), b.height());
-            nvp.surface.attach(b.wl_buffer(), 0, 0);
-            switch (args) {
-                .no_sync => {
-                    rs.buffers_commited.putAssumeCapacityNoClobber(buffer_id, viewport_id);
-                },
-                .sync => |a| {
-                    // TODO: Should we add a check to make sure we are not presenting
-                    // a non-released buffer, or is the timeline sufficient ?
-
-                    const sync = a.payload;
-                    if (nvp.sync_surface) |sync_surface| {
-                        switch (b.*) {
-                            .gpu => |gpu| {
-                                gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
-                                gpu.timeline_release.?.set(sync_surface, sync.release_point);
-                            },
-                            .cpu => {},
-                        }
-                    }
-                },
-            }
-
-            const size = nvp.min_source_size_with_buffer(nw, b);
-            nvp.viewport.setSource(
-                .fromInt(0),
-                .fromInt(0),
-                .fromInt(@intCast(size.width)),
-                .fromInt(@intCast(size.height)),
-            );
-
-            nvp.surface.commit();
-
-            _ = wl.display.flush();
+        switch (args) {
+            .no_sync => null,
+            .sync => |sync| .{
+                .acquire_point = sync.payload.acquire_point,
+                .release_point = sync.payload.release_point,
+            },
         },
-        .win32 => |tag| {
-            const win32 = tag.window_system(ws);
-            const nvp = tag.viewport(vp);
+    ));
+}
 
-            switch (buffer.*) {
-                .cpu => |*cpu| {
-                    if (win32_gdi.GetDC(nvp.child_window_handle)) |hdc| {
-                        win32.render_buffer_cpu(hdc, vp, cpu);
-                        _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
-                    }
-                },
-                .d11 => |*_b| {
-                    // TODO: Do not block thread when copying and presenting
+pub fn present(ws: *WindowSystem) void {
+    // FIXME: This could block forever on windows if we wait on a
+    // timeline point that never gets signaled
+    while (ws.present_queue.items.len > 0) {
+        switch (ws.native_tag()) {
+            inline else => |tag| {
+                tag.window_system(ws).present(ws, tag);
+            },
+        }
 
-                    const b: *Win32.Buffer.D11 = _b;
-                    const sync: client_to_server.BufferPresentWithSync = args.sync.payload;
-
-                    while (b.acquire.acquire.GetCompletedValue() != @intFromEnum(sync.acquire_point)) {}
-
-                    var back_buffer: *d11.ID3D11Texture2D = undefined;
-                    const hr = nvp.swap_chain.IDXGISwapChain.GetBuffer(
-                        0,
-                        d11.IID_ID3D11Texture2D,
-                        @ptrCast(&back_buffer),
-                    );
-                    // TODO: Error handle
-                    std.debug.assert(hr == win32_foundation.S_OK);
-                    defer _ = back_buffer.IUnknown.Release();
-
-                    var box: d11.D3D11_BOX = .{
-                        .left = 0,
-                        .top = 0,
-                        .front = 0,
-                        .right = @intCast(vp.clipping_rect.width),
-                        .bottom = @intCast(vp.clipping_rect.height),
-                        .back = 1,
-                    };
-                    // TODO: Figure out a way to not copy when presenting
-                    win32.d11_context.device_context.CopySubresourceRegion(
-                        @ptrCast(back_buffer),
-                        0,
-                        0,
-                        0,
-                        0,
-                        @ptrCast(buffer.d11.texture),
-                        0,
-                        &box,
-                    );
-
-                    _ = nvp.swap_chain.IDXGISwapChain.Present(0, 0);
-                    _ = win32.d11_context.device_context4.Signal(
-                        b.release.release,
-                        @intFromEnum(sync.release_point),
-                    );
-                },
+        var i = ws.present_queue.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (ws.present_queue.items[i].state == .presented) {
+                _ = ws.present_queue.orderedRemove(i);
             }
-
-            if (released_buffer) |released| {
-                ws.server_events.appendAssumeCapacity(.{
-                    .buffer_released = .{
-                        .client_id = viewport_key.client_id,
-                        .payload = .{
-                            .viewport_id = viewport_key.viewport_id,
-                            .buffer_id = released,
-                        },
-                    },
-                });
-            }
-        },
+        }
     }
 }
 
@@ -1562,13 +1480,6 @@ pub const NativeTag = enum {
     }
 };
 
-pub const Linux = union(enum) { wayland: *Wayland };
-
-pub const Wayland = @import("wayland/Wayland.zig");
-pub const Win32 = @import("win32/Win32.zig");
-pub const Viewport = @import("window_system/Viewport.zig");
-pub const Window = @import("window_system/Window.zig");
-
 pub const HandleToClose = union(enum) {
     windows_handle: *anyopaque,
     fd: std.posix.fd_t,
@@ -1588,6 +1499,64 @@ pub const HandleToClose = union(enum) {
         }
     }
 };
+
+pub const BufferPresent = struct {
+    client_id: ClientID,
+    viewport_id: ViewportID,
+    buffer_id: BufferID,
+    window_id: WindowID,
+    render_size: ptypes.Size,
+    sync: ?Sync,
+    state: State,
+
+    pub fn init(
+        client_id: ClientID,
+        viewport_id: ViewportID,
+        buffer_id: BufferID,
+        window_id: WindowID,
+        render_size: ptypes.Size,
+        sync: ?Sync,
+    ) BufferPresent {
+        return .{
+            .client_id = client_id,
+            .viewport_id = viewport_id,
+            .buffer_id = buffer_id,
+            .window_id = window_id,
+            .render_size = render_size,
+            .sync = sync,
+
+            .state = .new,
+        };
+    }
+
+    const Sync = struct {
+        acquire_point: ptypes.AcquireTimelinePoint,
+        release_point: ptypes.ReleaseTimelinePoint,
+    };
+
+    const State = enum {
+        new,
+        ready_to_copy,
+        ready_to_present,
+        presented,
+
+        pub fn advance(s: *State) void {
+            s.* = switch (s.*) {
+                .new => .ready_to_copy,
+                .ready_to_copy => .ready_to_present,
+                .ready_to_present => .presented,
+                .presented => unreachable,
+            };
+        }
+    };
+};
+
+pub const Linux = union(enum) { wayland: *Wayland };
+
+pub const Wayland = @import("wayland/Wayland.zig");
+pub const Win32 = @import("win32/Win32.zig");
+pub const Viewport = @import("window_system/Viewport.zig");
+pub const Window = @import("window_system/Window.zig");
 
 const std = @import("std");
 const Io = std.Io;

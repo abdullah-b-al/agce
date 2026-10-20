@@ -282,12 +282,139 @@ fn viewport_proc(
 
     return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
-pub fn render_buffer_cpu(
+
+pub fn present(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+    win32.present_queue_check_available_to_copy(ws);
+    win32.present_queue_copy_if_ready(ws, native_tag);
+    win32.present_queue_present_if_ready(ws, native_tag);
+
+    for (ws.present_queue.items) |item| {
+        if (item.state == .presented) {
+            ws.server_events.appendAssumeCapacity(.{
+                .buffer_released = .{
+                    .client_id = item.client_id,
+                    .payload = .{
+                        .viewport_id = item.viewport_id,
+                        .buffer_id = item.buffer_id,
+                    },
+                },
+            });
+        }
+    }
+}
+
+fn present_queue_check_available_to_copy(_: *Win32, ws: *WindowSystem) void {
+    for (ws.present_queue.items) |*item| {
+        std.debug.assert(item.state != .presented);
+
+        const rs = ws.resources.getPtr(item.client_id).?;
+        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+
+        switch (buffer.*) {
+            .cpu => item.state.advance(),
+            .d11 => |*b| {
+                const sync = item.sync.?;
+                if (b.acquire.acquire.GetCompletedValue() >= @intFromEnum(sync.acquire_point)) {
+                    item.state.advance();
+                }
+            },
+        }
+    }
+}
+
+fn present_queue_copy_if_ready(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+    for (ws.present_queue.items) |*item| {
+        if (item.state != .ready_to_copy) continue;
+
+        const rs = ws.resources.getPtr(item.client_id).?;
+        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const vp = rs.viewports.get(item.viewport_id).?;
+        const nvp = native_tag.viewport(vp);
+
+        switch (buffer.*) {
+            .cpu => |*cpu| {
+                win32.buffer_copy_cpu_hdc(nvp, cpu, item);
+            },
+            .d11 => {
+                // TODO: Do not block thread when copying
+
+                var back_buffer: *d11.ID3D11Texture2D = undefined;
+                const hr = nvp.swap_chain.IDXGISwapChain.GetBuffer(
+                    0,
+                    d11.IID_ID3D11Texture2D,
+                    @ptrCast(&back_buffer),
+                );
+                // TODO: Error handle
+                std.debug.assert(hr == win32_foundation.S_OK);
+                defer _ = back_buffer.IUnknown.Release();
+
+                var box: d11.D3D11_BOX = .{
+                    .left = 0,
+                    .top = 0,
+                    .front = 0,
+                    .right = @intCast(vp.clipping_rect.width),
+                    .bottom = @intCast(vp.clipping_rect.height),
+                    .back = 1,
+                };
+                // TODO: Figure out a way to not copy when presenting
+                win32.d11_context.device_context.CopySubresourceRegion(
+                    @ptrCast(back_buffer),
+                    0,
+                    0,
+                    0,
+                    0,
+                    @ptrCast(buffer.d11.texture),
+                    0,
+                    &box,
+                );
+
+                item.state.advance();
+            },
+        }
+    }
+}
+
+fn present_queue_present_if_ready(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+    for (ws.present_queue.items) |*item| {
+        if (item.state != .ready_to_present) continue;
+
+        const rs = ws.resources.getPtr(item.client_id).?;
+        const vp = rs.viewports.get(item.viewport_id).?;
+        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+
+        const nvp = native_tag.viewport(vp);
+
+        switch (buffer.*) {
+            .cpu => {},
+            .d11 => |*b| {
+                // TODO: Do not block thread when presenting
+
+                const sync = item.sync.?;
+
+                _ = nvp.swap_chain.IDXGISwapChain.Present(0, 0);
+                _ = win32.d11_context.device_context4.Signal(
+                    b.release.release,
+                    @intFromEnum(sync.release_point),
+                );
+            },
+        }
+
+        item.state.advance();
+    }
+}
+
+pub fn buffer_copy_cpu_hdc(
     _: *Win32,
-    hdc: win32_gdi.HDC,
-    vp: *WindowSystem.Viewport,
+    nvp: *Viewport,
     cpu: *const Buffer.Cpu,
+    buffer_present_item: *WindowSystem.BufferPresent,
 ) void {
+    const hdc = win32_gdi.GetDC(nvp.child_window_handle) orelse return;
+    defer {
+        _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
+        buffer_present_item.state.advance();
+    }
+
     var bitmap_info: win32_gdi.BITMAPINFO = undefined;
 
     bitmap_info.bmiHeader.biSize = @sizeOf(win32_gdi.BITMAPINFOHEADER);
@@ -302,11 +429,12 @@ pub fn render_buffer_cpu(
         },
     }
 
+    const size = buffer_present_item.render_size;
     // zig fmt: off
     _ = win32_gdi.StretchDIBits(
         hdc,
-        0, 0, vp.render_size.width, vp.render_size.height,
-        0, 0, vp.render_size.width, vp.render_size.height,
+        0, 0, size.width, size.height,
+        0, 0, size.width, size.height,
 
         cpu.pixels,
         &bitmap_info,
@@ -314,7 +442,6 @@ pub fn render_buffer_cpu(
         win32_gdi.SRCCOPY,
     );
     // zig fmt: on
-
 }
 
 pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?[*:0]align(1) const u16 {

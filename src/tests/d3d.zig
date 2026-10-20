@@ -61,8 +61,3 @@ const shared = @import("shared.zig");
 
 const client = @import("client");
 const constants = @import("constants");
-const glad = @import("glad");
-const WindowSystem = @import("main").WindowSystem;
-const Server = @import("main").Server;
-const zio = @import("main").zio;
-const tick = @import("main").tick;

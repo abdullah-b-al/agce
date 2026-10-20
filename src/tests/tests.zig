@@ -9,6 +9,7 @@ const files = .{
     @import("embeding.zig"),
     @import("interactive.zig"),
     @import("d3d.zig"),
+    @import("presentation.zig"),
 };
 
 const Case = enum {
@@ -20,6 +21,8 @@ const Case = enum {
     hide_sub_viewports,
     d3d11_share_texture,
     d3d11_clear_screen,
+    present_many_viewports_cpu,
+    present_many_viewports_d11,
 };
 
 comptime {
