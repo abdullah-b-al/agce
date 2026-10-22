@@ -169,21 +169,6 @@ pub const ClientHandle = opaque {
         );
     }
 
-    pub fn update(handle: *ClientHandle) !void {
-        const client = handle.cast();
-        for (client.viewports.values()) |vp| {
-            while (vp.messages.pop()) |message| {
-                switch (message) {
-                    inline else => |_, tag| {
-                        vp.message_handle(tag, message) catch |err| switch (err) {
-                            else => |e| return e,
-                        };
-                    },
-                }
-            }
-        }
-    }
-
     pub const ViewportPendingPeek = struct {
         id: ViewportID,
         requsted_size: Size,
@@ -288,8 +273,8 @@ pub const ViewportHandle = opaque {
         try vp.client.throttle_frames(vp);
     }
 
-    pub fn resize(handle: *ViewportHandle, s: ptypes.Size) void {
-        handle.cast().viewport_resize(s);
+    pub fn resize(handle: *ViewportHandle, s: ptypes.Size) !void {
+        try handle.cast().resize(s);
     }
 
     pub fn gl_buffer_get(handle: *ViewportHandle) !GlBuffer {

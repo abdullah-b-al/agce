@@ -25,7 +25,6 @@ pub fn main(init: std.process.Init) !void {
             std.debug.assert(depth > 0);
 
             try handle.poll(std.math.maxInt(u64));
-            try handle.update();
 
             if (handle.viewport_pending_peek()) |result| {
                 break :blk try handle.viewport_create_from_pending(
@@ -99,7 +98,6 @@ pub fn main(init: std.process.Init) !void {
     var ts: Io.Timestamp = .now(init.io, .awake);
     while (true) {
         try handle.poll(1);
-        try handle.update();
 
         while (viewport.event_pop()) |event| {
             switch (event) {

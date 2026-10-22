@@ -176,40 +176,6 @@ pub fn init_gl(client: *Client, major: c_int, minor: c_int) !void {
     client.gl_context = gl;
 }
 
-pub fn update_by_tag(client: *Client, viewport_id: ViewportID, comptime tag: Message.Tag) !void {
-    const vp = client.viewports.get(viewport_id) orelse return error.ViewportDoesNotExist;
-    var i = vp.messages.items.len;
-    while (i > 0) {
-        i -= 1;
-        const message = vp.messages.items[i];
-        if (message == tag) {
-            try vp.message_handle(tag, message);
-            _ = vp.messages.orderedRemove(i);
-        }
-    }
-}
-
-pub fn wait_for(client: *Client, viewport_id: ViewportID, tag: Message.Tag) !void {
-    try client.wait_for_count(viewport_id, tag, 1);
-}
-
-pub fn wait_for_count(client: *Client, viewport_id: ViewportID, tag: Message.Tag, min_count: usize) !void {
-    const vp = client.viewports.get(viewport_id) orelse return error.ViewportDoesNotExist;
-    while (true) {
-        try client.poll(.none);
-
-        var count: usize = 0;
-        for (vp.messages.items) |message| {
-            if (message == tag)
-                count += 1;
-        }
-
-        if (count >= min_count) {
-            break;
-        }
-    }
-}
-
 pub fn poll(client: *Client, timeout: Io.Timeout) error{ Timeout, Canceled, OutOfMemory }!void {
     try client.messages_queue.messages_available.waitTimeout(client.io, timeout);
     client.messages_queue.messages_available.reset();
@@ -221,7 +187,6 @@ pub fn poll(client: *Client, timeout: Io.Timeout) error{ Timeout, Canceled, OutO
 
     try client.viewports_from_server.ensureUnusedCapacity(client.gpa, len);
     for (client.viewports.values()) |vp| {
-        try vp.messages.ensureUnusedCapacity(client.gpa, len);
         try vp.events.ensureUnusedCapacity(client.gpa, len);
         try vp.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, len);
         try vp.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, len);
@@ -318,7 +283,6 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         .viewport_resize => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             vp.event_push(.{ .viewport_resize = e });
-            vp.message_push(.{ .viewport_resize = e });
         },
         .viewport_close => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
@@ -713,12 +677,6 @@ pub const Event = union(enum) {
     sub_viewport_closed: SubViewportID,
     sub_viewport_embeded: SubViewportID,
     wake_up,
-};
-
-pub const Message = union(enum) {
-    pub const Tag = std.meta.Tag(Message);
-
-    viewport_resize: server_to_client.ViewportResize,
 };
 
 pub fn WithViewportID(comptime T: type) type {

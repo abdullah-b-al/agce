@@ -83,7 +83,7 @@ pub fn hide_sub_viewports(init: std.process.Init) !void {
 
         while (vp.event_pop()) |event| {
             switch (event) {
-                .viewport_resize => |e| vp.resize(e.size),
+                .viewport_resize => |e| try vp.resize(e.size),
                 .viewport_close => break :outer,
                 else => {},
             }

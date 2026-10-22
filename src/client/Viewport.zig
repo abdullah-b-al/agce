@@ -17,7 +17,6 @@ pending_buffers_cpu: std.ArrayList(BufferCreatedCpu),
 pending_buffers_gbm_bo: std.ArrayList(BufferCreatedGbmBo),
 pending_textures_d3d: std.ArrayList(TextureCreatedD3D),
 
-messages: std.ArrayList(Client.Message),
 events: std.ArrayList(Client.Event),
 
 renderer: Renderer,
@@ -46,7 +45,6 @@ pub fn init(
         .frame_number = 0,
         .current_buffer = null,
 
-        .messages = .empty,
         .events = .empty,
 
         .status = .pending,
@@ -66,7 +64,6 @@ pub fn deinit(vp: *Viewport) void {
         inline else => |*r| r.deinit(gpa),
     }
 
-    vp.messages.deinit(gpa);
     vp.events.deinit(gpa);
     vp.deinited = true;
 }
@@ -79,22 +76,12 @@ pub fn event_pop(vp: *Viewport) ?Client.Event {
     return vp.events.pop();
 }
 
-pub fn message_push(vp: *Viewport, message: Client.Message) void {
-    vp.messages.insertAssumeCapacity(0, message);
-}
+pub fn resize(vp: *Viewport, size: ptypes.Size) !void {
+    vp.buffer_resize(size) catch |err| {
+        log.err("Viewport.resize {}", .{err});
+        return error.ResizeFailed;
+    };
 
-pub fn message_handle(vp: *Viewport, comptime tag: Client.Message.Tag, message: Client.Message) !void {
-    std.debug.assert(tag == message);
-    const msg = @field(message, @tagName(tag));
-
-    switch (tag) {
-        .viewport_resize => {
-            try vp.buffer_resize(msg.size);
-        },
-    }
-}
-
-pub fn viewport_resize(vp: *Viewport, size: ptypes.Size) void {
     const buffer_size = switch (vp.renderer) {
         inline else => |r| r.buffer_size(),
     };

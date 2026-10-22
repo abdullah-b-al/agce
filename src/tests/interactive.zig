@@ -168,7 +168,6 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
     var hover_time: Io.Timestamp = .now(io, .awake);
     while (expect.count() > 0) {
         try handle.poll(0);
-        try handle.update();
 
         var clicked = false;
         while (vp.event_pop()) |event| {
@@ -177,7 +176,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
                     mouse_x = @trunc(e.x);
                     mouse_y = @trunc(e.y);
                 },
-                .viewport_resize => |e| vp.resize(e.size),
+                .viewport_resize => |e| try vp.resize(e.size),
                 .mouse_button => |e| clicked = e.button == .left and e.state == .pressed,
                 else => {},
             }
