@@ -177,7 +177,7 @@ pub const Pointer = struct {
 
     pub fn set_shape(p: *Pointer, shape: wp.CursorShapeDeviceV1.Shape) void {
         if (p.shaper) |shaper| {
-            const serial = p.enter_serial orelse @panic("Must be set on Pointer.enter event");
+            const serial = p.enter_serial orelse return;
             shaper.setShape(serial, shape);
         }
     }

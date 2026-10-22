@@ -345,10 +345,16 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         },
         .mouse_enter => |args| {
             if (ws.input_focus_mouse == args.window_id) return;
-            const window = ws.windows.get(args.window_id) orelse return;
+            const win = ws.windows.get(args.window_id) orelse return;
+
             ws.input_focus_mouse = args.window_id;
 
-            window.input_focus_mouse = .{
+            const vp = ws.viewport_from_key(.{
+                .client_id = args.client_id,
+                .viewport_id = args.viewport_id,
+            }) orelse return;
+
+            win.input_focus_mouse = .{
                 .client_id = args.client_id,
                 .viewport_id = args.viewport_id,
             };
@@ -361,6 +367,8 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
                     },
                 },
             });
+
+            ws.cursor_shape_set_from_viewport(vp, win.input_focus_mouse);
         },
         .mouse_leave => |args| {
             ws.input_focus_mouse = null;
@@ -1172,27 +1180,14 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
 }
 
 pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)) !void {
-    const rs = ws.resources.getPtr(args.client_id) orelse return;
-    const vp = rs.viewports.get(args.payload.viewport_id) orelse return error.ViewportDoesNotExist;
+    const viewport_key: ViewportKey = .{
+        .client_id = args.client_id,
+        .viewport_id = args.payload.viewport_id,
+    };
+    const vp = ws.viewport_from_key(viewport_key) orelse return;
+    vp.cursor_shape = args.payload.shape;
 
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            const nvp = tag.viewport(vp);
-            const shape = Wayland.from_protocol_cursor_shape(args.payload.shape);
-            nvp.pointer.set_shape(shape orelse return);
-        },
-        .win32 => |tag| {
-            tag.guard();
-            if (args.payload.shape == .none) {
-                _ = win32_win.SetCursor(null);
-            } else {
-                const name = Win32.from_protocol_cursor_shape(args.payload.shape);
-                const hcursor = win32_win.LoadCursorW(null, name);
-
-                _ = win32_win.SetCursor(hcursor orelse return);
-            }
-        },
-    }
+    ws.cursor_shape_set_from_viewport(vp, viewport_key);
 }
 
 pub fn sub_viewport_embed(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_embed)) !void {
@@ -1227,6 +1222,32 @@ pub fn sub_viewport_embed(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_em
             },
         },
     });
+}
+
+pub fn cursor_shape_set_from_viewport(ws: *WindowSystem, vp: *Viewport, viewport_key: ViewportKey) void {
+    const win_id = ws.input_focus_mouse orelse return;
+    const win = ws.windows.get(win_id) orelse return;
+
+    if (!std.meta.eql(win.input_focus_mouse, viewport_key)) return;
+
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const nvp = tag.viewport(vp);
+            const shape = Wayland.from_protocol_cursor_shape(vp.cursor_shape);
+            nvp.pointer.set_shape(shape orelse return);
+        },
+        .win32 => |tag| {
+            tag.guard();
+            if (vp.cursor_shape == .none) {
+                _ = win32_win.SetCursor(null);
+            } else {
+                const name = Win32.from_protocol_cursor_shape(vp.cursor_shape);
+                const hcursor = win32_win.LoadCursorW(null, name);
+
+                _ = win32_win.SetCursor(hcursor orelse return);
+            }
+        },
+    }
 }
 
 pub const ViewportKey = struct {

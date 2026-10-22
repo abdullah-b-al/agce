@@ -8,6 +8,7 @@ state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
 format: ptypes.BufferFormat,
+cursor_shape: ptypes.CursorShape,
 
 win32: if (os == .windows) Win32.Viewport else void,
 linux: if (os == .linux) Linux else void,
@@ -40,6 +41,7 @@ pub fn create(
         .render_size = render_size,
         .sub_viewports = .empty,
         .format = format,
+        .cursor_shape = .default,
 
         .win32 = undefined,
         .linux = undefined,
