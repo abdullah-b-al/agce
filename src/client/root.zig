@@ -227,16 +227,16 @@ pub const ViewportHandle = opaque {
             return;
         }
 
-        vp.deinit();
-
         _ = vp.client.viewports.orderedRemove(vp.id);
-        vp.client.viewports_destroyed.putAssumeCapacityNoClobber(vp.id, vp);
 
         vp.client.connection.send_viewport_destroy(
             vp.client.io,
             vp.client.gpa,
             .{ .viewport_id = vp.id },
         ) catch {};
+
+        vp.deinit();
+        vp.client.gpa.destroy(vp);
     }
 
     pub fn id(handle: *ViewportHandle) ViewportID {
