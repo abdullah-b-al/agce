@@ -130,33 +130,54 @@ pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSyste
         const nw = native_tag.window(win);
         const b = &buffer.wayland;
 
-        nvp.surface.damage(0, 0, b.width(), b.height());
-        nvp.surface.attach(b.wl_buffer(), 0, 0);
+        const should_be_hidden = vp.should_be_hidden(ws);
 
-        if (item.sync) |sync| {
-            // TODO: Should we add a check to make sure we are not presenting
-            // a non-released buffer, or is the timeline sufficient ?
-
-            if (nvp.sync_surface) |sync_surface| {
-                switch (b.*) {
-                    .gpu => |gpu| {
-                        gpu.timeline_acquire.?.set(sync_surface, sync.acquire_point);
-                        gpu.timeline_release.?.set(sync_surface, sync.release_point);
-                    },
-                    .cpu => {},
-                }
-            }
+        if (should_be_hidden) {
+            nvp.surface.attach(null, 0, 0);
         } else {
-            rs.buffers_commited.putAssumeCapacityNoClobber(item.buffer_id, item.viewport_id);
+            nvp.surface.damage(0, 0, b.width(), b.height());
+            nvp.surface.attach(b.wl_buffer(), 0, 0);
+
+            const size = nvp.min_source_size_with_buffer(nw, b);
+            nvp.viewport.setSource(
+                .fromInt(0),
+                .fromInt(0),
+                .fromInt(@intCast(size.width)),
+                .fromInt(@intCast(size.height)),
+            );
         }
 
-        const size = nvp.min_source_size_with_buffer(nw, b);
-        nvp.viewport.setSource(
-            .fromInt(0),
-            .fromInt(0),
-            .fromInt(@intCast(size.width)),
-            .fromInt(@intCast(size.height)),
-        );
+        // buffer synchronization and release
+        switch (b.*) {
+            .gpu => |gpu| {
+                std.debug.assert(item.sync != null);
+                const gbm_bo = rs.gbm_bos.get(item.buffer_id).?;
+                // TODO: Should we add a check to make sure we are not presenting
+                // a non-released buffer, or is the timeline sufficient ?
+
+                if (should_be_hidden) {
+                    // Maybe this should wait on the acquisition before releasing ?
+                    gbm_bo.signal_release_timeline(ws.gbm, item.sync.?.release_point);
+                } else {
+                    gpu.timeline_acquire.?.set(nvp.sync_surface.?, item.sync.?.acquire_point);
+                    gpu.timeline_release.?.set(nvp.sync_surface.?, item.sync.?.release_point);
+                }
+            },
+            .cpu => {
+                std.debug.assert(item.sync == null);
+                if (should_be_hidden) {
+                    ws.server_events.appendAssumeCapacity(.{ .buffer_released = .{
+                        .client_id = item.client_id,
+                        .payload = .{
+                            .buffer_id = item.buffer_id,
+                            .viewport_id = item.viewport_id,
+                        },
+                    } });
+                } else {
+                    rs.buffers_commited.putAssumeCapacityNoClobber(item.buffer_id, item.viewport_id);
+                }
+            },
+        }
 
         nvp.surface.commit();
         item.state = .presented;

@@ -199,6 +199,21 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
             ),
         );
     }
+
+    pub fn signal_release_timeline(bo: *const GbmBo, gbm: WindowSystem.Gbm, point: ptypes.ReleaseTimelinePoint) void {
+        const handles = @intFromEnum(bo.release);
+        var points = @intFromEnum(point);
+
+        const result = c_linux.drmSyncobjTimelineSignal(
+            gbm.dri.handle,
+            &handles,
+            &points,
+            1,
+        );
+
+        // TODO: error handle
+        std.debug.assert(result == 0);
+    }
 };
 
 const std = @import("std");

@@ -1084,42 +1084,27 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
 
     const svp_rs = ws.resources.getPtr(svp_viewport_key.client_id) orelse return;
     const svp = svp_rs.viewports.get(svp_viewport_key.viewport_id) orelse return error.ViewportDoesNotExist;
-    const win = ws.windows.get(svp.window_id) orelse return error.ViewportHasNoWindow;
 
     const old = svp.state;
     svp.state = args.payload.state;
 
     if (svp.state == old) return;
 
-    const parent_key = svp.parent_key.?;
-    const parent = ws.viewport_from_key(parent_key).?;
     switch (ws.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
             const nvp = tag.viewport(svp);
-            const size = nvp.min_source_size(&win.linux.wayland);
-            nvp.viewport.setSource(
-                .fromInt(0),
-                .fromInt(0),
-                .fromInt(@intCast(size.width)),
-                .fromInt(@intCast(size.height)),
-            );
 
             switch (svp.state) {
                 .hidden => {
-                    nvp.subsurface.set_position(0, 0);
-                    nvp.subsurface.place(.below, parent.linux.wayland.surface);
+                    // TODO: If needed, attach a null buffer recursivly for all children
+                    nvp.surface.attach(null, 0, 0);
+                    nvp.surface.commit();
                 },
                 .shown => {
-                    nvp.subsurface.set_position(svp.clipping_rect.x, svp.clipping_rect.y);
-                    nvp.subsurface.place(.above, parent.linux.wayland.surface);
+                    // TODO: Maybe, attach the last buffer to re-present the surface ?
+                    // Or send an event asking for a redraw
                 },
             }
-
-            nvp.surface.commit();
-            tag.viewport(parent).surface.commit();
-
-            _ = wl.display.flush();
         },
         .win32 => |tag| {
             const nsvp = tag.viewport(svp);
@@ -1132,6 +1117,7 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
         },
     }
 
+    const parent_key = svp.parent_key.?;
     ws.server_events.appendAssumeCapacity(.{
         .sub_viewport_display_state = .{
             .client_id = parent_key.client_id,

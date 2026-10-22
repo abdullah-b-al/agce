@@ -100,6 +100,20 @@ pub fn native_tag(vp: *Viewport) WindowSystem.NativeTag {
     };
 }
 
+pub fn should_be_hidden(vp: *Viewport, ws: *WindowSystem) bool {
+    if (vp.state == .hidden) return true;
+
+    var maybe_parent = ws.viewport_from_key(vp.parent_key orelse return false);
+
+    while (maybe_parent) |parent| {
+        if (parent.state == .hidden) return true;
+
+        maybe_parent = ws.viewport_from_key(parent.parent_key orelse return false);
+    }
+
+    return false;
+}
+
 pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubViewportID {
     for (vp.sub_viewports.keys(), vp.sub_viewports.values()) |id, k| {
         if (std.meta.eql(key, k)) {

@@ -185,28 +185,16 @@ pub const Pointer = struct {
 
 pub const Subsurface = struct {
     subsurface: *cwl.Subsurface,
-    placement: Placment,
 
     pub fn init(subsurface: *cwl.Subsurface) Subsurface {
         return .{
             .subsurface = subsurface,
-            .placement = .above,
         };
     }
 
     pub fn set_position(s: *Subsurface, x: i32, y: i32) void {
         s.subsurface.setPosition(x, y);
     }
-
-    pub fn place(s: *Subsurface, p: Placment, surface: *cwl.Surface) void {
-        s.placement = p;
-        switch (p) {
-            .above => s.subsurface.placeAbove(surface),
-            .below => s.subsurface.placeBelow(surface),
-        }
-    }
-
-    const Placment = enum { below, above };
 };
 
 const std = @import("std");
