@@ -324,21 +324,9 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
             }
         },
         .keyboard_enter => |args| {
-            ws.input_focus_keyboard = args.window_id;
-
-            switch (ws.native_tag()) {
-                .wayland => {},
-                .win32 => |tag| {
-                    // windows requires explict focusing to receive
-                    // keyboard events for child windows
-                    tag.guard();
-                    const win = ws.windows.get(args.window_id) orelse return;
-                    const key = win.input_focus_mouse;
-                    const vp = ws.viewport_from_key(key) orelse return;
-                    const nvp = tag.viewport(vp);
-                    _ = win32_kbm.SetFocus(nvp.child_window_handle);
-                },
-            }
+            const win = ws.windows.get(args.window_id) orelse return;
+            ws.input_focus_keyboard = win.id;
+            ws.keyboard_focus_set(win, win.input_focus_keyboard);
         },
         .keyboard_leave => {
             ws.input_focus_keyboard = null;
@@ -346,29 +334,12 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .mouse_enter => |args| {
             if (ws.input_focus_mouse == args.window_id) return;
             const win = ws.windows.get(args.window_id) orelse return;
+            ws.input_focus_mouse = win.id;
 
-            ws.input_focus_mouse = args.window_id;
-
-            const vp = ws.viewport_from_key(.{
+            ws.mouse_focus_set(win, .{
                 .client_id = args.client_id,
                 .viewport_id = args.viewport_id,
-            }) orelse return;
-
-            win.input_focus_mouse = .{
-                .client_id = args.client_id,
-                .viewport_id = args.viewport_id,
-            };
-
-            ws.server_events.appendAssumeCapacity(.{
-                .mouse_enter = .{
-                    .client_id = args.client_id,
-                    .payload = .{
-                        .viewport_id = args.viewport_id,
-                    },
-                },
             });
-
-            ws.cursor_shape_set_from_viewport(vp, win.input_focus_mouse);
         },
         .mouse_leave => |args| {
             ws.input_focus_mouse = null;
@@ -471,6 +442,16 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
                 .payload = .{ .sub_viewport_id = svp_id },
             },
         });
+
+        if (ws.windows.get(vp.window_id)) |win| {
+            if (std.meta.eql(win.input_focus_keyboard, key)) {
+                ws.keyboard_focus_set(win, parent);
+            }
+
+            if (std.meta.eql(win.input_focus_mouse, key)) {
+                ws.mouse_focus_set(win, parent);
+            }
+        }
 
         vp.parent_key = null;
     }
@@ -1246,6 +1227,44 @@ pub fn cursor_shape_set_from_viewport(ws: *WindowSystem, vp: *Viewport, viewport
 
                 _ = win32_win.SetCursor(hcursor orelse return);
             }
+        },
+    }
+}
+
+pub fn mouse_focus_set(ws: *WindowSystem, win: *Window, key: ViewportKey) void {
+    const vp = ws.viewport_from_key(key) orelse return;
+
+    win.input_focus_mouse = .{
+        .client_id = key.client_id,
+        .viewport_id = key.viewport_id,
+    };
+
+    // TODO: Notify all viewports of this window that the mouse left
+    ws.server_events.appendAssumeCapacity(.{
+        .mouse_enter = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+            },
+        },
+    });
+
+    ws.cursor_shape_set_from_viewport(vp, win.input_focus_mouse);
+}
+
+pub fn keyboard_focus_set(ws: *WindowSystem, win: *Window, key: ViewportKey) void {
+    win.input_focus_keyboard = key;
+
+    // TODO: Notify all viewports of this window that the keyboard left
+    switch (ws.native_tag()) {
+        .wayland => {},
+        .win32 => |tag| {
+            // windows requires explict focusing to receive
+            // keyboard events for child windows
+            tag.guard();
+            const vp = ws.viewport_from_key(key) orelse return;
+            const nvp = tag.viewport(vp);
+            _ = win32_kbm.SetFocus(nvp.child_window_handle);
         },
     }
 }
