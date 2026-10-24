@@ -51,12 +51,7 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
         @typeInfo(Server.Event).@"union".fields.len *
         server.clients.known.count() * 4;
 
-    const ws_events_len =
-        @typeInfo(WindowSystem.Event).@"union".fields.len *
-        server.clients.known.count() * 4;
-
     try ws.server_events.ensureTotalCapacityPrecise(ws.gpa, server_events_len);
-    try ws.deferred_events.ensureTotalCapacityPrecise(ws.gpa, ws_events_len);
 
     const poll_result = try poll(arena, ws, server, poll_timeout);
 

@@ -102,12 +102,12 @@ fn window_proc(
             const w: i16 = @truncate(low);
             const h: i16 = @truncate(high);
 
-            ws.deferred_events.appendAssumeCapacity(.{
+            ws.deferred_events.append(ws.gpa, .{
                 .window_resize_by_display_server = .{
                     .id = win.id,
                     .size = .{ .width = w, .height = h },
                 },
-            });
+            }) catch return 0;
             return 0;
         },
 
@@ -170,14 +170,14 @@ fn viewport_proc(
             const flags: KeyDownLParam = .from_lparam(msg, lparam);
 
             const modifiers = get_modifires();
-            ws.deferred_events.appendAssumeCapacity(.{
+            ws.deferred_events.append(ws.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = if (flags.previous_state == 1) .repeat else .pressed,
                     .modifiers = modifiers,
                     .char = null,
                 },
-            });
+            }) catch return 0;
             return 0;
         },
 
@@ -185,14 +185,14 @@ fn viewport_proc(
             const truncate: @typeInfo(kbm.VIRTUAL_KEY).@"enum".tag_type = @truncate(wparam);
             const key: kbm.VIRTUAL_KEY = @enumFromInt(truncate);
             const pkey = to_protocol_key(key) orelse return 0;
-            ws.deferred_events.appendAssumeCapacity(.{
+            ws.deferred_events.append(ws.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = .released,
                     .modifiers = get_modifires(),
                     .char = null,
                 },
-            });
+            }) catch return 0;
             return 0;
         },
 
@@ -205,13 +205,13 @@ fn viewport_proc(
         win32_win.WM_RBUTTONDOWN,
         win32_win.WM_RBUTTONUP,
         => |tag| {
-            ws.deferred_events.appendAssumeCapacity(.{
+            ws.deferred_events.append(ws.gpa, .{
                 .mouse_enter = .{
                     .client_id = vp_key.client_id,
                     .viewport_id = vp_key.viewport_id,
                     .window_id = win.id,
                 },
-            });
+            }) catch return 0;
 
             if (!vp.win32.mouse_tracking) {
                 vp.win32.mouse_tracking = true;
@@ -253,27 +253,28 @@ fn viewport_proc(
 
             switch (tag) {
                 win32_win.WM_LBUTTONDOWN, win32_win.WM_RBUTTONDOWN => {
-                    ws.deferred_events.appendAssumeCapacity(
+                    ws.deferred_events.append(
+                        ws.gpa,
                         .{ .keyboard_enter = .{ .window_id = win.id } },
-                    );
+                    ) catch return 0;
                 },
                 else => {},
             }
 
-            ws.deferred_events.appendAssumeCapacity(mouse_event);
+            ws.deferred_events.append(ws.gpa, mouse_event) catch return 0;
 
             return 0;
         },
 
         win32_controls.WM_MOUSELEAVE => {
             vp.win32.mouse_tracking = false;
-            ws.deferred_events.appendAssumeCapacity(.{
+            ws.deferred_events.append(ws.gpa, .{
                 .mouse_leave = .{
                     .client_id = vp_key.client_id,
                     .viewport_id = vp_key.viewport_id,
                     .window_id = win.id,
                 },
-            });
+            }) catch return 0;
             return 0;
         },
 

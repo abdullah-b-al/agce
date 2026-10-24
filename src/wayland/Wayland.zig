@@ -408,7 +408,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
                 .window_id = window_id,
             });
-            ws.deferred_events.appendAssumeCapacity(ws_event);
+            ws.deferred_events.append(ws.gpa, ws_event) catch return;
         },
         .key => |e| {
             const key = input.linux_key_to_protocol_key(e.key) orelse {
@@ -440,14 +440,14 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             const control =
                 mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
 
-            ws.deferred_events.appendAssumeCapacity(.{
+            ws.deferred_events.append(ws.gpa, .{
                 .keyboard_key = .{
                     .key = key,
                     .state = state,
                     .modifiers = .{ .alt = alt, .shift = shift, .control = control },
                     .char = char,
                 },
-            });
+            }) catch return;
         },
     }
 }
@@ -531,7 +531,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
         },
     };
 
-    ws.deferred_events.appendAssumeCapacity(ws_event);
+    ws.deferred_events.append(ws.gpa, ws_event) catch return;
 }
 
 pub fn window_id_from_toplevel(ws: *const WindowSystem, tl: *xdg.Toplevel) WindowID {
@@ -830,14 +830,14 @@ pub fn input_repeat(ws: *WindowSystem, ms: i32, key: pinput.Key, modifiers: pinp
     // FIXME: This is not thread safe
     // FIXME: This might end up sending stale data.
     // Add some checks to make sure that doesn't happen
-    ws.deferred_events.appendAssumeCapacity(.{
+    ws.deferred_events.append(ws.gpa, .{
         .keyboard_key = .{
             .key = key,
             .state = .repeat,
             .modifiers = modifiers,
             .char = char,
         },
-    });
+    }) catch return;
 }
 
 pub const MaybeGlobals = struct {
