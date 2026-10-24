@@ -203,12 +203,7 @@ pub fn events_handle(ws: *WindowSystem, events: []const Event) void {
 pub fn event_handle(ws: *WindowSystem, event: Event) !void {
     switch (event) {
         .buffer_create_cpu => |args| try ws.buffer_create_cpu(args),
-        .buffer_create_gbm_bo => |args| {
-            if (!constants.os_has_gbm) {
-                return error.MessageUnsupportedByOS;
-            }
-            try ws.buffer_create_gbm_bo(args);
-        },
+        .buffer_create_gbm_bo => |args| try ws.buffer_create_gbm_bo(args),
 
         .buffer_present => |args| try ws.present_queue_push(.{ .no_sync = args }),
         .buffer_present_with_sync => |args| try ws.present_queue_push(.{ .sync = args }),
@@ -217,49 +212,8 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
 
         .texture_create_d3d => |args| try ws.texture_create_d3d(args),
 
-        .viewport_create => |args| {
-            const result = try ws.viewport_create(args);
-
-            switch (result) {
-                .create_with_window => |key| {
-                    ws.server_events.appendAssumeCapacity(.{
-                        .viewport_created = .{
-                            .client_id = key.client_id,
-                            .payload = .{
-                                .viewport_id = key.viewport_id,
-                                .status = .success,
-                            },
-                        },
-                    });
-                },
-                .create_with_sub_viewport => |v| {
-                    ws.server_events.appendAssumeCapacity(.{
-                        .viewport_created = .{
-                            .client_id = v.embeded.client_id,
-                            .payload = .{
-                                .viewport_id = v.embeded.viewport_id,
-                                .status = .success,
-                            },
-                        },
-                    });
-
-                    ws.server_events.appendAssumeCapacity(.{
-                        .sub_viewport_embeded = .{
-                            .client_id = v.embeder.key.client_id,
-                            .payload = .{
-                                .sub_viewport_id = v.embeder.key.sub_viewport_id,
-                                .status = .success,
-                                .render_size = v.embeder.render_size,
-                            },
-                        },
-                    });
-                },
-            }
-        },
-        .viewport_destroy => |args| ws.viewport_destroy(.{
-            .client_id = args.client_id,
-            .viewport_id = args.payload.viewport_id,
-        }),
+        .viewport_create => |args| try ws.viewport_create(args),
+        .viewport_destroy => |args| ws.viewport_destroy(.{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id }),
         .sub_viewport_embed => |args| try ws.sub_viewport_embed(args),
         .sub_viewport_pos_set => |args| try ws.sub_viewport_pos_set(args),
         .sub_viewport_size_set => |args| try ws.sub_viewport_size_set(args),
@@ -267,139 +221,14 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .window_resize_by_display_server => |args| try ws.window_resize_by_display_server(args),
         .cursor_shape_set => |args| try ws.cursor_shape_set(args),
 
-        .keyboard_key => |args| {
-            const window_id = ws.input_focus_keyboard orelse return;
-            const win = ws.windows.get(window_id) orelse return;
-            const key = win.input_focus_keyboard;
-
-            ws.server_events.appendAssumeCapacity(.{
-                .keyboard_key = .{
-                    .client_id = key.client_id,
-                    .payload = .{
-                        .viewport_id = key.viewport_id,
-                        .key = args.key,
-                        .state = args.state,
-                        .modifiers = args.modifiers,
-                    },
-                },
-            });
-
-            switch (ws.native_tag()) {
-                .wayland => |tag| {
-                    const wl = tag.window_system(ws);
-                    if (wl.input_repeat_future) |*future| {
-                        future.cancel(wl.io);
-                    }
-
-                    wl.input_repeat_future = null;
-
-                    if (Wayland.process_char(args.char)) |char| {
-                        ws.server_events.appendAssumeCapacity(.{
-                            .keyboard_char = .{
-                                .client_id = key.client_id,
-                                .payload = .{ .viewport_id = key.viewport_id, .char = char },
-                            },
-                        });
-                    }
-                    const maybe_ms = switch (args.state) {
-                        .pressed => wl.input_delay_ms,
-                        .repeat => wl.input_rate_ms,
-                        .released => null,
-                    };
-
-                    if (maybe_ms) |ms| {
-                        wl.input_repeat_future = wl.io.concurrent(Wayland.input_repeat, .{
-                            ws,
-                            ms,
-                            args.key,
-                            args.modifiers,
-                            args.char,
-                        }) catch |err| blk: {
-                            log.err("Failed to start task input_repeat {}", .{err});
-                            break :blk null;
-                        };
-                    }
-                },
-                .win32 => {},
-            }
-        },
-        .keyboard_enter => |args| {
-            const win = ws.windows.get(args.window_id) orelse return;
-            ws.input_focus_keyboard = win.id;
-            ws.keyboard_focus_set(win, win.input_focus_keyboard);
-        },
-        .keyboard_leave => {
-            ws.input_focus_keyboard = null;
-        },
-        .mouse_enter => |args| {
-            if (ws.input_focus_mouse == args.window_id) return;
-            const win = ws.windows.get(args.window_id) orelse return;
-            ws.input_focus_mouse = win.id;
-
-            ws.mouse_focus_set(win, .{
-                .client_id = args.client_id,
-                .viewport_id = args.viewport_id,
-            });
-        },
-        .mouse_leave => |args| {
-            ws.input_focus_mouse = null;
-            ws.server_events.appendAssumeCapacity(.{
-                .mouse_leave = .{
-                    .client_id = args.client_id,
-                    .payload = .{
-                        .viewport_id = args.viewport_id,
-                    },
-                },
-            });
-        },
-        .mouse_motion => |args| {
-            const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
-            const key = window.input_focus_mouse;
-
-            ws.server_events.appendAssumeCapacity(.{
-                .mouse_motion = .{
-                    .client_id = key.client_id,
-                    .payload = .{
-                        .viewport_id = key.viewport_id,
-                        .x = args.x,
-                        .y = args.y,
-                    },
-                },
-            });
-        },
-        .mouse_button => |args| {
-            const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
-            const key = window.input_focus_mouse;
-            if (args.state == .pressed) {
-                window.input_focus_keyboard = window.input_focus_mouse;
-            }
-
-            ws.server_events.appendAssumeCapacity(.{
-                .mouse_button = .{
-                    .client_id = key.client_id,
-                    .payload = .{
-                        .viewport_id = key.viewport_id,
-                        .button = args.button,
-                        .state = args.state,
-                    },
-                },
-            });
-        },
-        .mouse_scroll => |args| {
-            const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
-            const key = window.input_focus_mouse;
-
-            ws.server_events.appendAssumeCapacity(.{
-                .mouse_scroll = .{
-                    .client_id = key.client_id,
-                    .payload = .{
-                        .viewport_id = key.viewport_id,
-                        .axis = args.axis,
-                        .value = args.value,
-                    },
-                },
-            });
-        },
+        .keyboard_key => |args| try ws.keyboard_key(args),
+        .keyboard_enter => |args| try ws.keyboard_enter(args),
+        .keyboard_leave => |args| try ws.keyboard_leave(args),
+        .mouse_enter => |args| try ws.mouse_enter(args),
+        .mouse_leave => |args| try ws.mouse_leave(args),
+        .mouse_motion => |args| try ws.mouse_motion(args),
+        .mouse_button => |args| try ws.mouse_button(args),
+        .mouse_scroll => |args| try ws.mouse_scroll(args),
     }
 }
 
@@ -471,6 +300,7 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
 }
 
 fn buffer_create_cpu(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_cpu)) !void {
+    try ws.server_events.ensureUnusedCapacity(ws.gpa, 1);
     const rs = ws.resources.getPtr(args.client_id).?;
 
     const buffer = try ws.buffer_create_cpu_inner(
@@ -564,7 +394,9 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
 }
 
 fn buffer_create_gbm_bo(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_gbm_bo)) !void {
-    if (!constants.os_has_gbm) @compileError("OS does not have GBM");
+    if (!constants.os_has_gbm) {
+        return error.MessageUnsupportedByOS;
+    }
 
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
 
@@ -763,16 +595,54 @@ fn buffer_destroy(ws: *WindowSystem, args: Event.TypeOf(.buffer_destroy)) !void 
     rs.buffer_destroy(ws, args.payload.buffer_id);
 }
 
-pub fn viewport_create(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !WindowSystem.ViewportCreateResult {
+pub fn viewport_create(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !void {
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) {
         return error.InvalidSize;
     }
 
-    if (args.payload.viewport_id.is_server_id()) {
-        return try ws.viewport_create_with_sub_viewport(args);
-    } else {
-        const key = try ws.viewport_create_with_window(args);
-        return .{ .create_with_window = key };
+    const result: ViewportCreateResult = blk: {
+        if (args.payload.viewport_id.is_server_id()) {
+            break :blk try ws.viewport_create_with_sub_viewport(args);
+        } else {
+            const key = try ws.viewport_create_with_window(args);
+            break :blk .{ .create_with_window = key };
+        }
+    };
+
+    switch (result) {
+        .create_with_window => |key| {
+            ws.server_events.appendAssumeCapacity(.{
+                .viewport_created = .{
+                    .client_id = key.client_id,
+                    .payload = .{
+                        .viewport_id = key.viewport_id,
+                        .status = .success,
+                    },
+                },
+            });
+        },
+        .create_with_sub_viewport => |v| {
+            ws.server_events.appendAssumeCapacity(.{
+                .viewport_created = .{
+                    .client_id = v.embeded.client_id,
+                    .payload = .{
+                        .viewport_id = v.embeded.viewport_id,
+                        .status = .success,
+                    },
+                },
+            });
+
+            ws.server_events.appendAssumeCapacity(.{
+                .sub_viewport_embeded = .{
+                    .client_id = v.embeder.key.client_id,
+                    .payload = .{
+                        .sub_viewport_id = v.embeder.key.sub_viewport_id,
+                        .status = .success,
+                        .render_size = v.embeder.render_size,
+                    },
+                },
+            });
+        },
     }
 }
 
@@ -1267,6 +1137,147 @@ pub fn keyboard_focus_set(ws: *WindowSystem, win: *Window, key: ViewportKey) voi
             _ = win32_kbm.SetFocus(nvp.child_window_handle);
         },
     }
+}
+
+pub fn keyboard_key(ws: *WindowSystem, args: Event.TypeOf(.keyboard_key)) !void {
+    const window_id = ws.input_focus_keyboard orelse return;
+    const win = ws.windows.get(window_id) orelse return;
+    const key = win.input_focus_keyboard;
+
+    ws.server_events.appendAssumeCapacity(.{
+        .keyboard_key = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+                .key = args.key,
+                .state = args.state,
+                .modifiers = args.modifiers,
+            },
+        },
+    });
+
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+            if (wl.input_repeat_future) |*future| {
+                future.cancel(wl.io);
+            }
+
+            wl.input_repeat_future = null;
+
+            if (Wayland.process_char(args.char)) |char| {
+                ws.server_events.appendAssumeCapacity(.{
+                    .keyboard_char = .{
+                        .client_id = key.client_id,
+                        .payload = .{ .viewport_id = key.viewport_id, .char = char },
+                    },
+                });
+            }
+            const maybe_ms = switch (args.state) {
+                .pressed => wl.input_delay_ms,
+                .repeat => wl.input_rate_ms,
+                .released => null,
+            };
+
+            if (maybe_ms) |ms| {
+                wl.input_repeat_future = wl.io.concurrent(Wayland.input_repeat, .{
+                    ws,
+                    ms,
+                    args.key,
+                    args.modifiers,
+                    args.char,
+                }) catch |err| blk: {
+                    log.err("Failed to start task input_repeat {}", .{err});
+                    break :blk null;
+                };
+            }
+        },
+        .win32 => {},
+    }
+}
+
+pub fn keyboard_enter(ws: *WindowSystem, args: Event.TypeOf(.keyboard_enter)) !void {
+    const win = ws.windows.get(args.window_id) orelse return;
+    ws.input_focus_keyboard = win.id;
+    ws.keyboard_focus_set(win, win.input_focus_keyboard);
+}
+
+pub fn keyboard_leave(ws: *WindowSystem, _: Event.TypeOf(.keyboard_leave)) !void {
+    ws.input_focus_keyboard = null;
+}
+
+pub fn mouse_enter(ws: *WindowSystem, args: Event.TypeOf(.mouse_enter)) !void {
+    if (ws.input_focus_mouse == args.window_id) return;
+    const win = ws.windows.get(args.window_id) orelse return;
+    ws.input_focus_mouse = win.id;
+
+    ws.mouse_focus_set(win, .{
+        .client_id = args.client_id,
+        .viewport_id = args.viewport_id,
+    });
+}
+
+pub fn mouse_leave(ws: *WindowSystem, args: Event.TypeOf(.mouse_leave)) !void {
+    ws.input_focus_mouse = null;
+    ws.server_events.appendAssumeCapacity(.{
+        .mouse_leave = .{
+            .client_id = args.client_id,
+            .payload = .{
+                .viewport_id = args.viewport_id,
+            },
+        },
+    });
+}
+
+pub fn mouse_motion(ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void {
+    const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
+    const key = window.input_focus_mouse;
+
+    ws.server_events.appendAssumeCapacity(.{
+        .mouse_motion = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+                .x = args.x,
+                .y = args.y,
+            },
+        },
+    });
+}
+
+pub fn mouse_button(ws: *WindowSystem, args: Event.TypeOf(.mouse_button)) !void {
+    const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
+    const key = window.input_focus_mouse;
+    if (args.state == .pressed) {
+        window.input_focus_keyboard = window.input_focus_mouse;
+    }
+
+    ws.server_events.appendAssumeCapacity(.{
+        .mouse_button = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+                .button = args.button,
+                .state = args.state,
+            },
+        },
+    });
+}
+
+pub fn mouse_scroll(ws: *WindowSystem, args: Event.TypeOf(.mouse_scroll)) !void {
+    const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
+    const key = window.input_focus_mouse;
+
+    ws.server_events.appendAssumeCapacity(.{
+        .mouse_scroll = .{
+            .client_id = key.client_id,
+            .payload = .{
+                .viewport_id = key.viewport_id,
+                .axis = args.axis,
+                .value = args.value,
+            },
+        },
+    });
 }
 
 pub const ViewportKey = struct {
