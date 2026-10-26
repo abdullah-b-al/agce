@@ -389,12 +389,12 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
             const handle: ptypes.CpuBufferHandle = .from_HANDLE(handle_ptr);
 
             const buffer_id = rs.next_buffer_id.increment();
-            rs.buffers.putAssumeCapacity(buffer_id, .{ .cpu = .{
+            rs.buffers.putAssumeCapacity(buffer_id, .init_win32(.{ .cpu = .{
                 .handle = handle,
                 .pixels = pixels,
                 .format = format,
                 .size = size,
-            } });
+            } }));
 
             return .{
                 .handle = handle,
@@ -489,14 +489,14 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
 
     const buffer_id = rs.next_buffer_id.increment();
 
-    rs.buffers.putAssumeCapacityNoClobber(buffer_id, .{
+    rs.buffers.putAssumeCapacityNoClobber(buffer_id, .init_win32(.{
         .d11 = .{
             .texture = texture,
             .acquire = acquire,
             .release = release,
             .format = args.payload.format,
         },
-    });
+    }));
 
     ws.server_events.appendAssumeCapacity(.{
         .texture_created_d3d = .{
@@ -1493,6 +1493,17 @@ pub const NativeTag = enum {
         };
     }
 
+    pub fn buffer(
+        comptime tag: NativeTag,
+        b: *Buffer,
+    ) if (tag.os_matches_tag()) *buffer_type(tag) else noreturn {
+        tag.guard();
+        return switch (tag) {
+            .wayland => &b.native.wayland,
+            .win32 => &b.native,
+        };
+    }
+
     fn window_system_type(comptime tag: NativeTag) type {
         return switch (tag) {
             .wayland => Wayland,
@@ -1511,6 +1522,13 @@ pub const NativeTag = enum {
         return switch (tag) {
             .wayland => Wayland.Viewport,
             .win32 => Win32.Viewport,
+        };
+    }
+
+    fn buffer_type(comptime tag: NativeTag) type {
+        return switch (tag) {
+            .wayland => Wayland.Buffer,
+            .win32 => Win32.Buffer,
         };
     }
 
@@ -1599,6 +1617,7 @@ pub const Wayland = @import("wayland/Wayland.zig");
 pub const Win32 = @import("win32/Win32.zig");
 pub const Viewport = @import("window_system/Viewport.zig");
 pub const Window = @import("window_system/Window.zig");
+pub const Buffer = @import("window_system/Buffer.zig");
 
 const std = @import("std");
 const Io = std.Io;

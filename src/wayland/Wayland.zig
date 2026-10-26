@@ -128,7 +128,7 @@ pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSyste
 
         const nvp = native_tag.viewport(vp);
         const nw = native_tag.window(win);
-        const b = &buffer.wayland;
+        const b = &buffer.native.wayland;
 
         const should_be_hidden = vp.should_be_hidden(ws);
 
@@ -657,7 +657,7 @@ pub fn buffer_create_and_register_cpu(
     const cpu = try buffer_create_cpu(wl.shm, fd, size, format);
     wl.buffer_set_listener(ws, rs, cpu.wl_buffer, id);
 
-    rs.buffers.putAssumeCapacityNoClobber(id, .{ .wayland = .{ .cpu = cpu } });
+    rs.buffers.putAssumeCapacityNoClobber(id, .init_wayland(.{ .cpu = cpu }));
 }
 
 pub fn buffer_create_cpu(
@@ -955,20 +955,17 @@ pub const RegisterGpuBuffer = struct {
                     result.buffer,
                     data.buffer_id,
                 );
-                rs.buffers.putAssumeCapacityNoClobber(
-                    data.buffer_id,
+                rs.buffers.putAssumeCapacityNoClobber(data.buffer_id, .init_wayland(
                     .{
-                        .wayland = .{
-                            .gpu = .{
-                                .wl_buffer = result.buffer,
-                                .size = data.gpu.size,
-                                .timeline_acquire = data.gpu.timeline_acquire,
-                                .timeline_release = data.gpu.timeline_release,
-                                .format = data.format,
-                            },
+                        .gpu = .{
+                            .wl_buffer = result.buffer,
+                            .size = data.gpu.size,
+                            .timeline_acquire = data.gpu.timeline_acquire,
+                            .timeline_release = data.gpu.timeline_release,
+                            .format = data.format,
                         },
                     },
-                );
+                ));
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
 

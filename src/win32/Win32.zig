@@ -263,7 +263,11 @@ fn viewport_proc(
 }
 
 pub fn present(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
-    win32.present_queue_check_available_to_copy(ws);
+    comptime {
+        std.debug.assert(native_tag == .win32);
+    }
+
+    win32.present_queue_check_available_to_copy(ws, native_tag);
     win32.present_queue_copy_if_ready(ws, native_tag);
     win32.present_queue_present_if_ready(ws, native_tag);
 
@@ -282,14 +286,15 @@ pub fn present(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSyst
     }
 }
 
-fn present_queue_check_available_to_copy(_: *Win32, ws: *WindowSystem) void {
+fn present_queue_check_available_to_copy(_: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
     for (ws.present_queue.items) |*item| {
         std.debug.assert(item.state != .presented);
 
         const rs = ws.resources.getPtr(item.client_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const nb = native_tag.buffer(buffer);
 
-        switch (buffer.*) {
+        switch (nb.*) {
             .cpu => item.state.advance(),
             .d11 => |*b| {
                 const sync = item.sync.?;
@@ -309,8 +314,9 @@ fn present_queue_copy_if_ready(win32: *Win32, ws: *WindowSystem, comptime native
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const nvp = native_tag.viewport(vp);
+        const nb = native_tag.buffer(buffer);
 
-        switch (buffer.*) {
+        switch (nb.*) {
             .cpu => |*cpu| {
                 win32.buffer_copy_cpu_hdc(nvp, cpu, item);
             },
@@ -342,7 +348,7 @@ fn present_queue_copy_if_ready(win32: *Win32, ws: *WindowSystem, comptime native
                     0,
                     0,
                     0,
-                    @ptrCast(buffer.d11.texture),
+                    @ptrCast(nb.d11.texture),
                     0,
                     &box,
                 );
@@ -362,8 +368,9 @@ fn present_queue_present_if_ready(win32: *Win32, ws: *WindowSystem, comptime nat
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
         const nvp = native_tag.viewport(vp);
+        const nb = native_tag.buffer(buffer);
 
-        switch (buffer.*) {
+        switch (nb.*) {
             .cpu => {},
             .d11 => |*b| {
                 // TODO: Do not block thread when presenting

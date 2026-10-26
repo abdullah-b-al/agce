@@ -63,12 +63,13 @@ pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) voi
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl = tag.window_system(ws);
+            const b = tag.buffer(buffer);
             if (rs.gbm_bos.getPtr(id)) |bo| {
                 bo.deinit(ws.gbm);
             }
             _ = rs.gbm_bos.orderedRemove(id);
-            _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(buffer.wayland.wl_buffer()));
-            buffer.wayland.destroy();
+            _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(b.wl_buffer()));
+            b.destroy();
         },
         .win32 => |tag| {
             tag.guard();
@@ -236,5 +237,5 @@ const ViewportID = ptypes.ViewportID;
 const SubViewportID = ptypes.SubViewportID;
 const ClientID = ptypes.ClientID;
 const Viewport = @import("Viewport.zig");
-const Buffer = @import("buffer.zig").Buffer;
+const Buffer = @import("Buffer.zig");
 const constants = @import("constants");
