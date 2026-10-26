@@ -106,6 +106,11 @@ pub fn send_sub_viewport_display_state_set(c: *ServerConnection, io: Io, gpa: st
     try c.send(io, gpa, message);
 }
 
+pub fn send_sub_viewport_close(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportClose) !void {
+    const message = try c.stringify(gpa, .{ .sub_viewport_close = payload });
+    try c.send(io, gpa, message);
+}
+
 pub fn send_cursor_shape_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.CursorShape) !void {
     const message = try c.stringify(gpa, .{ .cursor_shape_set = payload });
     try c.send(io, gpa, message);

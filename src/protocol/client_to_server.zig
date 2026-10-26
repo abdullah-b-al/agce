@@ -31,6 +31,7 @@ pub const MessagePayload = union(enum(u32)) {
     sub_viewport_pos_set: SubViewportPosSet,
     sub_viewport_size_set: SubViewportSizeSet,
     sub_viewport_display_state_set: SubViewportDisplayStateSet,
+    sub_viewport_close: SubViewportClose,
 
     cursor_shape_set: CursorShape,
 };
@@ -74,6 +75,10 @@ pub const SubViewportPosSet = struct {
 pub const SubViewportSizeSet = struct {
     sub_viewport_id: types.SubViewportID,
     size: types.Size,
+};
+
+pub const SubViewportClose = struct {
+    sub_viewport_id: types.SubViewportID,
 };
 
 pub const BufferCreateCpuWithFd = struct {

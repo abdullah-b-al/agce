@@ -220,6 +220,8 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .sub_viewport_pos_set => |args| try ws.sub_viewport_pos_set(args),
         .sub_viewport_size_set => |args| try ws.sub_viewport_size_set(args),
         .sub_viewport_display_state_set => |args| try ws.sub_viewport_display_state_set(args),
+        .sub_viewport_close => |args| try ws.sub_viewport_close(args),
+
         .window_resize_by_display_server => |args| try ws.window_resize_by_display_server(args),
         .cursor_shape_set => |args| try ws.cursor_shape_set(args),
 
@@ -1007,6 +1009,16 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
     });
 }
 
+pub fn sub_viewport_close(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_close)) !void {
+    const key = blk: {
+        const rs = ws.resources.getPtr(args.client_id) orelse return;
+        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
+            return error.SubViewportDoesNotExist;
+    };
+
+    try ws.viewport_should_close(.{ .viewport_key = key });
+}
+
 pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.window_resize_by_display_server)) !void {
     const win = ws.windows.get(args.id) orelse {
         return error.WindowDoesNotExist;
@@ -1342,10 +1354,12 @@ pub const Event = union(enum) {
     viewport_create: client_to_server.WithClientID(client_to_server.ViewportCreate),
     viewport_destroy: client_to_server.WithClientID(client_to_server.ViewportDestroy),
     viewport_should_close: ViewportShouldClose,
+
     sub_viewport_embed: client_to_server.WithClientID(client_to_server.SubViewportEmbed),
     sub_viewport_pos_set: client_to_server.WithClientID(client_to_server.SubViewportPosSet),
     sub_viewport_size_set: client_to_server.WithClientID(client_to_server.SubViewportSizeSet),
     sub_viewport_display_state_set: client_to_server.WithClientID(client_to_server.SubViewportDisplayStateSet),
+    sub_viewport_close: client_to_server.WithClientID(client_to_server.SubViewportClose),
 
     window_resize_by_display_server: WindowResize,
 

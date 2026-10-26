@@ -437,6 +437,15 @@ pub const SubViewportHandle = opaque {
         svp.deinit();
     }
 
+    pub fn send_close(handle: *SubViewportHandle) !void {
+        const svp = handle.cast();
+        try svp.client.connection.send_sub_viewport_close(
+            svp.client.io,
+            svp.client.gpa,
+            .{ .sub_viewport_id = svp.id },
+        );
+    }
+
     pub fn state(handle: *SubViewportHandle) SubViewport.State {
         return handle.cast().state;
     }

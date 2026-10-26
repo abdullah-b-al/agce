@@ -327,6 +327,7 @@ pub fn window_system_event_from_message(
         .sub_viewport_pos_set,
         .sub_viewport_size_set,
         .sub_viewport_display_state_set,
+        .sub_viewport_close,
         .viewport_destroy,
         .buffer_create_cpu,
         .buffer_create_gbm_bo,
