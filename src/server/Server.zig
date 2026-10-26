@@ -110,10 +110,13 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
     };
 }
 
-pub fn events_handle(server: *Server, events: []const Event) void {
-    for (events) |e| {
-        server.handle_event(e) catch |err| {
-            switch (e) {
+pub fn events_handle(server: *Server, ws: *WindowSystem) void {
+    while (ws.server_events.pop()) |node| {
+        defer ws.server_events.destroy(node);
+
+        const event = node.event;
+        server.handle_event(event) catch |err| {
+            switch (event) {
                 .unknown_client_connected => {},
                 inline else => |v| {
                     switch (err) {

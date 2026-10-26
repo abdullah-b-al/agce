@@ -117,6 +117,8 @@ pub fn destroy(wl: *Wayland) void {
 }
 
 pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+    std.debug.assert(ws.server_events.capacity >= ws.present_queue.items.len);
+
     for (ws.present_queue.items) |*item| {
         std.debug.assert(item.state == .new);
 
@@ -165,16 +167,23 @@ pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSyste
             },
             .cpu => {
                 std.debug.assert(item.sync == null);
+                const node = ws.server_events.create_assume_capacity();
+
                 if (should_be_hidden) {
-                    ws.server_events.appendAssumeCapacity(.{ .buffer_released = .{
-                        .client_id = item.client_id,
-                        .payload = .{
-                            .buffer_id = item.buffer_id,
-                            .viewport_id = item.viewport_id,
+                    ws.server_events.push(node, .{
+                        .buffer_released = .{
+                            .client_id = item.client_id,
+                            .payload = .{
+                                .buffer_id = item.buffer_id,
+                                .viewport_id = item.viewport_id,
+                            },
                         },
-                    } });
+                    });
                 } else {
-                    rs.buffers_commited.putAssumeCapacityNoClobber(item.buffer_id, item.viewport_id);
+                    rs.buffers_commited.putAssumeCapacityNoClobber(
+                        item.buffer_id,
+                        .{ .viewport_id = item.viewport_id, .ptr = node },
+                    );
                 }
             },
         }
@@ -628,7 +637,9 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, ws: *WindowSystem) v
     const nvp = &vp.linux.wayland;
     nvp.refresh_cycle += 1;
 
-    ws.server_events.appendAssumeCapacity(.{
+    // TODO: Figure out a way to detect that a callback has not been attached
+    ws.server_events.ensure_unused_capacity(1) catch return;
+    ws.server_events.push_assume_capacity(.{
         .frame_render = .{
             .client_id = key.client_id,
             .payload = .{
@@ -719,18 +730,20 @@ pub fn buffer_create_and_register_gpu_async(
     if (wl.register_gpu_buffer_pool.free_list.len() == 0)
         try wl.register_gpu_buffer_pool.addCapacity(wl.gpa, 1);
 
+    try ws.server_events.ensure_unused_capacity(1);
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
     try rs.buffers.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
     try wl.buffer_set_listener_prepare(ws);
 
-    const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
-    const release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(ws.gbm);
+    var acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
+    errdefer acquire_fd.close();
+
+    var release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(ws.gbm);
+    errdefer release_fd.close();
+
     const acquire: Viewport.AcquireTimeline = try .init(wl.sync_object_manager, acquire_fd);
-    errdefer {
-        acquire.acquire.destroy();
-        std.debug.assert(std.os.linux.close(@intFromEnum(acquire_fd)) == 0);
-        std.debug.assert(std.os.linux.close(@intFromEnum(release_fd)) == 0);
-    }
+    errdefer acquire.acquire.destroy();
+
     const release: Viewport.ReleaseTimeline = try .init(wl.sync_object_manager, release_fd);
     errdefer release.release.destroy();
 
@@ -764,6 +777,7 @@ pub fn buffer_create_and_register_gpu_async(
         .size = size,
         .stride = stride,
         .format = b_format,
+        .node = ws.server_events.create_assume_capacity(),
     };
 
     params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
@@ -934,6 +948,7 @@ pub const RegisterGpuBuffer = struct {
     release_timeline: ptypes.DrmSyncobjReleaseTimelineFd,
     stride: u32,
     format: ptypes.BufferFormat,
+    node: *ServerQueue.Node,
 
     pub fn callback(
         p: *zwp.LinuxBufferParamsV1,
@@ -969,7 +984,7 @@ pub const RegisterGpuBuffer = struct {
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
 
-                data.ws.server_events.appendAssumeCapacity(.{
+                data.ws.server_events.push(data.node, .{
                     .buffer_created_gbm_bo = .{
                         .client_id = data.client_id,
                         .payload = .{
@@ -988,9 +1003,9 @@ pub const RegisterGpuBuffer = struct {
                 });
             },
             .failed => {
-                std.debug.assert(std.os.linux.close(@intFromEnum(data.buffer_fd)) == 0);
-                std.debug.assert(std.os.linux.close(@intFromEnum(data.acquire_timeline)) == 0);
-                std.debug.assert(std.os.linux.close(@intFromEnum(data.release_timeline)) == 0);
+                data.buffer_fd.close();
+                data.acquire_timeline.close();
+                data.release_timeline.close();
                 @panic("TODO: Send failure message");
             },
         }
@@ -1008,12 +1023,12 @@ pub const BufferListener = struct {
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
 
-                ws.server_events.appendAssumeCapacity(.{
+                ws.server_events.push(entry.value.ptr, .{
                     .buffer_released = .{
                         .client_id = key.client_id,
                         .payload = .{
                             .buffer_id = key.buffer_id,
-                            .viewport_id = entry.value,
+                            .viewport_id = entry.value.viewport_id,
                         },
                     },
                 });
@@ -1050,3 +1065,4 @@ const input = @import("input.zig");
 const BufferFormat = ptypes.BufferFormat;
 const CpuBufferHandle = ptypes.CpuBufferHandle;
 const BufferAndTimelineFds = ptypes.BufferAndTimelineFds;
+const ServerQueue = @import("../server/EventQueue.zig");

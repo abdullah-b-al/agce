@@ -267,13 +267,15 @@ pub fn present(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSyst
         std.debug.assert(native_tag == .win32);
     }
 
+    std.debug.assert(ws.server_events.capacity >= ws.present_queue.items.len);
+
     win32.present_queue_check_available_to_copy(ws, native_tag);
     win32.present_queue_copy_if_ready(ws, native_tag);
     win32.present_queue_present_if_ready(ws, native_tag);
 
     for (ws.present_queue.items) |item| {
         if (item.state == .presented) {
-            ws.server_events.appendAssumeCapacity(.{
+            ws.server_events.push_assume_capacity(.{
                 .buffer_released = .{
                     .client_id = item.client_id,
                     .payload = .{

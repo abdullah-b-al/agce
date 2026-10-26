@@ -296,8 +296,14 @@ pub fn Fd(comptime Opaque: type) type {
     return enum(c_int) {
         pub const is_fd = true;
 
+        closed = -2,
         invalid = -1,
         _,
+
+        pub fn close(fd: *@This()) void {
+            _ = std.os.linux.close(@intFromEnum(fd.*));
+            fd.* = .closed;
+        }
 
         comptime {
             _ = Opaque;
@@ -330,6 +336,10 @@ pub fn WindowsHandle(comptime Opaque: type) type {
             if (os != .windows) @compileError("Windows only");
 
             return @enumFromInt(@intFromPtr(h));
+        }
+
+        pub fn close(h: @This()) void {
+            std.os.windows.CloseHandle(h.to_HANDLE());
         }
 
         comptime {

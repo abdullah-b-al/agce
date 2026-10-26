@@ -47,18 +47,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
 }
 
 pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_timeout: Io.Timeout) !void {
-    const server_events_len =
-        @typeInfo(Server.Event).@"union".fields.len *
-        server.clients.known.count() * 4;
-
-    try ws.server_events.ensureTotalCapacityPrecise(ws.gpa, server_events_len);
-
     const poll_result = try poll(arena, ws, server, poll_timeout);
 
     const messages = try server.messages_receive(arena, poll_result.clients);
     const ws_events = try server.messages_handle(arena, messages);
     ws.events_handle(ws_events);
-    ws.present();
+    try ws.present();
 
     if (poll_result.window_system) {
         switch (ws.native_tag()) {
@@ -82,8 +76,7 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
     ws.events_handle(ws.deferred_events.items);
     ws.deferred_events.clearRetainingCapacity();
 
-    server.events_handle(ws.server_events.items);
-    ws.server_events.clearRetainingCapacity();
+    server.events_handle(ws);
 
     while (ws.handles_to_close.pop()) |handle| {
         handle.close();

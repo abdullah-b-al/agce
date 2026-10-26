@@ -14,7 +14,7 @@ windows: std.array_hash_map.Auto(WindowID, *Window),
 
 window_next_id: WindowID,
 
-server_events: std.ArrayList(ServerEvent),
+server_events: ServerQueue,
 deferred_events: std.ArrayList(Event),
 present_queue: std.ArrayList(BufferPresent),
 
@@ -125,7 +125,7 @@ fn create_undefined_native(
         .window_next_id = .first,
         .destroy_started = false,
 
-        .server_events = .empty,
+        .server_events = .init(gpa),
         .deferred_events = .empty,
         .present_queue = .empty,
         .handles_to_close = .empty,
@@ -166,11 +166,12 @@ pub fn destroy(ws: *WindowSystem) void {
         handle.close();
     }
 
+    ws.server_events.deinit();
+
     inline for (.{
         &ws.resources,
         &ws.windows,
         &ws.deferred_events,
-        &ws.server_events,
         &ws.handles_to_close,
         &ws.present_queue,
     }) |entry| {
@@ -213,7 +214,10 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .texture_create_d3d => |args| try ws.texture_create_d3d(args),
 
         .viewport_create => |args| try ws.viewport_create(args),
-        .viewport_destroy => |args| ws.viewport_destroy(.{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id }),
+        .viewport_destroy => |args| {
+            try ws.server_events.ensure_unused_capacity(1);
+            ws.viewport_destroy(.{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id });
+        },
         .viewport_should_close => |args| try ws.viewport_should_close(args),
 
         .sub_viewport_embed => |args| try ws.sub_viewport_embed(args),
@@ -260,6 +264,8 @@ pub fn client_disconnected(ws: *WindowSystem, id: ClientID) void {
 }
 
 fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
+    std.debug.assert(ws.server_events.capacity >= 2);
+
     const rs = ws.resources.getPtr(key.client_id) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
 
@@ -269,7 +275,7 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
         const svp_id = p.sub_viewport_id_from_key(key).?;
 
         _ = p.sub_viewports.orderedRemove(svp_id);
-        ws.server_events.appendAssumeCapacity(.{
+        ws.server_events.push_assume_capacity(.{
             .sub_viewport_closed = .{
                 .client_id = parent.client_id,
                 .payload = .{ .sub_viewport_id = svp_id },
@@ -281,7 +287,7 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
         }
 
         if (std.meta.eql(ws.input_focus_mouse, key)) {
-            ws.mouse_focus_set(parent);
+            ws.mouse_focus_set_and_push_event(parent);
         }
 
         vp.parent_key = null;
@@ -302,7 +308,8 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
 }
 
 fn viewport_should_close(ws: *WindowSystem, args: Event.TypeOf(.viewport_should_close)) !void {
-    ws.server_events.appendAssumeCapacity(.{
+    try ws.server_events.ensure_unused_capacity(1);
+    ws.server_events.push_assume_capacity(.{
         .viewport_close = .{
             .client_id = args.viewport_key.client_id,
             .payload = .{ .viewport_id = args.viewport_key.viewport_id },
@@ -311,7 +318,7 @@ fn viewport_should_close(ws: *WindowSystem, args: Event.TypeOf(.viewport_should_
 }
 
 fn buffer_create_cpu(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_cpu)) !void {
-    try ws.server_events.ensureUnusedCapacity(ws.gpa, 1);
+    try ws.server_events.ensure_unused_capacity(1);
     const rs = ws.resources.getPtr(args.client_id).?;
 
     const buffer = try ws.buffer_create_cpu_inner(
@@ -320,7 +327,7 @@ fn buffer_create_cpu(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_cpu)) 
         args.payload.format,
     );
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .buffer_created_cpu = .{
             .client_id = args.client_id,
             .payload = .{
@@ -347,7 +354,9 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl = tag.window_system(ws);
-            const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
+            var fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
+            errdefer fd.close();
+
             if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), @intCast(size_bytes))) != .SUCCESS)
                 return error.FtruncateFailed;
 
@@ -441,7 +450,7 @@ fn buffer_create_gbm_bo(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_gbm
 
 fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)) !void {
     std.debug.assert(args.payload.version == .d3d11);
-    try ws.handles_to_close.ensureUnusedCapacity(ws.gpa, 3);
+    try ws.server_events.ensure_unused_capacity(1);
 
     const win32 = switch (ws.native_tag()) {
         .win32 => |tag| tag.window_system(ws),
@@ -479,13 +488,13 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
     errdefer _ = release.release.IUnknown.Release();
 
     const acquire_shared_handle = try acquire.create_shared_handle();
-    ws.handles_to_close.appendAssumeCapacity(.{ .windows_handle = acquire_shared_handle.to_HANDLE() });
+    errdefer acquire_shared_handle.close();
 
     const release_shared_handle = try release.create_shared_handle();
-    ws.handles_to_close.appendAssumeCapacity(.{ .windows_handle = release_shared_handle.to_HANDLE() });
+
+    errdefer comptime unreachable;
 
     const texture_shared_handle = win32.d11_context.shared_handle_from_texture_2d(texture);
-    ws.handles_to_close.appendAssumeCapacity(.{ .windows_handle = texture_shared_handle.to_HANDLE() });
 
     const buffer_id = rs.next_buffer_id.increment();
 
@@ -498,7 +507,7 @@ fn texture_create_d3d(ws: *WindowSystem, args: Event.TypeOf(.texture_create_d3d)
         },
     }));
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .texture_created_d3d = .{
             .client_id = args.client_id,
             .payload = .{
@@ -581,7 +590,9 @@ fn present_queue_push(ws: *WindowSystem, args: BufferQueuePresent) !void {
     ));
 }
 
-pub fn present(ws: *WindowSystem) void {
+pub fn present(ws: *WindowSystem) !void {
+    try ws.server_events.ensure_unused_capacity(ws.present_queue.items.len);
+
     // FIXME: This could block forever on windows if we wait on a
     // timeline point that never gets signaled
     while (ws.present_queue.items.len > 0) {
@@ -611,6 +622,8 @@ pub fn viewport_create(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) 
         return error.InvalidSize;
     }
 
+    try ws.server_events.ensure_unused_capacity(2);
+
     const result: ViewportCreateResult = blk: {
         if (args.payload.viewport_id.is_server_id()) {
             break :blk try ws.viewport_create_with_sub_viewport(args);
@@ -622,7 +635,7 @@ pub fn viewport_create(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) 
 
     switch (result) {
         .create_with_window => |key| {
-            ws.server_events.appendAssumeCapacity(.{
+            ws.server_events.push_assume_capacity(.{
                 .viewport_created = .{
                     .client_id = key.client_id,
                     .payload = .{
@@ -633,7 +646,7 @@ pub fn viewport_create(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) 
             });
         },
         .create_with_sub_viewport => |v| {
-            ws.server_events.appendAssumeCapacity(.{
+            ws.server_events.push_assume_capacity(.{
                 .viewport_created = .{
                     .client_id = v.embeded.client_id,
                     .payload = .{
@@ -643,7 +656,7 @@ pub fn viewport_create(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) 
                 },
             });
 
-            ws.server_events.appendAssumeCapacity(.{
+            ws.server_events.push_assume_capacity(.{
                 .sub_viewport_embeded = .{
                     .client_id = v.embeder.key.client_id,
                     .payload = .{
@@ -884,6 +897,8 @@ pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_
 }
 
 pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_size_set)) !void {
+    try ws.server_events.ensure_unused_capacity(1);
+
     const key = blk: {
         const rs = ws.resources.getPtr(args.client_id) orelse return;
         break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
@@ -932,7 +947,7 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
         },
     }
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .viewport_resize = .{
             .client_id = key.client_id,
             .payload = .{
@@ -944,6 +959,8 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
 }
 
 pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_display_state_set)) !void {
+    try ws.server_events.ensure_unused_capacity(2);
+
     const svp_viewport_key = blk: {
         const rs = ws.resources.getPtr(args.client_id) orelse return;
         break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
@@ -988,7 +1005,7 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
     }
 
     const parent_key = svp.parent_key.?;
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .sub_viewport_display_state = .{
             .client_id = parent_key.client_id,
             .payload = .{
@@ -998,7 +1015,7 @@ pub fn sub_viewport_display_state_set(ws: *WindowSystem, args: Event.TypeOf(.sub
         },
     });
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .viewport_display_state = .{
             .client_id = svp_viewport_key.client_id,
             .payload = .{
@@ -1020,6 +1037,8 @@ pub fn sub_viewport_close(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_cl
 }
 
 pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.window_resize_by_display_server)) !void {
+    try ws.server_events.ensure_unused_capacity(1);
+
     const win = ws.windows.get(args.id) orelse {
         return error.WindowDoesNotExist;
     };
@@ -1039,7 +1058,7 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
     const rs = ws.resources.getPtr(win.viewport_key.client_id) orelse return;
     const vp = rs.viewports.get(win.viewport_key.viewport_id) orelse return;
     if (!std.meta.eql(vp.render_size, args.size)) {
-        ws.server_events.appendAssumeCapacity(.{
+        ws.server_events.push_assume_capacity(.{
             .viewport_resize = .{
                 .client_id = win.viewport_key.client_id,
                 .payload = .{
@@ -1063,6 +1082,8 @@ pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)
 }
 
 pub fn sub_viewport_embed(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_embed)) !void {
+    try ws.server_events.ensure_unused_capacity(1);
+
     const to_embed = ws.resources.getPtr(args.payload.client_id_to_embed) orelse return;
     const embeder = ws.resources.getPtr(args.client_id) orelse return;
 
@@ -1085,7 +1106,7 @@ pub fn sub_viewport_embed(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_em
         },
     );
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .viewport_create = .{
             .client_id = args.payload.client_id_to_embed,
             .payload = .{
@@ -1119,7 +1140,9 @@ pub fn cursor_shape_set_from_viewport(ws: *WindowSystem, vp: *Viewport, viewport
     }
 }
 
-pub fn mouse_focus_set(ws: *WindowSystem, key: ViewportKey) void {
+pub fn mouse_focus_set_and_push_event(ws: *WindowSystem, key: ViewportKey) void {
+    std.debug.assert(ws.server_events.capacity >= 1);
+
     if (std.meta.eql(ws.input_focus_mouse, key)) return;
 
     const vp = ws.viewport_from_key(key) orelse return;
@@ -1127,7 +1150,7 @@ pub fn mouse_focus_set(ws: *WindowSystem, key: ViewportKey) void {
     ws.input_focus_mouse = key;
 
     // TODO: Notify all viewports of this window that the mouse left
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .mouse_enter = .{
             .client_id = key.client_id,
             .payload = .{ .viewport_id = key.viewport_id },
@@ -1157,9 +1180,11 @@ pub fn keyboard_focus_set(ws: *WindowSystem, key: ViewportKey) void {
 }
 
 pub fn keyboard_key(ws: *WindowSystem, args: Event.TypeOf(.keyboard_key)) !void {
+    try ws.server_events.ensure_unused_capacity(2);
+
     const key = ws.input_focus_keyboard orelse return;
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .keyboard_key = .{
             .client_id = key.client_id,
             .payload = .{
@@ -1181,7 +1206,7 @@ pub fn keyboard_key(ws: *WindowSystem, args: Event.TypeOf(.keyboard_key)) !void 
             wl.input_repeat_future = null;
 
             if (Wayland.process_char(args.char)) |char| {
-                ws.server_events.appendAssumeCapacity(.{
+                ws.server_events.push_assume_capacity(.{
                     .keyboard_char = .{
                         .client_id = key.client_id,
                         .payload = .{ .viewport_id = key.viewport_id, .char = char },
@@ -1220,11 +1245,13 @@ pub fn keyboard_leave(ws: *WindowSystem, _: Event.TypeOf(.keyboard_leave)) !void
 }
 
 pub fn mouse_enter(ws: *WindowSystem, args: Event.TypeOf(.mouse_enter)) !void {
-    ws.mouse_focus_set(args.viewport_key);
+    try ws.server_events.ensure_unused_capacity(1);
+    ws.mouse_focus_set_and_push_event(args.viewport_key);
 }
 
 pub fn mouse_leave(ws: *WindowSystem, args: Event.TypeOf(.mouse_leave)) !void {
-    ws.server_events.appendAssumeCapacity(.{
+    try ws.server_events.ensure_unused_capacity(1);
+    ws.server_events.push_assume_capacity(.{
         .mouse_leave = .{
             .client_id = args.viewport_key.client_id,
             .payload = .{
@@ -1237,7 +1264,8 @@ pub fn mouse_leave(ws: *WindowSystem, args: Event.TypeOf(.mouse_leave)) !void {
 pub fn mouse_motion(ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void {
     const key = ws.input_focus_mouse orelse return;
 
-    ws.server_events.appendAssumeCapacity(.{
+    try ws.server_events.ensure_unused_capacity(1);
+    ws.server_events.push_assume_capacity(.{
         .mouse_motion = .{
             .client_id = key.client_id,
             .payload = .{
@@ -1250,12 +1278,14 @@ pub fn mouse_motion(ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void 
 }
 
 pub fn mouse_button(ws: *WindowSystem, args: Event.TypeOf(.mouse_button)) !void {
+    try ws.server_events.ensure_unused_capacity(1);
+
     const key = ws.input_focus_mouse orelse return;
     if (args.state == .pressed) {
         ws.keyboard_focus_set(key);
     }
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .mouse_button = .{
             .client_id = key.client_id,
             .payload = .{
@@ -1268,9 +1298,11 @@ pub fn mouse_button(ws: *WindowSystem, args: Event.TypeOf(.mouse_button)) !void 
 }
 
 pub fn mouse_scroll(ws: *WindowSystem, args: Event.TypeOf(.mouse_scroll)) !void {
+    try ws.server_events.ensure_unused_capacity(1);
+
     const key = ws.input_focus_mouse orelse return;
 
-    ws.server_events.appendAssumeCapacity(.{
+    ws.server_events.push_assume_capacity(.{
         .mouse_scroll = .{
             .client_id = key.client_id,
             .payload = .{
@@ -1642,3 +1674,4 @@ const win32_kbm = @import("win32").ui.input.keyboard_and_mouse;
 const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
 const dxgi = @import("win32").graphics.dxgi;
+const ServerQueue = @import("server/EventQueue.zig");

@@ -128,6 +128,7 @@ fn recv_fd_peek(comptime Fd: type, socket: c_int) !Fd {
 
 pub const MessageHeader = common.MessageHeaderGeneric(MessageTag);
 pub const WithClientID = common.WithClientID;
+pub const WithHandlesClientID = common.WithHandlesClientID;
 
 pub const Message = struct {
     header: MessageHeader,

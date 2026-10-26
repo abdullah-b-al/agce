@@ -3,7 +3,7 @@ const ClientResources = @This();
 client_id: ClientID,
 wl_buffers_pending: std.array_hash_map.Auto(BufferID, void),
 
-buffers_commited: std.array_hash_map.Auto(BufferID, ViewportID),
+buffers_commited: std.array_hash_map.Auto(BufferID, BufferCommitted),
 
 buffers: std.array_hash_map.Auto(BufferID, Buffer),
 
@@ -217,6 +217,11 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
     }
 };
 
+pub const BufferCommitted = struct {
+    viewport_id: ViewportID,
+    ptr: *ServeQueue.Node,
+};
+
 const std = @import("std");
 const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
@@ -239,3 +244,4 @@ const ClientID = ptypes.ClientID;
 const Viewport = @import("Viewport.zig");
 const Buffer = @import("Buffer.zig");
 const constants = @import("constants");
+const ServeQueue = @import("../server/EventQueue.zig");
