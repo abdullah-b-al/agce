@@ -497,7 +497,7 @@ pub const Buffer = union(enum) {
         switch (buffer.*) {
             .cpu => |cpu| {
                 _ = win32_memory.UnmapViewOfFile(cpu.pixels);
-                _ = win32_foundation.CloseHandle(cpu.handle.to_HANDLE());
+                cpu.handle.close();
             },
             .d11 => |d| {
                 _ = d.texture.IUnknown.Release();

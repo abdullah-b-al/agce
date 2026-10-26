@@ -78,10 +78,6 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
 
     server.events_handle(ws);
 
-    while (ws.handles_to_close.pop()) |handle| {
-        handle.close();
-    }
-
     if (poll_result.accept) {
         // FIXME: In windows, we must accept all connections as resetting the accept event
         // will result in ignoring new clients

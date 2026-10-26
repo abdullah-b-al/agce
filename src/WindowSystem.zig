@@ -18,9 +18,6 @@ server_events: ServerQueue,
 deferred_events: std.ArrayList(Event),
 present_queue: std.ArrayList(BufferPresent),
 
-/// A list of os handles to close at the end of tick()
-handles_to_close: std.ArrayList(HandleToClose),
-
 gbm: Gbm,
 
 win32: if (os == .windows) *Win32 else void,
@@ -128,7 +125,6 @@ fn create_undefined_native(
         .server_events = .init(gpa),
         .deferred_events = .empty,
         .present_queue = .empty,
-        .handles_to_close = .empty,
 
         .input_focus_mouse = null,
         .input_focus_keyboard = null,
@@ -162,17 +158,12 @@ pub fn destroy(ws: *WindowSystem) void {
         },
     }
 
-    while (ws.handles_to_close.pop()) |handle| {
-        handle.close();
-    }
-
     ws.server_events.deinit();
 
     inline for (.{
         &ws.resources,
         &ws.windows,
         &ws.deferred_events,
-        &ws.handles_to_close,
         &ws.present_queue,
     }) |entry| {
         entry.deinit(ws.gpa);
@@ -354,7 +345,7 @@ fn buffer_create_cpu_inner(ws: *WindowSystem, rs: *ClientResources, size: ptypes
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl = tag.window_system(ws);
-            var fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
+            const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
             errdefer fd.close();
 
             if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), @intCast(size_bytes))) != .SUCCESS)
@@ -1569,26 +1560,6 @@ pub const NativeTag = enum {
             .wayland => os == .linux,
             .win32 => os == .windows,
         };
-    }
-};
-
-pub const HandleToClose = union(enum) {
-    windows_handle: *anyopaque,
-    fd: std.posix.fd_t,
-
-    pub fn close(handle: HandleToClose) void {
-        switch (handle) {
-            .windows_handle => |h| {
-                if (os == .windows) {
-                    _ = win32_foundation.CloseHandle(h);
-                }
-            },
-            .fd => |fd| {
-                if (os == .linux) {
-                    _ = std.os.linux.close(fd);
-                }
-            },
-        }
     }
 };
 

@@ -43,7 +43,7 @@ pub fn init(
     const format: ptypes.BufferFormat = .argb8888;
     const size = width * height * format.bytes_per_pixel();
     const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
-    defer _ = std.os.linux.close(@intFromEnum(fd));
+    defer fd.close();
 
     if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), size)) != .SUCCESS) return error.FtruncateFailed;
     const pixels = try std.posix.mmap(
@@ -131,7 +131,7 @@ pub fn resize(win: *Window, wl: *Wayland, requested_size: ptypes.Size) !void {
 
     const new_size = width * height * win.buffer.format.bytes_per_pixel();
     const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
-    defer _ = std.os.linux.close(@intFromEnum(fd));
+    defer fd.close();
 
     if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), new_size)) != .SUCCESS) return error.FtruncateFailed;
 

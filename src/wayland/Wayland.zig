@@ -735,10 +735,10 @@ pub fn buffer_create_and_register_gpu_async(
     try rs.buffers.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
     try wl.buffer_set_listener_prepare(ws);
 
-    var acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
+    const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
     errdefer acquire_fd.close();
 
-    var release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(ws.gbm);
+    const release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(ws.gbm);
     errdefer release_fd.close();
 
     const acquire: Viewport.AcquireTimeline = try .init(wl.sync_object_manager, acquire_fd);

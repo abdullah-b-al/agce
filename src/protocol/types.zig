@@ -296,13 +296,11 @@ pub fn Fd(comptime Opaque: type) type {
     return enum(c_int) {
         pub const is_fd = true;
 
-        closed = -2,
         invalid = -1,
         _,
 
-        pub fn close(fd: *@This()) void {
-            _ = std.os.linux.close(@intFromEnum(fd.*));
-            fd.* = .closed;
+        pub fn close(fd: @This()) void {
+            _ = std.os.linux.close(@intFromEnum(fd));
         }
 
         comptime {
