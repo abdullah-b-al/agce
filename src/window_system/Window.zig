@@ -3,8 +3,6 @@ const Window = @This();
 id: WindowID,
 
 viewport_key: ViewportKey,
-input_focus_keyboard: ViewportKey,
-input_focus_mouse: ViewportKey,
 
 win32: if (os == .windows) Win32.Window else void,
 linux: if (os == .linux) LinuxWindow else void,
@@ -21,8 +19,6 @@ pub fn create(
     win.* = .{
         .id = window_id,
         .viewport_key = viewport_key,
-        .input_focus_keyboard = viewport_key,
-        .input_focus_mouse = viewport_key,
 
         .win32 = undefined,
         .linux = undefined,

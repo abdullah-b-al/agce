@@ -26,8 +26,8 @@ gbm: Gbm,
 win32: if (os == .windows) *Win32 else void,
 linux: if (os == .linux) Linux else void,
 
-input_focus_mouse: ?WindowID,
-input_focus_keyboard: ?WindowID,
+input_focus_mouse: ?ViewportKey,
+input_focus_keyboard: ?ViewportKey,
 
 pub fn create(
     io: Io,
@@ -272,14 +272,12 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
             },
         });
 
-        if (ws.windows.get(vp.window_id)) |win| {
-            if (std.meta.eql(win.input_focus_keyboard, key)) {
-                ws.keyboard_focus_set(win, parent);
-            }
+        if (std.meta.eql(ws.input_focus_keyboard, key)) {
+            ws.keyboard_focus_set(parent);
+        }
 
-            if (std.meta.eql(win.input_focus_mouse, key)) {
-                ws.mouse_focus_set(win, parent);
-            }
+        if (std.meta.eql(ws.input_focus_mouse, key)) {
+            ws.mouse_focus_set(parent);
         }
 
         vp.parent_key = null;
@@ -1076,10 +1074,7 @@ pub fn sub_viewport_embed(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_em
 }
 
 pub fn cursor_shape_set_from_viewport(ws: *WindowSystem, vp: *Viewport, viewport_key: ViewportKey) void {
-    const win_id = ws.input_focus_mouse orelse return;
-    const win = ws.windows.get(win_id) orelse return;
-
-    if (!std.meta.eql(win.input_focus_mouse, viewport_key)) return;
+    if (!std.meta.eql(ws.input_focus_mouse, viewport_key)) return;
 
     switch (ws.native_tag()) {
         .wayland => |tag| {
@@ -1101,29 +1096,28 @@ pub fn cursor_shape_set_from_viewport(ws: *WindowSystem, vp: *Viewport, viewport
     }
 }
 
-pub fn mouse_focus_set(ws: *WindowSystem, win: *Window, key: ViewportKey) void {
+pub fn mouse_focus_set(ws: *WindowSystem, key: ViewportKey) void {
+    if (std.meta.eql(ws.input_focus_mouse, key)) return;
+
     const vp = ws.viewport_from_key(key) orelse return;
 
-    win.input_focus_mouse = .{
-        .client_id = key.client_id,
-        .viewport_id = key.viewport_id,
-    };
+    ws.input_focus_mouse = key;
 
     // TODO: Notify all viewports of this window that the mouse left
     ws.server_events.appendAssumeCapacity(.{
         .mouse_enter = .{
             .client_id = key.client_id,
-            .payload = .{
-                .viewport_id = key.viewport_id,
-            },
+            .payload = .{ .viewport_id = key.viewport_id },
         },
     });
 
-    ws.cursor_shape_set_from_viewport(vp, win.input_focus_mouse);
+    ws.cursor_shape_set_from_viewport(vp, key);
 }
 
-pub fn keyboard_focus_set(ws: *WindowSystem, win: *Window, key: ViewportKey) void {
-    win.input_focus_keyboard = key;
+pub fn keyboard_focus_set(ws: *WindowSystem, key: ViewportKey) void {
+    if (std.meta.eql(ws.input_focus_keyboard, key)) return;
+
+    ws.input_focus_keyboard = key;
 
     // TODO: Notify all viewports of this window that the keyboard left
     switch (ws.native_tag()) {
@@ -1140,9 +1134,7 @@ pub fn keyboard_focus_set(ws: *WindowSystem, win: *Window, key: ViewportKey) voi
 }
 
 pub fn keyboard_key(ws: *WindowSystem, args: Event.TypeOf(.keyboard_key)) !void {
-    const window_id = ws.input_focus_keyboard orelse return;
-    const win = ws.windows.get(window_id) orelse return;
-    const key = win.input_focus_keyboard;
+    const key = ws.input_focus_keyboard orelse return;
 
     ws.server_events.appendAssumeCapacity(.{
         .keyboard_key = .{
@@ -1197,9 +1189,7 @@ pub fn keyboard_key(ws: *WindowSystem, args: Event.TypeOf(.keyboard_key)) !void 
 }
 
 pub fn keyboard_enter(ws: *WindowSystem, args: Event.TypeOf(.keyboard_enter)) !void {
-    const win = ws.windows.get(args.window_id) orelse return;
-    ws.input_focus_keyboard = win.id;
-    ws.keyboard_focus_set(win, win.input_focus_keyboard);
+    ws.keyboard_focus_set(args.viewport_key);
 }
 
 pub fn keyboard_leave(ws: *WindowSystem, _: Event.TypeOf(.keyboard_leave)) !void {
@@ -1207,31 +1197,22 @@ pub fn keyboard_leave(ws: *WindowSystem, _: Event.TypeOf(.keyboard_leave)) !void
 }
 
 pub fn mouse_enter(ws: *WindowSystem, args: Event.TypeOf(.mouse_enter)) !void {
-    if (ws.input_focus_mouse == args.window_id) return;
-    const win = ws.windows.get(args.window_id) orelse return;
-    ws.input_focus_mouse = win.id;
-
-    ws.mouse_focus_set(win, .{
-        .client_id = args.client_id,
-        .viewport_id = args.viewport_id,
-    });
+    ws.mouse_focus_set(args.viewport_key);
 }
 
 pub fn mouse_leave(ws: *WindowSystem, args: Event.TypeOf(.mouse_leave)) !void {
-    ws.input_focus_mouse = null;
     ws.server_events.appendAssumeCapacity(.{
         .mouse_leave = .{
-            .client_id = args.client_id,
+            .client_id = args.viewport_key.client_id,
             .payload = .{
-                .viewport_id = args.viewport_id,
+                .viewport_id = args.viewport_key.viewport_id,
             },
         },
     });
 }
 
 pub fn mouse_motion(ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void {
-    const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
-    const key = window.input_focus_mouse;
+    const key = ws.input_focus_mouse orelse return;
 
     ws.server_events.appendAssumeCapacity(.{
         .mouse_motion = .{
@@ -1246,10 +1227,9 @@ pub fn mouse_motion(ws: *WindowSystem, args: Event.TypeOf(.mouse_motion)) !void 
 }
 
 pub fn mouse_button(ws: *WindowSystem, args: Event.TypeOf(.mouse_button)) !void {
-    const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
-    const key = window.input_focus_mouse;
+    const key = ws.input_focus_mouse orelse return;
     if (args.state == .pressed) {
-        window.input_focus_keyboard = window.input_focus_mouse;
+        ws.keyboard_focus_set(key);
     }
 
     ws.server_events.appendAssumeCapacity(.{
@@ -1265,8 +1245,7 @@ pub fn mouse_button(ws: *WindowSystem, args: Event.TypeOf(.mouse_button)) !void 
 }
 
 pub fn mouse_scroll(ws: *WindowSystem, args: Event.TypeOf(.mouse_scroll)) !void {
-    const window = ws.windows.get(ws.input_focus_mouse orelse return) orelse return;
-    const key = window.input_focus_mouse;
+    const key = ws.input_focus_mouse orelse return;
 
     ws.server_events.appendAssumeCapacity(.{
         .mouse_scroll = .{
@@ -1406,23 +1385,19 @@ pub const Event = union(enum) {
     };
 
     pub const KeyboardEnter = struct {
-        window_id: WindowID,
+        viewport_key: ViewportKey,
     };
 
     pub const KeyboardLeave = struct {
-        window_id: WindowID,
+        viewport_key: ViewportKey,
     };
 
     pub const MouseEnter = struct {
-        client_id: ClientID,
-        viewport_id: ptypes.ViewportID,
-        window_id: WindowID,
+        viewport_key: ViewportKey,
     };
 
     pub const MouseLeave = struct {
-        client_id: ClientID,
-        viewport_id: ptypes.ViewportID,
-        window_id: WindowID,
+        viewport_key: ViewportKey,
     };
 
     pub const MouseMotion = struct {

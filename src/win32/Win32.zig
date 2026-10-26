@@ -136,10 +136,11 @@ fn viewport_proc(
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
-    const win, const vp, const vp_key = blk: {
+    const vp, const vp_key = blk: {
+        // TODO: Iterate over all viewports
         for (ws.windows.values()) |win| {
             const vp = ws.viewport_from_key(win.viewport_key) orelse continue;
-            if (vp.win32.child_window_handle == hwnd) break :blk .{ win, vp, win.viewport_key };
+            if (vp.win32.child_window_handle == hwnd) break :blk .{ vp, win.viewport_key };
         }
 
         // Window has been removed. Pass through msg
@@ -206,11 +207,7 @@ fn viewport_proc(
         win32_win.WM_RBUTTONUP,
         => |tag| {
             ws.deferred_events.append(ws.gpa, .{
-                .mouse_enter = .{
-                    .client_id = vp_key.client_id,
-                    .viewport_id = vp_key.viewport_id,
-                    .window_id = win.id,
-                },
+                .mouse_enter = .{ .viewport_key = vp_key },
             }) catch return 0;
 
             if (!vp.win32.mouse_tracking) {
@@ -251,16 +248,6 @@ fn viewport_proc(
                 else => comptime unreachable,
             };
 
-            switch (tag) {
-                win32_win.WM_LBUTTONDOWN, win32_win.WM_RBUTTONDOWN => {
-                    ws.deferred_events.append(
-                        ws.gpa,
-                        .{ .keyboard_enter = .{ .window_id = win.id } },
-                    ) catch return 0;
-                },
-                else => {},
-            }
-
             ws.deferred_events.append(ws.gpa, mouse_event) catch return 0;
 
             return 0;
@@ -269,11 +256,7 @@ fn viewport_proc(
         win32_controls.WM_MOUSELEAVE => {
             vp.win32.mouse_tracking = false;
             ws.deferred_events.append(ws.gpa, .{
-                .mouse_leave = .{
-                    .client_id = vp_key.client_id,
-                    .viewport_id = vp_key.viewport_id,
-                    .window_id = win.id,
-                },
+                .mouse_leave = .{ .viewport_key = vp_key },
             }) catch return 0;
             return 0;
         },

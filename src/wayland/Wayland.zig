@@ -336,7 +336,6 @@ pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
 
 pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *WindowSystem) void {
     const window_id = window_id_from_toplevel(ws, tl);
-    const win = ws.windows.get(window_id).?;
 
     switch (event) {
         .configure => |configure| {
@@ -354,12 +353,11 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
         },
 
         .close => {
+            const key = ws.input_focus_keyboard orelse return;
             ws.server_events.appendAssumeCapacity(.{
                 .viewport_close = .{
-                    .client_id = win.input_focus_keyboard.client_id,
-                    .payload = .{
-                        .viewport_id = win.input_focus_keyboard.viewport_id,
-                    },
+                    .client_id = key.client_id,
+                    .payload = .{ .viewport_id = key.viewport_id },
                 },
             });
         },
@@ -405,8 +403,10 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
                 return;
             };
 
+            const win = ws.windows.get(window_id) orelse return;
+
             const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
-                .window_id = window_id,
+                .viewport_key = win.viewport_key,
             });
             ws.deferred_events.append(ws.gpa, ws_event) catch return;
         },
@@ -461,7 +461,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
                 return;
             };
 
-            const key, const vp = viewport_from_surface(ws, surface) orelse {
+            const key, _ = viewport_from_surface(ws, surface) orelse {
                 log.warn("Dropping pointer event without a viewport {t}", .{tag});
                 return;
             };
@@ -476,9 +476,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
             }
 
             break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
-                .client_id = key.client_id,
-                .viewport_id = key.viewport_id,
-                .window_id = vp.base.window_id,
+                .viewport_key = key,
             });
         },
         .motion => |e| .{
