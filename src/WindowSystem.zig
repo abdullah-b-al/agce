@@ -214,6 +214,8 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
 
         .viewport_create => |args| try ws.viewport_create(args),
         .viewport_destroy => |args| ws.viewport_destroy(.{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id }),
+        .viewport_should_close => |args| try ws.viewport_should_close(args),
+
         .sub_viewport_embed => |args| try ws.sub_viewport_embed(args),
         .sub_viewport_pos_set => |args| try ws.sub_viewport_pos_set(args),
         .sub_viewport_size_set => |args| try ws.sub_viewport_size_set(args),
@@ -295,6 +297,15 @@ fn viewport_destroy(ws: *WindowSystem, key: ViewportKey) void {
     log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_id });
 
     ws.windows_destroy_if_closed();
+}
+
+fn viewport_should_close(ws: *WindowSystem, args: Event.TypeOf(.viewport_should_close)) !void {
+    ws.server_events.appendAssumeCapacity(.{
+        .viewport_close = .{
+            .client_id = args.viewport_key.client_id,
+            .payload = .{ .viewport_id = args.viewport_key.viewport_id },
+        },
+    });
 }
 
 fn buffer_create_cpu(ws: *WindowSystem, args: Event.TypeOf(.buffer_create_cpu)) !void {
@@ -1330,6 +1341,7 @@ pub const Event = union(enum) {
 
     viewport_create: client_to_server.WithClientID(client_to_server.ViewportCreate),
     viewport_destroy: client_to_server.WithClientID(client_to_server.ViewportDestroy),
+    viewport_should_close: ViewportShouldClose,
     sub_viewport_embed: client_to_server.WithClientID(client_to_server.SubViewportEmbed),
     sub_viewport_pos_set: client_to_server.WithClientID(client_to_server.SubViewportPosSet),
     sub_viewport_size_set: client_to_server.WithClientID(client_to_server.SubViewportSizeSet),
@@ -1382,6 +1394,10 @@ pub const Event = union(enum) {
         state: pinput.KeyState,
         modifiers: pinput.Modifiers,
         char: ?u32,
+    };
+
+    pub const ViewportShouldClose = struct {
+        viewport_key: ViewportKey,
     };
 
     pub const KeyboardEnter = struct {

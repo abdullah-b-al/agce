@@ -152,13 +152,8 @@ fn viewport_proc(
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
         win32_win.WM_CLOSE => {
-            ws.server_events.appendAssumeCapacity(.{
-                .viewport_close = .{
-                    .client_id = vp_key.client_id,
-                    .payload = .{
-                        .viewport_id = vp_key.viewport_id,
-                    },
-                },
+            ws.deferred_events.appendAssumeCapacity(.{
+                .viewport_should_close = .{ .viewport_key = vp_key },
             });
             return 0;
         },

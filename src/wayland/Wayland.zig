@@ -335,11 +335,10 @@ pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
 }
 
 pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *WindowSystem) void {
-    const window_id = window_id_from_toplevel(ws, tl);
-
     switch (event) {
         .configure => |configure| {
             if (configure.width == 0 or configure.height == 0) return;
+            const window_id = window_id_from_toplevel(ws, tl);
 
             ws.event_handle(.{
                 .window_resize_by_display_server = .{
@@ -353,12 +352,9 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *
         },
 
         .close => {
-            const key = ws.input_focus_keyboard orelse return;
-            ws.server_events.appendAssumeCapacity(.{
-                .viewport_close = .{
-                    .client_id = key.client_id,
-                    .payload = .{ .viewport_id = key.viewport_id },
-                },
+            const key = ws.input_focus_keyboard orelse ws.input_focus_mouse orelse return;
+            ws.deferred_events.appendAssumeCapacity(.{
+                .viewport_should_close = .{ .viewport_key = key },
             });
         },
     }
