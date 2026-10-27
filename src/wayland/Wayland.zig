@@ -732,7 +732,7 @@ pub fn buffer_create_and_register_gpu_async(
 
     try ws.server_events.ensure_unused_capacity(1);
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
-    try rs.buffers.ensureUnusedCapacity(wl.gpa, rs.wl_buffers_pending.capacity());
+    try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
     try wl.buffer_set_listener_prepare(ws);
 
     const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
@@ -753,13 +753,17 @@ pub fn buffer_create_and_register_gpu_async(
 
     const buffer_id = rs.next_buffer_id.increment();
     rs.wl_buffers_pending.putAssumeCapacityNoClobber(buffer_id, {});
-    const gpu: Buffer.Gpu = .{
-        .wl_buffer = undefined,
-        .timeline_acquire = acquire,
-        .timeline_release = release,
-        .size = size,
-        .format = b_format,
-    };
+    rs.buffers.putAssumeCapacityNoClobber(buffer_id, .init_wayland(
+        .{
+            .gpu = .{
+                .wl_buffer = .pending,
+                .size = size,
+                .timeline_acquire = acquire,
+                .timeline_release = release,
+                .format = b_format,
+            },
+        },
+    ));
 
     const buffer_fd = c_linux.gbm_bo_get_fd(buffer.bo);
     std.debug.assert(buffer_fd >= 0);
@@ -770,7 +774,6 @@ pub fn buffer_create_and_register_gpu_async(
         .viewport_id = viewport_id,
         .wl = wl,
         .ws = ws,
-        .gpu = gpu,
         .buffer_fd = @enumFromInt(buffer_fd),
         .acquire_timeline = acquire_fd,
         .release_timeline = release_fd,
@@ -886,9 +889,13 @@ pub const Buffer = union(enum) {
         }
     }
 
-    pub fn wl_buffer(b: Buffer) *cwl.Buffer {
+    pub fn wl_buffer(b: Buffer) ?*cwl.Buffer {
         return switch (b) {
-            inline else => |v| v.wl_buffer,
+            .cpu => |v| v.wl_buffer,
+            .gpu => |v| switch (v.wl_buffer) {
+                .pending => null,
+                .ptr => |ptr| ptr,
+            },
         };
     }
 
@@ -911,14 +918,21 @@ pub const Buffer = union(enum) {
     }
 
     pub const Gpu = struct {
-        wl_buffer: *cwl.Buffer,
+        wl_buffer: union(enum) {
+            pending,
+            ptr: *cwl.Buffer,
+        },
+
         timeline_acquire: ?Wayland.Viewport.AcquireTimeline,
         timeline_release: ?Wayland.Viewport.ReleaseTimeline,
         size: ptypes.Size,
         format: BufferFormat,
 
         pub fn destroy(gpu: Gpu) void {
-            gpu.wl_buffer.destroy();
+            switch (gpu.wl_buffer) {
+                .pending => {},
+                .ptr => |ptr| ptr.destroy(),
+            }
             if (gpu.timeline_acquire) |tl| tl.acquire.destroy();
             if (gpu.timeline_release) |tl| tl.release.destroy();
         }
@@ -938,16 +952,19 @@ pub const Buffer = union(enum) {
 pub const RegisterGpuBuffer = struct {
     wl: *Wayland,
     ws: *WindowSystem,
+
     client_id: ClientID,
     buffer_id: BufferID,
     viewport_id: ptypes.ViewportID,
-    size: ptypes.Size,
-    gpu: Buffer.Gpu,
+
     buffer_fd: ptypes.GbmBoFd,
     acquire_timeline: ptypes.DrmSyncobjAcquireTimelineFd,
     release_timeline: ptypes.DrmSyncobjReleaseTimelineFd,
+
+    size: ptypes.Size,
     stride: u32,
     format: ptypes.BufferFormat,
+
     node: *ServerQueue.Node,
 
     pub fn callback(
@@ -964,23 +981,26 @@ pub const RegisterGpuBuffer = struct {
             .created => |result| {
                 const rs = data.ws.resources.getPtr(data.client_id) orelse return;
 
+                const buffer = rs.buffers.getPtr(data.buffer_id) orelse {
+                    // assume it's been destoryed by client
+                    data.buffer_fd.close();
+                    data.acquire_timeline.close();
+                    data.release_timeline.close();
+                    return;
+                };
+
                 data.wl.buffer_set_listener(
                     data.ws,
                     rs,
                     result.buffer,
                     data.buffer_id,
                 );
-                rs.buffers.putAssumeCapacityNoClobber(data.buffer_id, .init_wayland(
-                    .{
-                        .gpu = .{
-                            .wl_buffer = result.buffer,
-                            .size = data.gpu.size,
-                            .timeline_acquire = data.gpu.timeline_acquire,
-                            .timeline_release = data.gpu.timeline_release,
-                            .format = data.format,
-                        },
-                    },
-                ));
+
+                const native: *Buffer = &buffer.native.wayland;
+                std.debug.assert(native.* == .gpu);
+                std.debug.assert(native.gpu.wl_buffer == .pending);
+
+                buffer.native.wayland.gpu.wl_buffer = .{ .ptr = result.buffer };
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
 

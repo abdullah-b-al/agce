@@ -68,7 +68,9 @@ pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) voi
                 bo.deinit(ws.gbm);
             }
             _ = rs.gbm_bos.orderedRemove(id);
-            _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(b.wl_buffer()));
+            if (b.wl_buffer()) |ptr| {
+                _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(ptr));
+            }
             b.destroy();
         },
         .win32 => |tag| {
