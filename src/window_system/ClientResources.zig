@@ -62,15 +62,11 @@ pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) voi
 
     switch (ws.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
             const b = tag.buffer(buffer);
             if (rs.gbm_bos.getPtr(id)) |bo| {
                 bo.deinit(ws.gbm);
             }
             _ = rs.gbm_bos.orderedRemove(id);
-            if (b.wl_buffer()) |ptr| {
-                _ = wl.wl_buffers.orderedRemove(.from_wl_buffer(ptr));
-            }
             b.destroy();
         },
         .win32 => |tag| {

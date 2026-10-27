@@ -16,10 +16,10 @@ cursor_manager: *wp.CursorShapeManagerV1,
 display: *cwl.Display,
 registry: *cwl.Registry,
 
-wl_buffers: std.array_hash_map.Auto(WlBufferID, BufferKey),
 frame_callbacks: std.array_hash_map.Auto(CallbackID, ViewportKey),
 
-register_gpu_buffer_pool: std.heap.MemoryPool(RegisterGpuBuffer),
+buffer_listener_pool: std.heap.memory_pool.Extra(BufferListener, .{ .growable = false }),
+register_gpu_buffer_pool: std.heap.memory_pool.Extra(RegisterGpuBuffer, .{ .growable = false }),
 
 xkb_context: *c_linux.struct_xkb_context,
 xkb_keymap: ?*c_linux.struct_xkb_keymap,
@@ -79,8 +79,9 @@ pub fn create(io: Io, gpa: std.mem.Allocator) !*Wayland {
         .registry = registry,
         .display = display,
 
-        .wl_buffers = .empty,
         .frame_callbacks = .empty,
+
+        .buffer_listener_pool = .empty,
         .register_gpu_buffer_pool = .empty,
 
         .xkb_context = xkb_context,
@@ -96,7 +97,6 @@ pub fn create(io: Io, gpa: std.mem.Allocator) !*Wayland {
 }
 
 pub fn destroy(wl: *Wayland) void {
-    wl.wl_buffers.deinit(wl.gpa);
     wl.frame_callbacks.deinit(wl.gpa);
 
     wl.shm.destroy();
@@ -111,6 +111,7 @@ pub fn destroy(wl: *Wayland) void {
     wl.registry.destroy();
     wl.display.disconnect();
 
+    wl.buffer_listener_pool.deinit(wl.gpa);
     wl.register_gpu_buffer_pool.deinit(wl.gpa);
 
     wl.gpa.destroy(wl);
@@ -193,29 +194,6 @@ pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSyste
     }
 
     _ = wl.display.flush();
-}
-
-pub fn buffer_set_listener_prepare(wl: *Wayland, ws: *WindowSystem) !void {
-    var total: usize = 0;
-
-    for (ws.resources.values()) |rs| {
-        total +=
-            rs.wl_buffers_pending.count() +
-            rs.buffers.count() +
-            1;
-    }
-
-    try wl.wl_buffers.ensureTotalCapacity(ws.gpa, total);
-}
-
-pub fn buffer_set_listener(wl: *Wayland, ws: *WindowSystem, rs: *ClientResources, wl_buffer: *cwl.Buffer, buffer_id: BufferID) void {
-    wl_buffer.setListener(*WindowSystem, BufferListener.callback, ws);
-    wl.wl_buffers.putAssumeCapacityNoClobber(
-        .from_wl_buffer(wl_buffer),
-        .{ .client_id = rs.client_id, .buffer_id = buffer_id },
-    );
-
-    log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_id });
 }
 
 pub fn display_dispatch(wl: *Wayland, ws: *WindowSystem) void {
@@ -663,10 +641,18 @@ pub fn buffer_create_and_register_cpu(
     format: BufferFormat,
 ) !void {
     try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
-    try wl.buffer_set_listener_prepare(ws);
+    if (wl.buffer_listener_pool.free_list.len() == 0)
+        try wl.buffer_listener_pool.addCapacity(ws.gpa, 1);
 
     const cpu = try buffer_create_cpu(wl.shm, fd, size, format);
-    wl.buffer_set_listener(ws, rs, cpu.wl_buffer, id);
+    Wayland.BufferListener.set_listener(
+        wl,
+        ws,
+        rs,
+        cpu.wl_buffer,
+        id,
+        wl.buffer_listener_pool.create(ws.gpa) catch unreachable,
+    );
 
     rs.buffers.putAssumeCapacityNoClobber(id, .init_wayland(.{ .cpu = cpu }));
 }
@@ -730,10 +716,12 @@ pub fn buffer_create_and_register_gpu_async(
     if (wl.register_gpu_buffer_pool.free_list.len() == 0)
         try wl.register_gpu_buffer_pool.addCapacity(wl.gpa, 1);
 
+    if (wl.buffer_listener_pool.free_list.len() == 0)
+        try wl.buffer_listener_pool.addCapacity(ws.gpa, 1);
+
     try ws.server_events.ensure_unused_capacity(1);
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
     try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
-    try wl.buffer_set_listener_prepare(ws);
 
     const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
     errdefer acquire_fd.close();
@@ -768,6 +756,7 @@ pub fn buffer_create_and_register_gpu_async(
     const buffer_fd = c_linux.gbm_bo_get_fd(buffer.bo);
     std.debug.assert(buffer_fd >= 0);
     const data = wl.register_gpu_buffer_pool.create(wl.gpa) catch unreachable;
+    const buffer_listener = wl.buffer_listener_pool.create(ws.gpa) catch unreachable;
     data.* = .{
         .buffer_id = buffer_id,
         .client_id = rs.client_id,
@@ -781,6 +770,7 @@ pub fn buffer_create_and_register_gpu_async(
         .stride = stride,
         .format = b_format,
         .node = ws.server_events.create_assume_capacity(),
+        .buffer_listener = buffer_listener,
     };
 
     params.setListener(*RegisterGpuBuffer, RegisterGpuBuffer.callback, data);
@@ -966,6 +956,7 @@ pub const RegisterGpuBuffer = struct {
     format: ptypes.BufferFormat,
 
     node: *ServerQueue.Node,
+    buffer_listener: *BufferListener,
 
     pub fn callback(
         p: *zwp.LinuxBufferParamsV1,
@@ -986,14 +977,18 @@ pub const RegisterGpuBuffer = struct {
                     data.buffer_fd.close();
                     data.acquire_timeline.close();
                     data.release_timeline.close();
+                    data.ws.server_events.destroy(data.node);
+                    data.ws.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
                     return;
                 };
 
-                data.wl.buffer_set_listener(
+                Wayland.BufferListener.set_listener(
+                    data.wl,
                     data.ws,
                     rs,
                     result.buffer,
                     data.buffer_id,
+                    data.buffer_listener,
                 );
 
                 const native: *Buffer = &buffer.native.wayland;
@@ -1026,6 +1021,8 @@ pub const RegisterGpuBuffer = struct {
                 data.buffer_fd.close();
                 data.acquire_timeline.close();
                 data.release_timeline.close();
+                data.ws.server_events.destroy(data.node);
+                data.ws.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
                 @panic("TODO: Send failure message");
             },
         }
@@ -1033,17 +1030,19 @@ pub const RegisterGpuBuffer = struct {
 };
 
 pub const BufferListener = struct {
-    pub fn callback(wl_buffer: *cwl.Buffer, event: cwl.Buffer.Event, ws: *WindowSystem) void {
+    wl: *Wayland,
+    ws: *WindowSystem,
+    buffer_key: BufferKey,
+
+    pub fn callback(_: *cwl.Buffer, event: cwl.Buffer.Event, data: *BufferListener) void {
         switch (event) {
             .release => {
-                const key = ws.linux.wayland.wl_buffers.get(.from_wl_buffer(wl_buffer)) orelse
-                    return;
-
-                const rs = ws.resources.getPtr(key.client_id) orelse return;
+                const key = data.buffer_key;
+                const rs = data.ws.resources.getPtr(key.client_id) orelse return;
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
 
-                ws.server_events.push(entry.value.ptr, .{
+                data.ws.server_events.push(entry.value.ptr, .{
                     .buffer_released = .{
                         .client_id = key.client_id,
                         .payload = .{
@@ -1054,6 +1053,24 @@ pub const BufferListener = struct {
                 });
             },
         }
+    }
+
+    pub fn set_listener(
+        wl: *Wayland,
+        ws: *WindowSystem,
+        rs: *ClientResources,
+        wl_buffer: *cwl.Buffer,
+        buffer_id: BufferID,
+        data: *BufferListener,
+    ) void {
+        data.* = .{
+            .wl = wl,
+            .ws = ws,
+            .buffer_key = .{ .client_id = rs.client_id, .buffer_id = buffer_id },
+        };
+        wl_buffer.setListener(*BufferListener, BufferListener.callback, data);
+
+        log.debug("Set a listener for wl_buffer {} {}", .{ wl_buffer.getId(), buffer_id });
     }
 };
 
