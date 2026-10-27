@@ -162,8 +162,8 @@ pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSyste
                     // Maybe this should wait on the acquisition before releasing ?
                     gbm_bo.signal_release_timeline(ws.gbm, item.sync.?.release_point);
                 } else {
-                    gpu.timeline_acquire.?.set(nvp.sync_surface.?, item.sync.?.acquire_point);
-                    gpu.timeline_release.?.set(nvp.sync_surface.?, item.sync.?.release_point);
+                    gpu.timeline_acquire.set(nvp.sync_surface.?, item.sync.?.acquire_point);
+                    gpu.timeline_release.set(nvp.sync_surface.?, item.sync.?.release_point);
                 }
             },
             .cpu => {
@@ -913,8 +913,8 @@ pub const Buffer = union(enum) {
             ptr: *cwl.Buffer,
         },
 
-        timeline_acquire: ?Wayland.Viewport.AcquireTimeline,
-        timeline_release: ?Wayland.Viewport.ReleaseTimeline,
+        timeline_acquire: Wayland.Viewport.AcquireTimeline,
+        timeline_release: Wayland.Viewport.ReleaseTimeline,
         size: ptypes.Size,
         format: BufferFormat,
 
@@ -923,8 +923,9 @@ pub const Buffer = union(enum) {
                 .pending => {},
                 .ptr => |ptr| ptr.destroy(),
             }
-            if (gpu.timeline_acquire) |tl| tl.acquire.destroy();
-            if (gpu.timeline_release) |tl| tl.release.destroy();
+
+            gpu.timeline_acquire.acquire.destroy();
+            gpu.timeline_release.release.destroy();
         }
     };
 
