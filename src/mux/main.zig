@@ -30,16 +30,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const ws: *WindowSystem = try .create(io, gpa, &environ_map, "agce-mux");
     defer ws.destroy();
 
-    var arena: std.heap.ArenaAllocator = .init(gpa);
-    defer arena.deinit();
-
-    if (!arena.reset(.{ .retain_with_limit = 1024 * 1024 })) {
-        return error.OutOfMemory;
-    }
+    var tick: window_system.Tick = .init(ws);
+    defer tick.deinit();
 
     while (!exit) {
-        _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 });
-        try window_system.tick(arena.allocator(), ws, .none);
+        try window_system.tick(&tick, .none);
     }
 }
 

@@ -53,17 +53,12 @@ pub const TestServer = struct {
         const ws: *WindowSystem = try .create(io, gpa, &environ_map, src.fn_name);
         defer ws.destroy();
 
-        const server = try Server.create(io, &environ_map, gpa);
-        defer server.destroy();
-
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
+        var state: Tick = .init(ws);
+        defer state.deinit();
 
         while (!exit.isSet()) {
-            _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 });
             tick(
-                arena.allocator(),
-                ws,
+                &state,
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => {},
@@ -122,6 +117,7 @@ const testing = std.testing;
 const client = @import("client");
 const constants = @import("constants");
 const glad = @import("glad");
+const Tick = @import("window_system").Tick;
 const WindowSystem = @import("window_system").WindowSystem;
 const Server = @import("window_system").Server;
 const zio = @import("window_system").zio;

@@ -2,8 +2,25 @@ pub const Server = @import("server/Server.zig");
 pub const WindowSystem = @import("WindowSystem.zig");
 pub const zio = @import("zio");
 
-pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, poll_timeout: Io.Timeout) !void {
+pub const Tick = struct {
+    ws: *WindowSystem,
+    arena: std.heap.ArenaAllocator,
+
+    pub fn init(ws: *WindowSystem) Tick {
+        return .{ .ws = ws, .arena = .init(ws.gpa) };
+    }
+
+    pub fn deinit(state: *Tick) void {
+        state.arena.deinit();
+    }
+};
+
+pub fn tick(state: *Tick, poll_timeout: Io.Timeout) !void {
+    _ = state.arena.reset(.{ .retain_with_limit = 1024 * 1024 });
+
+    const ws = state.ws;
     const server = ws.server;
+    const arena = state.arena.allocator();
 
     const poll_result = try poll(arena, ws, server, poll_timeout);
 
