@@ -184,6 +184,25 @@ pub fn native_tag(ws: *WindowSystem) NativeTag {
     };
 }
 
+pub fn dispatch(ws: *WindowSystem) void {
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.window_system(ws);
+
+            wl.display_dispatch(ws);
+        },
+        .win32 => |tag| {
+            tag.guard();
+            var msg: win32_win.MSG = undefined;
+
+            while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
+                _ = win32_win.TranslateMessage(&msg);
+                _ = win32_win.DispatchMessageA(&msg);
+            }
+        },
+    }
+}
+
 pub fn events_handle(ws: *WindowSystem, events: []const Event) void {
     for (events) |e| {
         ws.event_handle(e) catch |err| {
@@ -757,9 +776,7 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
 
     switch (ws.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
-            win.linux.wayland.surface.commit();
-            _ = wl.display.flush();
+            tag.window(win).surface.commit();
         },
         .win32 => |tag| {
             tag.guard();
@@ -824,16 +841,6 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
             removed = true;
         }
     }
-
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            const wl = tag.window_system(ws);
-            if (removed) {
-                _ = wl.display.flush();
-            }
-        },
-        .win32 => {},
-    }
 }
 
 pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_pos_set)) !void {
@@ -859,7 +866,6 @@ pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_
 
     switch (ws.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
             const nvp = tag.viewport(vp);
             if (set_position) {
                 nvp.subsurface.set_position(
@@ -867,8 +873,6 @@ pub fn sub_viewport_pos_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_
                     vp.clipping_rect.y,
                 );
             }
-
-            _ = wl.display.flush();
         },
         .win32 => |tag| {
             const nvp = tag.viewport(vp);
@@ -912,7 +916,6 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
 
     switch (ws.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
             const nvp = tag.viewport(vp);
             const min_size = nvp.min_source_size(&win.linux.wayland);
             nvp.viewport.setSource(
@@ -922,7 +925,6 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
                 .fromInt(@intCast(min_size.height)),
             );
             nvp.surface.commit();
-            _ = wl.display.flush();
         },
         .win32 => |tag| {
             const nvp = tag.viewport(vp);
@@ -1036,10 +1038,10 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl = tag.window_system(ws);
-            try win.linux.wayland.resize(wl, args.size);
-            win.linux.wayland.viewport_bound(ws);
-            win.linux.wayland.commit();
-            _ = wl.display.flush();
+            const nw = tag.window(win);
+            try nw.resize(wl, args.size);
+            nw.viewport_bound(ws);
+            nw.commit();
         },
         .win32 => {
             // It seems windows changes the window's buffer however it likes, unlike wayland.

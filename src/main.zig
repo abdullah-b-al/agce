@@ -55,22 +55,7 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
     try ws.present();
 
     if (poll_result.window_system) {
-        switch (ws.native_tag()) {
-            .wayland => |tag| {
-                const wl = tag.window_system(ws);
-
-                wl.display_dispatch(ws);
-            },
-            .win32 => |tag| {
-                tag.guard();
-                var msg: win32_win.MSG = undefined;
-
-                while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
-                    _ = win32_win.TranslateMessage(&msg);
-                    _ = win32_win.DispatchMessageA(&msg);
-                }
-            },
-        }
+        ws.dispatch();
     }
 
     ws.events_handle(ws.deferred_events.items);
@@ -108,6 +93,13 @@ pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_t
                 error.OutOfMemory => unreachable,
             };
         }
+    }
+
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            _ = tag.window_system(ws).display.flush();
+        },
+        else => {},
     }
 }
 

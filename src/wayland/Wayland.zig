@@ -117,7 +117,7 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
     std.debug.assert(ws.server_events.capacity >= ws.present_queue.items.len);
 
     for (ws.present_queue.items) |*item| {
@@ -192,8 +192,6 @@ pub fn present(wl: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSyste
         nvp.surface.commit();
         item.state = .presented;
     }
-
-    _ = wl.display.flush();
 }
 
 pub fn display_dispatch(wl: *Wayland, ws: *WindowSystem) void {
@@ -778,8 +776,6 @@ pub fn buffer_create_and_register_gpu_async(
     params.create(size.width, size.height, format, .{});
 
     log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
-
-    _ = wl.display.flush();
 
     return buffer_id;
 }
