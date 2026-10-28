@@ -128,7 +128,6 @@ pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
         const nvp = native_tag.viewport(vp);
-        const nw = native_tag.window(win);
         const b = &buffer.native.wayland;
 
         const should_be_hidden = vp.should_be_hidden(ws);
@@ -139,7 +138,7 @@ pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem
             nvp.surface.damage(0, 0, b.width(), b.height());
             nvp.surface.attach(b.wl_buffer(), 0, 0);
 
-            const size = nvp.min_source_size_with_buffer(nw, b);
+            const size = nvp.min_source_size_with_buffer(win, b);
             nvp.viewport.setSource(
                 .fromInt(0),
                 .fromInt(0),

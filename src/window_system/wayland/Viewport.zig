@@ -21,7 +21,7 @@ pub fn init(
     errdefer surface.destroy();
 
     const parent_surface = switch (parent) {
-        .window => |win| win.linux.wayland.surface,
+        .window => |handle| handle.cast(.wayland),
         .viewport => |vp| vp.linux.wayland.surface,
     };
     const subsurface = try wl.subcompositor.getSubsurface(surface, parent_surface);
@@ -77,17 +77,17 @@ pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubView
     return null;
 }
 
-pub fn min_source_size(vp: *const Viewport, window: *Window) ptypes.Size {
+pub fn min_source_size(vp: *const Viewport, win: *WindowSystem.Window) ptypes.Size {
     const width = @min(
         vp.base.render_size.width,
         vp.base.clipping_rect.width,
-        window.buffer.size.width,
+        win.size().width,
     );
 
     const height = @min(
         vp.base.render_size.height,
         vp.base.clipping_rect.height,
-        window.buffer.size.height,
+        win.size().height,
     );
 
     return .{
@@ -96,8 +96,8 @@ pub fn min_source_size(vp: *const Viewport, window: *Window) ptypes.Size {
     };
 }
 
-pub fn min_source_size_with_buffer(vp: *const Viewport, window: *Window, buffer: *Buffer) ptypes.Size {
-    const size = vp.min_source_size(window);
+pub fn min_source_size_with_buffer(vp: *const Viewport, win: *WindowSystem.Window, buffer: *Buffer) ptypes.Size {
+    const size = vp.min_source_size(win);
     return .{
         .width = @max(
             1,

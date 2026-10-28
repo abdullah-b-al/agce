@@ -16,7 +16,7 @@ pub fn init(
     _ = client_id;
 
     const parent_handle = switch (parent) {
-        .window => |win| win.win32.handle,
+        .window => |handle| handle.cast(.win32),
         .viewport => |vp| vp.win32.child_window_handle,
     };
     const handle = win32_win.CreateWindowExA(

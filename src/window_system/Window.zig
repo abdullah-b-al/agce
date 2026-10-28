@@ -53,6 +53,31 @@ pub fn destroy(win: *Window, gpa: std.mem.Allocator) void {
     gpa.destroy(win);
 }
 
+pub fn handle(win: *Window) *WindowSystem.WindowHandle {
+    return switch (win.native_tag()) {
+        .wayland => |tag| @ptrCast(tag.window(win).surface),
+        .win32 => |tag| @ptrCast(tag.window(win).handle),
+    };
+}
+
+pub fn size(win: *Window) ptypes.Size {
+    return switch (win.native_tag()) {
+        .wayland => |tag| tag.window(win).buffer.size,
+        .win32 => |tag| {
+            const nw = tag.window(win);
+            var rect: win32_foundation.RECT = undefined;
+            if (win32_win.GetClientRect(nw.handle, &rect) != 0) {
+                return .{
+                    .width = rect.right - rect.left,
+                    .height = rect.bottom - rect.top,
+                };
+            } else {
+                return .{ .width = 0, .height = 0 };
+            }
+        },
+    };
+}
+
 pub fn native_tag(win: *Window) WindowSystem.NativeTag {
     return switch (os) {
         .linux => switch (win.linux) {
@@ -81,3 +106,5 @@ const Win32 = @import("win32/Win32.zig");
 const ptypes = @import("protocol").types;
 const ClientResources = @import("ClientResources.zig");
 const os = @import("builtin").os.tag;
+const win32_win = @import("win32").ui.windows_and_messaging;
+const win32_foundation = @import("win32").foundation;

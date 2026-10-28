@@ -208,7 +208,7 @@ pub fn native_tag(ws: *const WindowSystem) NativeTag {
 pub fn dispatch(ws: *WindowSystem) void {
     switch (ws.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
+            const wl: *Wayland = tag.window_system(ws);
 
             wl.display_dispatch(ws);
         },
@@ -783,7 +783,7 @@ fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_c
 
     try rs.viewport_create(
         ws,
-        .{ .window = win },
+        .{ .window = win.handle() },
         args.payload.viewport_id,
         win.id,
         .{ .x = 0, .y = 0, .width = args.payload.size.width, .height = args.payload.size.height },
@@ -938,7 +938,7 @@ pub fn sub_viewport_size_set(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
-            const min_size = nvp.min_source_size(&win.linux.wayland);
+            const min_size = nvp.min_source_size(win);
             nvp.viewport.setSource(
                 .fromInt(0),
                 .fromInt(0),
@@ -1371,7 +1371,7 @@ pub const ViewportCreateResult = union(enum) {
 };
 
 pub const ParentOfViewport = union(enum) {
-    window: *Window,
+    window: *WindowHandle,
     viewport: *Viewport,
 };
 
@@ -1635,6 +1635,28 @@ pub const BufferPresent = struct {
             };
         }
     };
+};
+
+pub const WindowHandle = opaque {
+    pub fn cast(handle: *WindowHandle, comptime tag: NativeTag) Type(tag) {
+        switch (tag) {
+            .wayland => {
+                comptime std.debug.assert(os == .linux);
+                return @ptrCast(handle);
+            },
+            .win32 => {
+                comptime std.debug.assert(os == .windows);
+                return @ptrCast(handle);
+            },
+        }
+    }
+
+    fn Type(comptime tag: NativeTag) type {
+        return switch (tag) {
+            .wayland => *cwl.Surface,
+            .win32 => win32_foundation.HWND,
+        };
+    }
 };
 
 pub const Linux = union(enum) { wayland: *Wayland };
