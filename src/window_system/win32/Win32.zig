@@ -137,10 +137,13 @@ fn viewport_proc(
     }
 
     const vp, const vp_key = blk: {
-        // TODO: Iterate over all viewports
-        for (ws.windows.values()) |win| {
-            const vp = ws.viewport_from_key(win.viewport_key) orelse continue;
-            if (vp.win32.child_window_handle == hwnd) break :blk .{ vp, win.viewport_key };
+        for (ws.resources.values()) |rs| {
+            for (rs.viewports.values()) |vp| {
+                const key: ViewportKey = .{ .client_id = rs.client_id, .viewport_id = vp.id };
+                if (vp.win32.child_window_handle == hwnd) {
+                    break :blk .{ vp, key };
+                }
+            }
         }
 
         // Window has been removed. Pass through msg

@@ -370,23 +370,24 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             return;
         },
 
-        inline .leave, .enter => |e, tag| {
-            const surface = e.surface orelse {
-                log.warn("Dropping keyboard event .{t}: No surface", .{tag});
-                return;
-            };
+        inline .leave, .enter => {
+            log.err("Removed feature. Should be handled by Mux", .{});
+            // const surface = e.surface orelse {
+            //     log.warn("Dropping keyboard event .{t}: No surface", .{tag});
+            //     return;
+            // };
 
-            const window_id = window_id_from_window_surface(ws, surface) orelse {
-                log.err("Dropping keyboard event .{t}: Surface without a window", .{tag});
-                return;
-            };
+            // const window_id = window_id_from_window_surface(ws, surface) orelse {
+            //     log.err("Dropping keyboard event .{t}: Surface without a window", .{tag});
+            //     return;
+            // };
 
-            const win = ws.windows.get(window_id) orelse return;
+            // const win = ws.windows.get(window_id) orelse return;
 
-            const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
-                .viewport_key = win.viewport_key,
-            });
-            ws.deferred_events.append(ws.gpa, ws_event) catch return;
+            // const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
+            //     .viewport_key = win.viewport_key orelse return,
+            // });
+            // ws.deferred_events.append(ws.gpa, ws_event) catch return;
         },
         .key => |e| {
             const key = input.linux_key_to_protocol_key(e.key) orelse {

@@ -766,43 +766,52 @@ fn viewport_create_with_sub_viewport(
     };
 }
 
+pub fn window_handle_for_viewport(ws: *WindowSystem) ?*WindowHandle {
+    ws.windows.ensureUnusedCapacity(ws.gpa, 1) catch return null;
+
+    const id = ws.window_next_id.increment();
+    const win = Window.create(ws, id, .{ .width = 512, .height = 512 }) catch |err| {
+        log.err("window_handle_for_viewport() {}", .{err});
+        return null;
+    };
+    ws.windows.putAssumeCapacityNoClobber(id, win);
+    switch (ws.native_tag()) {
+        .wayland => |tag| {
+            tag.window(win).surface.commit();
+        },
+        .win32 => {},
+    }
+
+    return win.handle();
+}
+
+pub fn window_id_from_handle(ws: *WindowSystem, handle: *WindowHandle) ?WindowID {
+    for (ws.windows.values()) |win| {
+        if (win.handle() == handle) return win.id;
+    }
+
+    return null;
+}
+
 fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
-    try ws.windows.ensureUnusedCapacity(ws.gpa, 1);
+    const window_handle = ws.window_handle_for_viewport() orelse return error.FailedToGetWindow;
+    const window_id = ws.window_id_from_handle(window_handle).?;
 
     const rs = ws.resources.getPtr(args.client_id) orelse return error.ClientDoesNotExist;
-    const id = ws.window_next_id.increment();
-
-    const key: ViewportKey = .{
-        .client_id = args.client_id,
-        .viewport_id = args.payload.viewport_id,
-    };
-
-    const win = try Window.create(ws, id, key, args.payload.size);
 
     try rs.viewport_create(
         ws,
-        .{ .window = win.handle() },
+        .{ .window = window_handle },
         args.payload.viewport_id,
-        win.id,
+        window_id,
         .{ .x = 0, .y = 0, .width = args.payload.size.width, .height = args.payload.size.height },
         args.payload.size,
         args.payload.create_sync_timeline,
         null,
         args.payload.format,
     );
-
-    ws.windows.putAssumeCapacityNoClobber(id, win);
-
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            tag.window(win).surface.commit();
-        },
-        .win32 => |tag| {
-            tag.guard();
-        },
-    }
 
     log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_id });
 
@@ -817,21 +826,9 @@ pub fn viewport_from_key(ws: *WindowSystem, key: ViewportKey) ?*Viewport {
 }
 
 pub fn window_from_viewport_key(ws: *WindowSystem, key: ViewportKey) ?*Window {
-    var root = key;
-
-    while (true) {
-        const rs = ws.resources.getPtr(root.client_id).?;
-        const vp = rs.viewports.get(root.viewport_id).?;
-        root = vp.parent_key orelse break;
-    }
-
-    for (ws.windows.values()) |win| {
-        if (std.meta.eql(win.viewport_key, root)) {
-            return win;
-        }
-    }
-
-    return null;
+    const rs = ws.resources.getPtr(key.client_id).?;
+    const vp = rs.viewports.get(key.viewport_id).?;
+    return ws.windows.get(vp.window_id);
 }
 
 pub fn resources_of_embeder_get(ws: *WindowSystem, to_embed: ViewportKey) error{EmbederClientDoesNotExist}!*ClientResources {
@@ -854,7 +851,19 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
     while (i > 0) {
         i -= 1;
         const win = ws.windows.values()[i];
-        const should_close = ws.viewport_from_key(win.viewport_key) == null;
+
+        const should_close = blk: {
+            for (ws.resources.values()) |rs| {
+                for (rs.viewports.values()) |vp| {
+                    if (vp.window_id == win.id) {
+                        break :blk false;
+                    }
+                }
+            }
+
+            break :blk true;
+        };
+
         if (should_close) {
             const id = win.id;
             win.destroy(ws.gpa);
@@ -1069,19 +1078,22 @@ pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.wi
         },
     }
 
-    const rs = ws.resources.getPtr(win.viewport_key.client_id) orelse return;
-    const vp = rs.viewports.get(win.viewport_key.viewport_id) orelse return;
-    if (!std.meta.eql(vp.render_size, args.size)) {
-        ws.server_events.push_assume_capacity(.{
-            .viewport_resize = .{
-                .client_id = win.viewport_key.client_id,
-                .payload = .{
-                    .viewport_id = win.viewport_key.viewport_id,
-                    .size = args.size,
-                },
-            },
-        });
-    }
+    log.err("Removed feature. Should be handled by Mux", .{});
+    // if (win.viewport_key) |key| {
+    //     const rs = ws.resources.getPtr(key.client_id) orelse return;
+    //     const vp = rs.viewports.get(key.viewport_id) orelse return;
+    //     if (!std.meta.eql(vp.render_size, args.size)) {
+    //         ws.server_events.push_assume_capacity(.{
+    //             .viewport_resize = .{
+    //                 .client_id = key.client_id,
+    //                 .payload = .{
+    //                     .viewport_id = key.viewport_id,
+    //                     .size = args.size,
+    //                 },
+    //             },
+    //         });
+    //     }
+    // }
 }
 
 pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)) !void {

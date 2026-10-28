@@ -98,25 +98,27 @@ pub fn commit(win: *Window) void {
     win.surface.commit();
 }
 
-pub fn viewport_bound(win: *Window, ws: *WindowSystem) void {
-    const rs = ws.resources.getPtr(win.base.viewport_key.client_id) orelse return;
-    const vp = rs.viewports.get(win.base.viewport_key.viewport_id) orelse return;
+pub fn viewport_bound(_: *Window, _: *WindowSystem) void {
+    log.err("Removed feature. Should be handled by Mux", .{});
+    // const key = win.base.viewport_key orelse return;
+    // const rs = ws.resources.getPtr(key.client_id) orelse return;
+    // const vp = rs.viewports.get(key.viewport_id) orelse return;
 
-    const width = @min(
-        vp.render_size.width,
-        win.buffer.size.width,
-    );
+    // const width = @min(
+    //     vp.render_size.width,
+    //     win.buffer.size.width,
+    // );
 
-    const height = @min(
-        vp.render_size.height,
-        win.buffer.size.height,
-    );
-    win.viewport.setSource(
-        .fromInt(0),
-        .fromInt(0),
-        .fromInt(@intCast(width)),
-        .fromInt(@intCast(height)),
-    );
+    // const height = @min(
+    //     vp.render_size.height,
+    //     win.buffer.size.height,
+    // );
+    // win.viewport.setSource(
+    //     .fromInt(0),
+    //     .fromInt(0),
+    //     .fromInt(@intCast(width)),
+    //     .fromInt(@intCast(height)),
+    // );
 }
 
 pub fn resize(win: *Window, wl: *Wayland, requested_size: ptypes.Size) !void {
@@ -177,18 +179,21 @@ fn fill_color(win: *Window) void {
     }
 }
 
+const log = std.log.scoped(.Wayland);
+
 const std = @import("std");
+
+const c_linux = @import("c_linux");
 const cwl = @import("wayland").client.wl;
+const ptypes = @import("protocol").types;
+const utils = @import("utils");
 const wp = @import("wayland").client.wp;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
+
 const ClientID = @import("../server/Clients.zig").ClientID;
-const Viewport = @import("Viewport.zig");
 const WindowSystem = @import("../WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
-const log = std.log.scoped(.Wayland);
-const utils = @import("utils");
-const c_linux = @import("c_linux");
+const Viewport = @import("Viewport.zig");
 const Wayland = @import("Wayland.zig");
-const ptypes = @import("protocol").types;

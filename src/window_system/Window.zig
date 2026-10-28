@@ -2,15 +2,12 @@ const Window = @This();
 
 id: WindowID,
 
-viewport_key: ViewportKey,
-
 win32: if (os == .windows) Win32.Window else void,
 linux: if (os == .linux) LinuxWindow else void,
 
 pub fn create(
     ws: *WindowSystem,
     window_id: WindowID,
-    viewport_key: ViewportKey,
     requested_size: ptypes.Size,
 ) !*Window {
     const win = try ws.gpa.create(Window);
@@ -18,7 +15,6 @@ pub fn create(
 
     win.* = .{
         .id = window_id,
-        .viewport_key = viewport_key,
 
         .win32 = undefined,
         .linux = undefined,
