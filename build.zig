@@ -119,7 +119,7 @@ pub fn build(b: *std.Build) !void {
         break :blk module;
     };
 
-    const step_server = b.step("server", "Build the server");
+    const step_mux = b.step("mux", "Build the multiplexer");
 
     step_check = b.step("check", "Check the compilation");
     step_all = b.step("all", "Build everything");
@@ -172,8 +172,8 @@ pub fn build(b: *std.Build) !void {
         else => return error.UnsupportedOS,
     }
 
-    const main = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    const mux = b.createModule(.{
+        .root_source_file = b.path("src/mux/main.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -184,7 +184,8 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "window_system", .module = window_system },
         },
     });
-    install_exe(b, "agce", main, step_server);
+
+    install_exe(b, "agce-mux", mux, step_mux);
 
     build_tests(b, target, optimize, client, window_system, constants, glad);
 }

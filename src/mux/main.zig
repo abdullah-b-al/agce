@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         else => {},
     }
 
-    const ws: *WindowSystem = try .create(io, gpa, "agce-server");
+    const ws: *WindowSystem = try .create(io, gpa, "agce-mux");
     defer ws.destroy();
 
     const server = try Server.create(io, &environ_map, gpa);
@@ -55,11 +55,6 @@ pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
     }
 }
 
-pub const window_system = @import("window_system");
-pub const WindowSystem = window_system.WindowSystem;
-pub const Server = window_system.Server;
-pub const zio = @import("zio");
-
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -72,3 +67,7 @@ const log = std.log.scoped(.main);
 const os = @import("builtin").os.tag;
 const win32_threading = @import("win32").system.threading;
 const win_sock = @import("win32").networking.win_sock;
+const window_system = @import("window_system");
+const WindowSystem = window_system.WindowSystem;
+const Server = window_system.Server;
+const zio = @import("zio");
