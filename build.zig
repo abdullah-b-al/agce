@@ -124,8 +124,8 @@ pub fn build(b: *std.Build) !void {
     step_check = b.step("check", "Check the compilation");
     step_all = b.step("all", "Build everything");
 
-    const main = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+    const window_system = b.createModule(.{
+        .root_source_file = b.path("src/window_system/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -138,8 +138,8 @@ pub fn build(b: *std.Build) !void {
 
     switch (target.result.os.tag) {
         .windows => {
-            main.addImport("win32", win32.module("win32"));
-            main.addImport("d3d", d3d.?);
+            window_system.addImport("win32", win32.module("win32"));
+            window_system.addImport("d3d", d3d.?);
         },
         .linux => {
             const Scanner = @import("wayland").Scanner;
@@ -164,17 +164,29 @@ pub fn build(b: *std.Build) !void {
             scanner.generate("wp_linux_drm_syncobj_manager_v1", 1);
             scanner.generate("wp_cursor_shape_manager_v1", 1);
 
-            main.addImport("wayland", wayland);
-            main.addImport("c_linux", c_linux.?);
+            window_system.addImport("wayland", wayland);
+            window_system.addImport("c_linux", c_linux.?);
 
-            main.linkSystemLibrary("wayland-client", .{});
+            window_system.linkSystemLibrary("wayland-client", .{});
         },
         else => return error.UnsupportedOS,
     }
 
+    const main = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = protocol },
+            .{ .name = "utils", .module = utils },
+            .{ .name = "constants", .module = constants },
+            .{ .name = "zio", .module = zio },
+            .{ .name = "window_system", .module = window_system },
+        },
+    });
     install_exe(b, "agce", main, step_server);
 
-    build_tests(b, target, optimize, client, main, constants, glad);
+    build_tests(b, target, optimize, client, window_system, constants, glad);
 }
 
 fn build_tests(
@@ -182,7 +194,7 @@ fn build_tests(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     client: *Build.Module,
-    main: *Build.Module,
+    window_system: *Build.Module,
     constants: *Build.Module,
     glad: Glad,
 ) void {
@@ -201,7 +213,7 @@ fn build_tests(
             .imports = &.{
                 .{ .name = "client", .module = client },
                 .{ .name = "glad", .module = glad.c },
-                .{ .name = "main", .module = main },
+                .{ .name = "window_system", .module = window_system },
                 .{ .name = "constants", .module = constants },
                 .{ .name = "z2d", .module = z2d },
             },

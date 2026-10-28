@@ -61,7 +61,7 @@ pub fn deinit(win: *Window) void {
 
 const std = @import("std");
 const ClientID = @import("../server/Clients.zig").ClientID;
-const Viewport = @import("../window_system/Viewport.zig");
+const Viewport = @import("../Viewport.zig");
 const WindowSystem = @import("../WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;

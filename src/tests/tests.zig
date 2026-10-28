@@ -140,9 +140,9 @@ const shared = @import("shared.zig");
 const client = @import("client");
 const constants = @import("constants");
 const glad = @import("glad");
-const WindowSystem = @import("main").WindowSystem;
-const Server = @import("main").Server;
-const zio = @import("main").zio;
-const tick = @import("main").tick;
+const WindowSystem = @import("window_system").WindowSystem;
+const Server = @import("window_system").Server;
+const zio = @import("window_system").zio;
+const tick = @import("window_system").tick;
 
 const log = std.log;

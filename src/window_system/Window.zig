@@ -68,16 +68,16 @@ pub const LinuxWindow = union(enum) {
 };
 
 const std = @import("std");
-const ClientID = @import("../server/Clients.zig").ClientID;
+const ClientID = @import("server/Clients.zig").ClientID;
 const Viewport = @import("Viewport.zig");
-const WindowSystem = @import("../WindowSystem.zig");
+const WindowSystem = @import("WindowSystem.zig");
 const ViewportKey = WindowSystem.ViewportKey;
 const WindowID = WindowSystem.WindowID;
 const log = std.log.scoped(.Wayland);
 const utils = @import("utils");
 const c_linux = @import("c_linux");
-const Wayland = @import("../wayland/Wayland.zig");
-const Win32 = @import("../win32/Win32.zig");
+const Wayland = @import("wayland/Wayland.zig");
+const Win32 = @import("win32/Win32.zig");
 const ptypes = @import("protocol").types;
 const ClientResources = @import("ClientResources.zig");
 const os = @import("builtin").os.tag;

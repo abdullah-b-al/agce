@@ -1620,9 +1620,9 @@ pub const Linux = union(enum) { wayland: *Wayland };
 
 pub const Wayland = @import("wayland/Wayland.zig");
 pub const Win32 = @import("win32/Win32.zig");
-pub const Viewport = @import("window_system/Viewport.zig");
-pub const Window = @import("window_system/Window.zig");
-pub const Buffer = @import("window_system/Buffer.zig");
+pub const Viewport = @import("Viewport.zig");
+pub const Window = @import("Window.zig");
+pub const Buffer = @import("Buffer.zig");
 
 const std = @import("std");
 const Io = std.Io;
@@ -1632,7 +1632,7 @@ const ViewportID = ptypes.ViewportID;
 const os = @import("builtin").os.tag;
 const log = std.log.scoped(.WindowSystem);
 const BufferID = ptypes.BufferID;
-const ClientResources = @import("window_system/ClientResources.zig");
+const ClientResources = @import("ClientResources.zig");
 const win32_win = @import("win32").ui.windows_and_messaging;
 const c_linux = @import("c_linux");
 const constants = @import("constants");
