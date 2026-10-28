@@ -124,6 +124,34 @@ pub fn build(b: *std.Build) !void {
     step_check = b.step("check", "Check the compilation");
     step_all = b.step("all", "Build everything");
 
+    const wayland = blk: {
+        if (target.result.os.tag != .linux) break :blk null;
+
+        const Scanner = @import("wayland").Scanner;
+        const scanner = Scanner.create(b, .{});
+
+        const wayland = b.createModule(.{ .root_source_file = scanner.result });
+
+        scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+        scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
+        scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+        scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
+        scanner.addSystemProtocol("staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml");
+        scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
+
+        scanner.generate("wl_seat", 4);
+        scanner.generate("wl_compositor", 1);
+        scanner.generate("wl_subcompositor", 1);
+        scanner.generate("wl_shm", 1);
+        scanner.generate("xdg_wm_base", 1);
+        scanner.generate("zwp_linux_dmabuf_v1", 1);
+        scanner.generate("wp_viewporter", 1);
+        scanner.generate("wp_linux_drm_syncobj_manager_v1", 1);
+        scanner.generate("wp_cursor_shape_manager_v1", 1);
+
+        break :blk wayland;
+    };
+
     const window_system = b.createModule(.{
         .root_source_file = b.path("src/window_system/root.zig"),
         .target = target,
@@ -135,42 +163,6 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "zio", .module = zio },
         },
     });
-
-    switch (target.result.os.tag) {
-        .windows => {
-            window_system.addImport("win32", win32.module("win32"));
-            window_system.addImport("d3d", d3d.?);
-        },
-        .linux => {
-            const Scanner = @import("wayland").Scanner;
-            const scanner = Scanner.create(b, .{});
-
-            const wayland = b.createModule(.{ .root_source_file = scanner.result });
-
-            scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
-            scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
-            scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
-            scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
-            scanner.addSystemProtocol("staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml");
-            scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
-
-            scanner.generate("wl_seat", 4);
-            scanner.generate("wl_compositor", 1);
-            scanner.generate("wl_subcompositor", 1);
-            scanner.generate("wl_shm", 1);
-            scanner.generate("xdg_wm_base", 1);
-            scanner.generate("zwp_linux_dmabuf_v1", 1);
-            scanner.generate("wp_viewporter", 1);
-            scanner.generate("wp_linux_drm_syncobj_manager_v1", 1);
-            scanner.generate("wp_cursor_shape_manager_v1", 1);
-
-            window_system.addImport("wayland", wayland);
-            window_system.addImport("c_linux", c_linux.?);
-
-            window_system.linkSystemLibrary("wayland-client", .{});
-        },
-        else => return error.UnsupportedOS,
-    }
 
     const mux = b.createModule(.{
         .root_source_file = b.path("src/mux/main.zig"),
@@ -184,6 +176,22 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "window_system", .module = window_system },
         },
     });
+
+    inline for (&.{ window_system, mux }) |m| {
+        switch (target.result.os.tag) {
+            .windows => {
+                m.addImport("win32", win32.module("win32"));
+                m.addImport("d3d", d3d.?);
+            },
+            .linux => {
+                m.addImport("wayland", wayland.?);
+                m.addImport("c_linux", c_linux.?);
+
+                m.linkSystemLibrary("wayland-client", .{});
+            },
+            else => return error.UnsupportedOS,
+        }
+    }
 
     install_exe(b, "agce-mux", mux, step_mux);
 

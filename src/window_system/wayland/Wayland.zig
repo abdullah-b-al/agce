@@ -29,9 +29,8 @@ input_delay_ms: ?i32,
 input_rate_ms: ?i32,
 input_repeat_future: ?InputRepeatFuture,
 
-pub fn create(io: Io, gpa: std.mem.Allocator) !*Wayland {
+pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
     const state = try gpa.create(Wayland);
-    const display = try cwl.Display.connect(null);
     const registry = try display.getRegistry();
 
     var globals = MaybeGlobals{
@@ -109,7 +108,6 @@ pub fn destroy(wl: *Wayland) void {
     wl.sync_object_manager.destroy();
 
     wl.registry.destroy();
-    wl.display.disconnect();
 
     wl.buffer_listener_pool.deinit(wl.gpa);
     wl.register_gpu_buffer_pool.deinit(wl.gpa);

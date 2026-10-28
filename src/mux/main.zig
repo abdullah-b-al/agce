@@ -27,7 +27,25 @@ pub fn main(init: std.process.Init.Minimal) !void {
         else => {},
     }
 
-    const ws: *WindowSystem = try .create(io, gpa, &environ_map, "agce-mux");
+    const class = "agce-mux";
+    const ws: *WindowSystem = blk: switch (os) {
+        .linux => {
+            const display = try cwl.Display.connect(null);
+            break :blk try .create_wayland(io, gpa, &environ_map, display, class);
+        },
+        .windows => {
+            const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
+            break :blk try .create_win32(
+                io,
+                gpa,
+                &environ_map,
+                hinstance,
+                class,
+            );
+        },
+        else => @compileError("Unsupported OS"),
+    };
+
     defer ws.destroy();
 
     var tick: window_system.Tick = .init(ws);
@@ -63,3 +81,4 @@ const window_system = @import("window_system");
 const WindowSystem = window_system.WindowSystem;
 const Server = window_system.Server;
 const zio = @import("zio");
+const cwl = @import("wayland").client.wl;

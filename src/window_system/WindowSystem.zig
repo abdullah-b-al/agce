@@ -36,7 +36,10 @@ pub fn create(
     class: []const u8,
 ) !*WindowSystem {
     return blk: switch (os) {
-        .linux => try .create_wayland(io, gpa, environ_map, class),
+        .linux => {
+            const display = try cwl.Display.connect(null);
+            break :blk try .create_wayland(io, gpa, environ_map, display, class);
+        },
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
             break :blk try .create_win32(
@@ -55,6 +58,7 @@ pub fn create_wayland(
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
+    display: *cwl.Display,
     class: []const u8,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
@@ -64,7 +68,7 @@ pub fn create_wayland(
         class,
     );
 
-    const wl: *Wayland = try .create(io, gpa);
+    const wl: *Wayland = try .create(io, gpa, display);
     ws.linux = .{ .wayland = wl };
 
     try wl.set_listeners(ws);
@@ -1666,3 +1670,4 @@ const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
 const dxgi = @import("win32").graphics.dxgi;
 const ServerQueue = @import("server/EventQueue.zig");
+const cwl = @import("wayland").client.wl;
