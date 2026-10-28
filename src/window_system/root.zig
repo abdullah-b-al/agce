@@ -2,7 +2,9 @@ pub const Server = @import("server/Server.zig");
 pub const WindowSystem = @import("WindowSystem.zig");
 pub const zio = @import("zio");
 
-pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, server: *Server, poll_timeout: Io.Timeout) !void {
+pub fn tick(arena: std.mem.Allocator, ws: *WindowSystem, poll_timeout: Io.Timeout) !void {
+    const server = ws.server;
+
     const poll_result = try poll(arena, ws, server, poll_timeout);
 
     const messages = try server.messages_receive(arena, poll_result.clients);

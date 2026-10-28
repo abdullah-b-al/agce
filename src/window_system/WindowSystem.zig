@@ -2,6 +2,9 @@ const WindowSystem = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
+
+server: *Server,
+
 class_of_window: [:0]const u8,
 /// Used in windows
 class_of_viewport: [:0]const u8,
@@ -29,15 +32,17 @@ input_focus_keyboard: ?ViewportKey,
 pub fn create(
     io: Io,
     gpa: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
     class: []const u8,
 ) !*WindowSystem {
     return blk: switch (os) {
-        .linux => try .create_wayland(io, gpa, class),
+        .linux => try .create_wayland(io, gpa, environ_map, class),
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
             break :blk try .create_win32(
                 io,
                 gpa,
+                environ_map,
                 hinstance,
                 class,
             );
@@ -49,11 +54,13 @@ pub fn create(
 pub fn create_wayland(
     io: Io,
     gpa: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
     class: []const u8,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
+        environ_map,
         class,
     );
 
@@ -68,12 +75,14 @@ pub fn create_wayland(
 pub fn create_win32(
     io: Io,
     gpa: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
     instance: Win32.HINSTANCE,
     class: []const u8,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
+        environ_map,
         class,
     );
 
@@ -85,8 +94,12 @@ pub fn create_win32(
 fn create_undefined_native(
     io: Io,
     gpa: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
     class: []const u8,
 ) !*WindowSystem {
+    const server = try Server.create(io, environ_map, gpa);
+    errdefer server.destroy();
+
     const class_window_dupe = try gpa.dupeZ(u8, class);
     errdefer gpa.free(class_window_dupe);
     const class_viewport = try std.fmt.allocPrintSentinel(gpa, "{s}-viewport", .{class_window_dupe}, 0);
@@ -113,6 +126,7 @@ fn create_undefined_native(
     ws.* = .{
         .io = io,
         .gpa = gpa,
+        .server = server,
         .class_of_window = class_window_dupe,
         .class_of_viewport = class_viewport,
         .resources = .empty,
@@ -171,10 +185,13 @@ pub fn destroy(ws: *WindowSystem) void {
 
     ws.gpa.free(ws.class_of_window);
     ws.gpa.free(ws.class_of_viewport);
+
+    ws.server.destroy();
+
     ws.gpa.destroy(ws);
 }
 
-pub fn native_tag(ws: *WindowSystem) NativeTag {
+pub fn native_tag(ws: *const WindowSystem) NativeTag {
     return switch (os) {
         .linux => switch (ws.linux) {
             .wayland => .wayland,
@@ -1639,6 +1656,7 @@ const constants = @import("constants");
 const client_to_server = @import("protocol").client_to_server;
 const utils = @import("utils");
 const pinput = @import("protocol").input;
+const Server = @import("server/Server.zig");
 const ServerEvent = @import("server/Server.zig").Event;
 const win32_memory = @import("win32").system.memory;
 const win32_foundation = @import("win32").foundation;

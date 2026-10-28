@@ -50,7 +50,7 @@ pub const TestServer = struct {
         defer rt.deinit();
         const io = rt.io();
 
-        const ws: *WindowSystem = try .create(io, gpa, src.fn_name);
+        const ws: *WindowSystem = try .create(io, gpa, &environ_map, src.fn_name);
         defer ws.destroy();
 
         const server = try Server.create(io, &environ_map, gpa);
@@ -64,7 +64,6 @@ pub const TestServer = struct {
             tick(
                 arena.allocator(),
                 ws,
-                server,
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => {},

@@ -27,11 +27,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         else => {},
     }
 
-    const ws: *WindowSystem = try .create(io, gpa, "agce-mux");
+    const ws: *WindowSystem = try .create(io, gpa, &environ_map, "agce-mux");
     defer ws.destroy();
-
-    const server = try Server.create(io, &environ_map, gpa);
-    defer server.destroy();
 
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -42,7 +39,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     while (!exit) {
         _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 });
-        try window_system.tick(arena.allocator(), ws, server, .none);
+        try window_system.tick(arena.allocator(), ws, .none);
     }
 }
 
