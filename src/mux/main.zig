@@ -48,6 +48,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         try compositor.tick(&tick, poll_result);
 
         mux.flush();
+        mux.windows_destroy_if_closed();
     }
 }
 

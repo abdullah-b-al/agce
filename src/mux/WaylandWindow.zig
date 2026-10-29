@@ -163,14 +163,15 @@ pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
 }
 
 pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: *Mux) void {
+    const window_id = window_id_from_toplevel(mux, tl);
+
+    const win = mux.windows.get(window_id) orelse {
+        return;
+    };
+
     switch (event) {
         .configure => |configure| {
             if (configure.width == 0 or configure.height == 0) return;
-            const window_id = window_id_from_toplevel(mux, tl);
-
-            const win = mux.windows.get(window_id) orelse {
-                return;
-            };
 
             const size: ptypes.Size = .{
                 .width = @intCast(configure.width),
@@ -183,14 +184,22 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
                 error.WindowNotRegistered => unreachable,
             };
 
-            // TODO: Request resizeing of root viewport
+            mux.compositor.server_events.ensure_unused_capacity(1) catch return;
+            mux.compositor.server_events.push_assume_capacity(.{
+                .viewport_resize = .{
+                    .client_id = win.viewport_key.client_id,
+                    .payload = .{
+                        .viewport_id = win.viewport_key.viewport_id,
+                        .size = size,
+                    },
+                },
+            });
         },
 
         .close => {
-            log.err("TODO: close", .{});
-            // com.deferred_events.appendAssumeCapacity(.{
-            //     .viewport_should_close = .{ .viewport_key = key },
-            // });
+            mux.compositor.deferred_events.appendAssumeCapacity(.{
+                .viewport_should_close = .{ .viewport_key = win.viewport_key },
+            });
         },
     }
 }

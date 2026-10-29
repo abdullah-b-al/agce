@@ -152,13 +152,16 @@ pub fn flush(mux: *Mux) void {
     }
 }
 
-fn window_handle_for_viewport(ptr: *anyopaque) ?*Compositor.WindowHandle {
+fn window_handle_for_viewport(ptr: *anyopaque, key: Compositor.ViewportKey, size: ptypes.Size) ?*Compositor.WindowHandle {
+    std.debug.assert(size.width > 0);
+    std.debug.assert(size.height > 0);
+
     const mux: *Mux = @ptrCast(@alignCast(ptr));
 
     mux.windows.ensureUnusedCapacity(mux.gpa, 1) catch return null;
 
     const id = mux.next_window_id.increment();
-    const win = Window.create(mux, id, .{ .width = 512, .height = 512 }) catch |err| {
+    const win = Window.create(mux, id, key, size) catch |err| {
         log.err("window_handle_for_viewport() {}", .{err});
         return null;
     };
@@ -183,24 +186,48 @@ fn window_handle_for_viewport(ptr: *anyopaque) ?*Compositor.WindowHandle {
     return win.handle;
 }
 
-const vtable: Compositor.MuxInterface.VTable = .{
-    .window_handle_for_viewport = window_handle_for_viewport,
-};
+pub fn windows_destroy_if_closed(mux: *Mux) void {
+    var i: usize = mux.windows.count();
+    while (i > 0) {
+        i -= 1;
+        const win = mux.windows.values()[i];
+
+        const should_close = blk: {
+            for (mux.compositor.resources.values()) |rs| {
+                for (rs.viewports.values()) |vp| {
+                    if (vp.window_id == win.id) {
+                        break :blk false;
+                    }
+                }
+            }
+
+            break :blk true;
+        };
+
+        if (should_close) {
+            const id = win.id;
+            win.destroy(mux.gpa);
+            _ = mux.windows.orderedRemove(id);
+        }
+    }
+}
 
 pub const Window = struct {
     id: WindowID,
     handle: *Compositor.WindowHandle,
+    viewport_key: Compositor.ViewportKey,
 
     linux: if (os == .linux) Linux else void,
     win32: if (os == .windows) Win32Window else void,
 
-    pub fn create(mux: *Mux, id: WindowID, size: ptypes.Size) !*Window {
+    pub fn create(mux: *Mux, id: WindowID, key: Compositor.ViewportKey, size: ptypes.Size) !*Window {
         const win = try mux.gpa.create(Window);
         errdefer mux.gpa.destroy(win);
 
         win.* = .{
             .id = id,
             .handle = undefined,
+            .viewport_key = key,
             .win32 = undefined,
             .linux = undefined,
         };
@@ -286,32 +313,6 @@ pub const WaylandObjects = if (os != .linux) void else struct {
     }
 };
 
-fn wayland_registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *WaylandMaybeGlobals) void {
-    switch (event) {
-        .global => |global| {
-            // log.info("Compositor has {s}", .{global.interface});
-            const table = .{
-                // zig fmt: off
-                .{ .field = "compositor",          .T = cwl.Compositor,              .v = 1 },
-                .{ .field = "shm",                 .T = cwl.Shm,                     .v = 1 },
-                .{ .field = "viewporter",          .T = wp.Viewporter,               .v = 1 },
-                .{ .field = "wm_base",             .T = xdg.WmBase,                  .v = 1 },
-                // zig fmt: on
-            };
-
-            inline for (table) |entry| {
-                if (std.mem.orderZ(u8, global.interface, entry.T.interface.name) == .eq) {
-                    @field(globals, entry.field) = registry.bind(
-                        global.name,
-                        entry.T,
-                        entry.v,
-                    ) catch return;
-                }
-            }
-        },
-        .global_remove => {},
-    }
-}
 const Linux = union(enum) {
     wayland: WaylandWindow,
 };
@@ -322,6 +323,10 @@ const Win32Window = struct {
     pub fn deinit(win: *Win32Window) void {
         _ = win32_win.DestroyWindow(win.handle);
     }
+};
+
+const vtable: Compositor.MuxInterface.VTable = .{
+    .window_handle_for_viewport = window_handle_for_viewport,
 };
 
 const std = @import("std");

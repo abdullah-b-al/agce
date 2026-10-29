@@ -310,8 +310,6 @@ pub fn client_disconnected(com: *Compositor, id: ClientID) void {
 
     rs.deinit(com);
     _ = com.resources.orderedRemove(id);
-
-    com.windows_destroy_if_closed();
 }
 
 fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
@@ -354,8 +352,6 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     vp.destroy(com.gpa);
 
     log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_id });
-
-    com.windows_destroy_if_closed();
 }
 
 fn viewport_should_close(com: *Compositor, args: Event.TypeOf(.viewport_should_close)) !void {
@@ -797,7 +793,14 @@ pub fn window_id_from_handle(com: *Compositor, handle: *WindowHandle) ?WindowID 
 fn viewport_create_with_window(com: *Compositor, args: Event.TypeOf(.viewport_create)) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
-    const maybe_window_handle = if (com.muxi) |muxi| muxi.window_handle_for_viewport() else null;
+    const key: ViewportKey = .{
+        .client_id = args.client_id,
+        .viewport_id = args.payload.viewport_id,
+    };
+    const maybe_window_handle = if (com.muxi) |muxi|
+        muxi.window_handle_for_viewport(key, args.payload.size)
+    else
+        null;
     const window_handle = maybe_window_handle orelse return error.FailedToGetWindow;
 
     const window_id = com.window_id_from_handle(window_handle).?;
@@ -846,38 +849,6 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
     }
 
     return error.EmbederClientDoesNotExist;
-}
-
-pub fn windows_destroy_if_closed(com: *Compositor) void {
-    if (true) {
-        @panic("Removed feature. Should be handled by Mux");
-    }
-
-    var removed = false;
-    var i: usize = com.windows.count();
-    while (i > 0) {
-        i -= 1;
-        const win = com.windows.values()[i];
-
-        const should_close = blk: {
-            for (com.resources.values()) |rs| {
-                for (rs.viewports.values()) |vp| {
-                    if (vp.window_id == win.id) {
-                        break :blk false;
-                    }
-                }
-            }
-
-            break :blk true;
-        };
-
-        if (should_close) {
-            const id = win.id;
-            win.deinit(com.gpa);
-            _ = com.windows.orderedRemove(id);
-            removed = true;
-        }
-    }
 }
 
 pub fn sub_viewport_pos_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_pos_set)) !void {
@@ -1633,11 +1604,11 @@ pub const MuxInterface = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        window_handle_for_viewport: *const fn (*anyopaque) ?*WindowHandle,
+        window_handle_for_viewport: *const fn (*anyopaque, ViewportKey, ptypes.Size) ?*WindowHandle,
     };
 
-    pub fn window_handle_for_viewport(self: MuxInterface) ?*WindowHandle {
-        return self.vtable.window_handle_for_viewport(self.ptr);
+    pub fn window_handle_for_viewport(self: MuxInterface, key: ViewportKey, size: ptypes.Size) ?*WindowHandle {
+        return self.vtable.window_handle_for_viewport(self.ptr, key, size);
     }
 };
 
