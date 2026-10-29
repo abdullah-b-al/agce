@@ -1,7 +1,7 @@
 const Mux = @This();
 
 gpa: std.mem.Allocator,
-compositor: *Compositor,
+compositor: *CompositorHandle,
 
 /// Used in windows to prevent accesing freed data in callbacks
 destroy_started: bool,
@@ -30,7 +30,7 @@ pub fn create(
     const class_of_window = try gpa.dupeZ(u8, "agce-mux");
     errdefer gpa.free(class_of_window);
 
-    const com: *Compositor, const wayland_globals: WaylandObjects, const win32: Win32 =
+    const com: *CompositorHandle, const wayland_globals: WaylandObjects, const win32: Win32 =
         blk: switch (os) {
             .linux => {
                 const display = try cwl.Display.connect(null);
@@ -51,7 +51,7 @@ pub fn create(
                 const keyboard = try globals.seat.getKeyboard();
                 keyboard.setListener(*Mux, WaylandWindow.listener_keyboard, mux);
 
-                const com: *Compositor = try .create_wayland(
+                const com: *CompositorHandle = try .create_wayland(
                     io,
                     gpa,
                     environ_map,
@@ -85,7 +85,7 @@ pub fn create(
 
                 const win32: Win32 = .{ .hinstance = hinstance, .window_class = window_class };
 
-                const com: *Compositor = try .create_win32(
+                const com: *CompositorHandle = try .create_win32(
                     io,
                     gpa,
                     environ_map,
@@ -233,7 +233,7 @@ pub fn windows_destroy_if_closed(mux: *Mux) void {
         const win = mux.windows.values()[i];
 
         const should_close = blk: {
-            for (mux.compositor.resources.values()) |rs| {
+            for (mux.compositor.resources()) |rs| {
                 for (rs.viewports.values()) |vp| {
                     if (vp.window_id == win.id) {
                         break :blk false;
@@ -380,6 +380,7 @@ const vtable: Compositor.MuxInterface.VTable = .{
 
 const std = @import("std");
 const Compositor = @import("compositor").Compositor;
+const CompositorHandle = @import("compositor").CompositorHandle;
 const WindowID = Compositor.WindowID;
 const WaylandWindow = @import("WaylandWindow.zig");
 const Win32Window = @import("Win32Window.zig");

@@ -34,7 +34,7 @@ pub fn init(
     errdefer xdg_surface.destroy();
 
     const xdg_toplevel = try xdg_surface.getToplevel();
-    xdg_toplevel.setAppId(mux.compositor.class_of_window);
+    xdg_toplevel.setAppId(mux.class_of_window);
 
     const format: ptypes.BufferFormat = .argb8888;
     const size = width * height * format.bytes_per_pixel();
@@ -184,22 +184,11 @@ pub fn listener_xdg_toplevel(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
                 error.WindowNotRegistered => unreachable,
             };
 
-            mux.compositor.server_events.ensure_unused_capacity(1) catch return;
-            mux.compositor.server_events.push_assume_capacity(.{
-                .viewport_resize = .{
-                    .client_id = win.viewport_key.client_id,
-                    .payload = .{
-                        .viewport_id = win.viewport_key.viewport_id,
-                        .size = size,
-                    },
-                },
-            });
+            mux.compositor.viewport_resize(win.viewport_key, size) catch return;
         },
 
         .close => {
-            mux.compositor.deferred_events.appendAssumeCapacity(.{
-                .viewport_should_close = .{ .viewport_key = win.viewport_key },
-            });
+            mux.compositor.viewport_should_close(win.viewport_key) catch return;
         },
     }
 }

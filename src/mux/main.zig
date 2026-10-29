@@ -37,7 +37,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const poll_result = try compositor.poll(
             tick.arena.allocator(),
             mux.compositor,
-            mux.compositor.server,
             .none,
         );
 

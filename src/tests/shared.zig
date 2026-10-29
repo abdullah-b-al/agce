@@ -53,14 +53,13 @@ pub const TestServer = struct {
         const com: *Compositor = try .create(io, gpa, &environ_map, src.fn_name);
         defer com.destroy();
 
-        var state: Tick = .init(com);
+        var state: Tick = .init(@ptrCast(com));
         defer state.deinit();
 
         while (!exit.isSet()) {
             const poll_result = poll(
                 state.arena.allocator(),
-                com,
-                com.server,
+                @ptrCast(com),
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => continue,

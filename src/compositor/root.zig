@@ -1,13 +1,14 @@
 pub const Server = @import("server/Server.zig");
 pub const Compositor = @import("Compositor.zig");
 pub const zio = @import("zio");
+pub const ClientResources = @import("ClientResources.zig");
 
 pub const Tick = struct {
-    com: *Compositor,
+    com: *CompositorHandle,
     arena: std.heap.ArenaAllocator,
 
-    pub fn init(com: *Compositor) Tick {
-        return .{ .com = com, .arena = .init(com.gpa) };
+    pub fn init(com: *CompositorHandle) Tick {
+        return .{ .com = com, .arena = .init(com.cast().gpa) };
     }
 
     pub fn deinit(state: *Tick) void {
@@ -18,7 +19,7 @@ pub const Tick = struct {
 pub fn tick(state: *Tick, poll_result: Poll) !void {
     defer _ = state.arena.reset(.{ .retain_with_limit = 1024 * 1024 });
 
-    const com = state.com;
+    const com = state.com.cast();
     const server = com.server;
     const arena = state.arena.allocator();
 
@@ -77,11 +78,12 @@ const Poll = struct {
 
 pub fn poll(
     arena: std.mem.Allocator,
-    com: *Compositor,
-    server: *const Server,
+    h: *CompositorHandle,
     timeout: Io.Timeout,
 ) error{ OutOfMemory, PollFailed, Timeout }!Poll {
     std.debug.assert(timeout != .deadline);
+    const com = h.cast();
+    const server = com.server;
 
     return switch (os) {
         .linux => try poll_linux(arena, com, server, timeout),
@@ -287,12 +289,112 @@ fn poll_linux(
     };
 }
 
+pub const CompositorHandle = opaque {
+    fn cast(ptr: *CompositorHandle) *Compositor {
+        return @ptrCast(@alignCast(ptr));
+    }
+
+    pub fn create_wayland(
+        io: Io,
+        gpa: std.mem.Allocator,
+        environ_map: *const std.process.Environ.Map,
+        display: *cwl.Display,
+        class: []const u8,
+        muxi: ?Compositor.MuxInterface,
+    ) !*CompositorHandle {
+        const com: *Compositor = try .create_wayland(
+            io,
+            gpa,
+            environ_map,
+            display,
+            class,
+            muxi,
+        );
+
+        return @ptrCast(com);
+    }
+
+    pub fn create_win32(
+        io: Io,
+        gpa: std.mem.Allocator,
+        environ_map: *const std.process.Environ.Map,
+        instance: win32_foundation.HINSTANCE,
+        class: []const u8,
+        muxi: ?Compositor.MuxInterface,
+    ) !*CompositorHandle {
+        const com: *Compositor = try .create_win32(
+            io,
+            gpa,
+            environ_map,
+            instance,
+            class,
+            muxi,
+        );
+
+        return @ptrCast(com);
+    }
+
+    pub fn destroy(h: *CompositorHandle) void {
+        h.cast().destroy();
+    }
+
+    pub fn resources(h: *CompositorHandle) []const ClientResources {
+        return h.cast().resources.values();
+    }
+
+    pub fn native_tag(h: *CompositorHandle) Compositor.NativeTag {
+        return h.cast().native_tag();
+    }
+
+    pub fn window_register(h: *CompositorHandle, win: Compositor.Window) error{OutOfMemory}!void {
+        return h.cast().window_register(win);
+    }
+
+    pub fn window_update_size(h: *CompositorHandle, id: Compositor.WindowID, size: ptypes.Size) error{WindowNotRegistered}!void {
+        try h.cast().window_update_size(id, size);
+    }
+
+    pub fn window_focused_by_keyboard(h: *CompositorHandle, key: Compositor.ViewportKey) void {
+        h.cast().window_focused_by_keyboard(key);
+    }
+
+    pub fn viewport_resize(
+        h: *CompositorHandle,
+        key: Compositor.ViewportKey,
+        size: ptypes.Size,
+    ) error{OutOfMemory}!void {
+        const com = h.cast();
+        try com.server_events.ensure_unused_capacity(1);
+        com.server_events.push_assume_capacity(.{
+            .viewport_resize = .{
+                .client_id = key.client_id,
+                .payload = .{
+                    .viewport_id = key.viewport_id,
+                    .size = size,
+                },
+            },
+        });
+    }
+
+    pub fn viewport_should_close(
+        h: *CompositorHandle,
+        key: Compositor.ViewportKey,
+    ) error{OutOfMemory}!void {
+        const com = h.cast();
+        try com.deferred_events.append(com.gpa, .{
+            .viewport_should_close = .{ .viewport_key = key },
+        });
+    }
+};
+
 const std = @import("std");
 const Io = std.Io;
 const log = std.log.scoped(.agce);
+const cwl = @import("wayland").client.wl;
 const win32_win = @import("win32").ui.windows_and_messaging;
 const win32_foundation = @import("win32").foundation;
 const win32_programming = @import("win32").system.windows_programming;
 const win32_threading = @import("win32").system.threading;
 const win_sock = @import("win32").networking.win_sock;
 const os = @import("builtin").os.tag;
+const ptypes = @import("protocol").types;
