@@ -57,13 +57,17 @@ pub const TestServer = struct {
         defer state.deinit();
 
         while (!exit.isSet()) {
-            tick(
-                &state,
+            const poll_result = poll(
+                state.arena.allocator(),
+                ws,
+                ws.server,
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
-                error.Timeout => {},
+                error.Timeout => continue,
                 else => |e| return e,
             };
+
+            try tick(&state, poll_result);
         }
     }
 };
@@ -122,3 +126,4 @@ const WindowSystem = @import("window_system").WindowSystem;
 const Server = @import("window_system").Server;
 const zio = @import("window_system").zio;
 const tick = @import("window_system").tick;
+const poll = @import("window_system").poll;

@@ -27,32 +27,27 @@ pub fn main(init: std.process.Init.Minimal) !void {
         else => {},
     }
 
-    const class = "agce-mux";
-    const ws: *WindowSystem = blk: switch (os) {
-        .linux => {
-            const display = try cwl.Display.connect(null);
-            break :blk try .create_wayland(io, gpa, &environ_map, display, class);
-        },
-        .windows => {
-            const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
-            break :blk try .create_win32(
-                io,
-                gpa,
-                &environ_map,
-                hinstance,
-                class,
-            );
-        },
-        else => @compileError("Unsupported OS"),
-    };
+    var mux: *Mux = try .create(io, gpa, &environ_map);
+    defer mux.destroy();
 
-    defer ws.destroy();
-
-    var tick: window_system.Tick = .init(ws);
+    var tick: window_system.Tick = .init(mux.window_system);
     defer tick.deinit();
 
     while (!exit) {
-        try window_system.tick(&tick, .none);
+        const poll_result = try window_system.poll(
+            tick.arena.allocator(),
+            mux.window_system,
+            mux.window_system.server,
+            .none,
+        );
+
+        if (poll_result.window_system) {
+            mux.dispatch();
+        }
+
+        try window_system.tick(&tick, poll_result);
+
+        mux.flush();
     }
 }
 
@@ -82,3 +77,4 @@ const WindowSystem = window_system.WindowSystem;
 const Server = window_system.Server;
 const zio = @import("zio");
 const cwl = @import("wayland").client.wl;
+const Mux = @import("Mux.zig");

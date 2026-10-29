@@ -77,17 +77,17 @@ pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubView
     return null;
 }
 
-pub fn min_source_size(vp: *const Viewport, win: *WindowSystem.Window) ptypes.Size {
+pub fn min_source_size(vp: *const Viewport, win: WindowSystem.Window) ptypes.Size {
     const width = @min(
         vp.base.render_size.width,
         vp.base.clipping_rect.width,
-        win.size().width,
+        win.size.width,
     );
 
     const height = @min(
         vp.base.render_size.height,
         vp.base.clipping_rect.height,
-        win.size().height,
+        win.size.height,
     );
 
     return .{
@@ -96,7 +96,7 @@ pub fn min_source_size(vp: *const Viewport, win: *WindowSystem.Window) ptypes.Si
     };
 }
 
-pub fn min_source_size_with_buffer(vp: *const Viewport, win: *WindowSystem.Window, buffer: *Buffer) ptypes.Size {
+pub fn min_source_size_with_buffer(vp: *const Viewport, win: WindowSystem.Window, buffer: *Buffer) ptypes.Size {
     const size = vp.min_source_size(win);
     return .{
         .width = @max(
@@ -212,5 +212,4 @@ const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");
 const Wayland = @import("Wayland.zig");
-const Window = @import("Window.zig");
 const Buffer = Wayland.Buffer;

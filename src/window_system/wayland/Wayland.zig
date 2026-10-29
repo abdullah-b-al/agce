@@ -3,6 +3,8 @@ const Wayland = @This();
 io: std.Io,
 gpa: std.mem.Allocator,
 
+event_queue: *cwl.EventQueue,
+
 shm: *cwl.Shm,
 compositor: *cwl.Compositor,
 subcompositor: *cwl.Subcompositor,
@@ -14,7 +16,6 @@ sync_object_manager: *wp.LinuxDrmSyncobjManagerV1,
 cursor_manager: *wp.CursorShapeManagerV1,
 
 display: *cwl.Display,
-registry: *cwl.Registry,
 
 frame_callbacks: std.array_hash_map.Auto(CallbackID, ViewportKey),
 
@@ -31,22 +32,9 @@ input_repeat_future: ?InputRepeatFuture,
 
 pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
     const state = try gpa.create(Wayland);
-    const registry = try display.getRegistry();
+    const queue = try display.createQueue();
 
-    var globals = MaybeGlobals{
-        .shm = null,
-        .compositor = null,
-        .wm_base = null,
-        .seat = null,
-        .subcompositor = null,
-        .dmabuf = null,
-        .viewporter = null,
-        .sync_object_manager = null,
-        .cursor_manager = null,
-    };
-
-    registry.setListener(*MaybeGlobals, registry_listener, &globals);
-    if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+    const globals = try get_globals(display, queue);
 
     const shm = globals.shm orelse return error.NoWlShm;
     const compositor = globals.compositor orelse return error.NoWlCompositor;
@@ -58,12 +46,23 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
     const sync_object_manager = globals.sync_object_manager orelse return error.NoWpSyncobjManager;
     const cursor_manager = globals.cursor_manager orelse return error.NoWpCursorManager;
 
+    shm.setQueue(queue);
+    compositor.setQueue(queue);
+    wm_base.setQueue(queue);
+    seat.setQueue(queue);
+    subcompositor.setQueue(queue);
+    dmabuf.setQueue(queue);
+    viewporter.setQueue(queue);
+    sync_object_manager.setQueue(queue);
+    cursor_manager.setQueue(queue);
+
     const xkb_context = c_linux.xkb_context_new(c_linux.XKB_CONTEXT_NO_FLAGS) orelse
         return error.XkbContextNewFailed;
 
     state.* = .{
         .io = io,
         .gpa = gpa,
+        .event_queue = queue,
 
         .shm = shm,
         .compositor = compositor,
@@ -75,7 +74,6 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
         .sync_object_manager = sync_object_manager,
         .cursor_manager = cursor_manager,
 
-        .registry = registry,
         .display = display,
 
         .frame_callbacks = .empty,
@@ -107,10 +105,9 @@ pub fn destroy(wl: *Wayland) void {
     wl.viewporter.destroy();
     wl.sync_object_manager.destroy();
 
-    wl.registry.destroy();
-
     wl.buffer_listener_pool.deinit(wl.gpa);
     wl.register_gpu_buffer_pool.deinit(wl.gpa);
+    wl.event_queue.destroy();
 
     wl.gpa.destroy(wl);
 }
@@ -188,20 +185,6 @@ pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem
 
         nvp.surface.commit();
         item.state = .presented;
-    }
-}
-
-pub fn display_dispatch(wl: *Wayland, ws: *WindowSystem) void {
-    if (wl.display.dispatch() != .SUCCESS) {
-        std.process.fatal("Dispatch failed {}", .{wl.display.getError()});
-    }
-
-    for (ws.windows.values()) |win| {
-        if (!win.linux.wayland.configured) {
-            win.linux.wayland.surface.commit();
-        } else if (win.linux.wayland.configured and !win.linux.wayland.commited_once) {
-            win.linux.wayland.commit();
-        }
     }
 }
 
@@ -304,42 +287,29 @@ fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals
     }
 }
 
-pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event, ws: *WindowSystem) void {
-    switch (event) {
-        .configure => |configure| {
-            xdg_surface.ackConfigure(configure.serial);
-            const id = window_id_from_xdg_surface(ws, xdg_surface);
-            const win = ws.windows.get(id).?;
-            win.linux.wayland.surface.commit();
-            win.linux.wayland.configured = true;
-        },
-    }
-}
+pub fn get_globals(display: *cwl.Display, queue: *cwl.EventQueue) !MaybeGlobals {
+    const registry = try display.getRegistry();
+    defer registry.destroy();
 
-pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, ws: *WindowSystem) void {
-    switch (event) {
-        .configure => |configure| {
-            if (configure.width == 0 or configure.height == 0) return;
-            const window_id = window_id_from_toplevel(ws, tl);
+    registry.setQueue(queue);
 
-            ws.event_handle(.{
-                .window_resize_by_display_server = .{
-                    .id = window_id,
-                    .size = .{
-                        .width = @intCast(configure.width),
-                        .height = @intCast(configure.height),
-                    },
-                },
-            }) catch return;
-        },
+    var globals = MaybeGlobals{
+        .shm = null,
+        .compositor = null,
+        .wm_base = null,
+        .seat = null,
+        .subcompositor = null,
+        .dmabuf = null,
+        .viewporter = null,
+        .sync_object_manager = null,
+        .cursor_manager = null,
+    };
 
-        .close => {
-            const key = ws.input_focus_keyboard orelse ws.input_focus_mouse orelse return;
-            ws.deferred_events.appendAssumeCapacity(.{
-                .viewport_should_close = .{ .viewport_key = key },
-            });
-        },
-    }
+    registry.setListener(*MaybeGlobals, registry_listener, &globals);
+    const result = display.roundtripQueue(queue);
+    if (result != .SUCCESS) return error.RoundtripFailed;
+
+    return globals;
 }
 
 fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSystem) void {
@@ -527,34 +497,6 @@ pub fn window_id_from_xdg_surface(ws: *const WindowSystem, xdg_surface: *xdg.Sur
     }
 
     unreachable;
-}
-
-pub fn window_from_viewport_key(wl: *Wayland, key: ViewportKey) ?*Window {
-    var root = key;
-
-    while (true) {
-        const rs = wl.resources_get(root.client_id) catch unreachable;
-        const vp = rs.viewports.get(root.viewport_id).?;
-        root = vp.parent_key orelse break;
-    }
-
-    for (wl.windows.values()) |win| {
-        if (std.meta.eql(win.viewport_key, root)) {
-            return win;
-        }
-    }
-
-    return null;
-}
-
-pub fn window_id_from_window_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?WindowID {
-    for (ws.windows.values()) |win| {
-        if (win.linux.wayland.surface == surface) {
-            return win.id;
-        }
-    }
-
-    return null;
 }
 
 pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?ViewportKey {
@@ -1069,7 +1011,6 @@ pub const BufferListener = struct {
     }
 };
 
-pub const Window = @import("Window.zig");
 pub const Viewport = @import("Viewport.zig");
 
 const std = @import("std");

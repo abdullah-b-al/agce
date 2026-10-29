@@ -4,6 +4,7 @@ io: Io,
 gpa: std.mem.Allocator,
 
 server: *Server,
+muxi: ?MuxInterface,
 
 class_of_window: [:0]const u8,
 /// Used in windows
@@ -13,7 +14,7 @@ class_of_viewport: [:0]const u8,
 destroy_started: bool,
 
 resources: std.array_hash_map.Auto(ClientID, ClientResources),
-windows: std.array_hash_map.Auto(WindowID, *Window),
+windows: std.array_hash_map.Auto(WindowID, Window),
 
 window_next_id: WindowID,
 
@@ -38,7 +39,7 @@ pub fn create(
     return blk: switch (os) {
         .linux => {
             const display = try cwl.Display.connect(null);
-            break :blk try .create_wayland(io, gpa, environ_map, display, class);
+            break :blk try .create_wayland(io, gpa, environ_map, display, class, null);
         },
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
@@ -48,6 +49,7 @@ pub fn create(
                 environ_map,
                 hinstance,
                 class,
+                null,
             );
         },
         else => @compileError("Unsupported OS"),
@@ -60,12 +62,14 @@ pub fn create_wayland(
     environ_map: *const std.process.Environ.Map,
     display: *cwl.Display,
     class: []const u8,
+    muxi: ?MuxInterface,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
         environ_map,
         class,
+        muxi,
     );
 
     const wl: *Wayland = try .create(io, gpa, display);
@@ -82,12 +86,14 @@ pub fn create_win32(
     environ_map: *const std.process.Environ.Map,
     instance: Win32.HINSTANCE,
     class: []const u8,
+    muxi: ?MuxInterface,
 ) !*WindowSystem {
     const ws: *WindowSystem = try .create_undefined_native(
         io,
         gpa,
         environ_map,
         class,
+        muxi,
     );
 
     ws.win32 = try .create(ws, instance);
@@ -100,6 +106,7 @@ fn create_undefined_native(
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
     class: []const u8,
+    muxi: ?MuxInterface,
 ) !*WindowSystem {
     const server = try Server.create(io, environ_map, gpa);
     errdefer server.destroy();
@@ -131,6 +138,7 @@ fn create_undefined_native(
         .io = io,
         .gpa = gpa,
         .server = server,
+        .muxi = muxi,
         .class_of_window = class_window_dupe,
         .class_of_viewport = class_viewport,
         .resources = .empty,
@@ -159,10 +167,6 @@ pub fn destroy(ws: *WindowSystem) void {
 
     for (ws.resources.values()) |*rs| {
         rs.deinit(ws);
-    }
-
-    for (ws.windows.values()) |win| {
-        win.destroy(ws.gpa);
     }
 
     switch (ws.native_tag()) {
@@ -195,6 +199,18 @@ pub fn destroy(ws: *WindowSystem) void {
     ws.gpa.destroy(ws);
 }
 
+pub fn window_register(ws: *WindowSystem, win: Window) error{OutOfMemory}!void {
+    try ws.windows.ensureUnusedCapacity(ws.gpa, 1);
+    ws.windows.putAssumeCapacityNoClobber(win.id, win);
+}
+
+pub fn window_update_size(ws: *WindowSystem, id: WindowID, size: ptypes.Size) error{WindowNotRegistered}!void {
+    const win = ws.windows.getPtr(id) orelse return error.WindowNotRegistered;
+    std.debug.assert(size.width > 0);
+    std.debug.assert(size.height > 0);
+    win.size = size;
+}
+
 pub fn native_tag(ws: *const WindowSystem) NativeTag {
     return switch (os) {
         .linux => switch (ws.linux) {
@@ -209,17 +225,22 @@ pub fn dispatch(ws: *WindowSystem) void {
     switch (ws.native_tag()) {
         .wayland => |tag| {
             const wl: *Wayland = tag.window_system(ws);
+            const display = wl.display;
+            const queue = wl.event_queue;
 
-            wl.display_dispatch(ws);
+            if (display.dispatchQueuePending(queue) != .SUCCESS) {
+                std.process.fatal("Dispatch failed {}", .{wl.display.getError()});
+            }
         },
         .win32 => |tag| {
             tag.guard();
-            var msg: win32_win.MSG = undefined;
+            log.err("TODO: Dispatch events of viewports only", .{});
+            // var msg: win32_win.MSG = undefined;
 
-            while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
-                _ = win32_win.TranslateMessage(&msg);
-                _ = win32_win.DispatchMessageA(&msg);
-            }
+            // while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
+            //     _ = win32_win.TranslateMessage(&msg);
+            //     _ = win32_win.DispatchMessageA(&msg);
+            // }
         },
     }
 }
@@ -257,7 +278,6 @@ pub fn event_handle(ws: *WindowSystem, event: Event) !void {
         .sub_viewport_display_state_set => |args| try ws.sub_viewport_display_state_set(args),
         .sub_viewport_close => |args| try ws.sub_viewport_close(args),
 
-        .window_resize_by_display_server => |args| try ws.window_resize_by_display_server(args),
         .cursor_shape_set => |args| try ws.cursor_shape_set(args),
 
         .keyboard_key => |args| try ws.keyboard_key(args),
@@ -766,28 +786,9 @@ fn viewport_create_with_sub_viewport(
     };
 }
 
-pub fn window_handle_for_viewport(ws: *WindowSystem) ?*WindowHandle {
-    ws.windows.ensureUnusedCapacity(ws.gpa, 1) catch return null;
-
-    const id = ws.window_next_id.increment();
-    const win = Window.create(ws, id, .{ .width = 512, .height = 512 }) catch |err| {
-        log.err("window_handle_for_viewport() {}", .{err});
-        return null;
-    };
-    ws.windows.putAssumeCapacityNoClobber(id, win);
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            tag.window(win).surface.commit();
-        },
-        .win32 => {},
-    }
-
-    return win.handle();
-}
-
 pub fn window_id_from_handle(ws: *WindowSystem, handle: *WindowHandle) ?WindowID {
     for (ws.windows.values()) |win| {
-        if (win.handle() == handle) return win.id;
+        if (win.handle == handle) return win.id;
     }
 
     return null;
@@ -796,7 +797,9 @@ pub fn window_id_from_handle(ws: *WindowSystem, handle: *WindowHandle) ?WindowID
 fn viewport_create_with_window(ws: *WindowSystem, args: Event.TypeOf(.viewport_create)) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
-    const window_handle = ws.window_handle_for_viewport() orelse return error.FailedToGetWindow;
+    const maybe_window_handle = if (ws.muxi) |muxi| muxi.window_handle_for_viewport() else null;
+    const window_handle = maybe_window_handle orelse return error.FailedToGetWindow;
+
     const window_id = ws.window_id_from_handle(window_handle).?;
 
     const rs = ws.resources.getPtr(args.client_id) orelse return error.ClientDoesNotExist;
@@ -825,7 +828,7 @@ pub fn viewport_from_key(ws: *WindowSystem, key: ViewportKey) ?*Viewport {
     return vp;
 }
 
-pub fn window_from_viewport_key(ws: *WindowSystem, key: ViewportKey) ?*Window {
+pub fn window_from_viewport_key(ws: *WindowSystem, key: ViewportKey) ?Window {
     const rs = ws.resources.getPtr(key.client_id).?;
     const vp = rs.viewports.get(key.viewport_id).?;
     return ws.windows.get(vp.window_id);
@@ -846,6 +849,10 @@ pub fn resources_of_embeder_get(ws: *WindowSystem, to_embed: ViewportKey) error{
 }
 
 pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
+    if (true) {
+        @panic("Removed feature. Should be handled by Mux");
+    }
+
     var removed = false;
     var i: usize = ws.windows.count();
     while (i > 0) {
@@ -866,7 +873,7 @@ pub fn windows_destroy_if_closed(ws: *WindowSystem) void {
 
         if (should_close) {
             const id = win.id;
-            win.destroy(ws.gpa);
+            win.deinit(ws.gpa);
             _ = ws.windows.orderedRemove(id);
             removed = true;
         }
@@ -1057,43 +1064,6 @@ pub fn sub_viewport_close(ws: *WindowSystem, args: Event.TypeOf(.sub_viewport_cl
     };
 
     try ws.viewport_should_close(.{ .viewport_key = key });
-}
-
-pub fn window_resize_by_display_server(ws: *WindowSystem, args: Event.TypeOf(.window_resize_by_display_server)) !void {
-    try ws.server_events.ensure_unused_capacity(1);
-
-    const win = ws.windows.get(args.id) orelse {
-        return error.WindowDoesNotExist;
-    };
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            const wl = tag.window_system(ws);
-            const nw = tag.window(win);
-            try nw.resize(wl, args.size);
-            nw.viewport_bound(ws);
-            nw.commit();
-        },
-        .win32 => {
-            // It seems windows changes the window's buffer however it likes, unlike wayland.
-        },
-    }
-
-    log.err("Removed feature. Should be handled by Mux", .{});
-    // if (win.viewport_key) |key| {
-    //     const rs = ws.resources.getPtr(key.client_id) orelse return;
-    //     const vp = rs.viewports.get(key.viewport_id) orelse return;
-    //     if (!std.meta.eql(vp.render_size, args.size)) {
-    //         ws.server_events.push_assume_capacity(.{
-    //             .viewport_resize = .{
-    //                 .client_id = key.client_id,
-    //                 .payload = .{
-    //                     .viewport_id = key.viewport_id,
-    //                     .size = args.size,
-    //                 },
-    //             },
-    //         });
-    //     }
-    // }
 }
 
 pub fn cursor_shape_set(ws: *WindowSystem, args: Event.TypeOf(.cursor_shape_set)) !void {
@@ -1419,8 +1389,6 @@ pub const Event = union(enum) {
     sub_viewport_display_state_set: client_to_server.WithClientID(client_to_server.SubViewportDisplayStateSet),
     sub_viewport_close: client_to_server.WithClientID(client_to_server.SubViewportClose),
 
-    window_resize_by_display_server: WindowResize,
-
     cursor_shape_set: client_to_server.WithClientID(client_to_server.CursorShape),
 
     keyboard_key: KeyboardKey,
@@ -1526,17 +1494,6 @@ pub const NativeTag = enum {
         return switch (tag) {
             .wayland => ws.linux.wayland,
             .win32 => ws.win32,
-        };
-    }
-
-    pub fn window(
-        comptime tag: NativeTag,
-        win: *Window,
-    ) if (tag.os_matches_tag()) *window_type(tag) else noreturn {
-        tag.guard();
-        return switch (tag) {
-            .wayland => &win.linux.wayland,
-            .win32 => &win.win32,
         };
     }
 
@@ -1668,6 +1625,19 @@ pub const WindowHandle = opaque {
             .wayland => *cwl.Surface,
             .win32 => win32_foundation.HWND,
         };
+    }
+};
+
+pub const MuxInterface = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        window_handle_for_viewport: *const fn (*anyopaque) ?*WindowHandle,
+    };
+
+    pub fn window_handle_for_viewport(self: MuxInterface) ?*WindowHandle {
+        return self.vtable.window_handle_for_viewport(self.ptr);
     }
 };
 

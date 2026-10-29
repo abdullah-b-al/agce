@@ -73,6 +73,10 @@ fn window_proc(
     wparam: win32_foundation.WPARAM,
     lparam: win32_foundation.LPARAM,
 ) callconv(.winapi) win32_foundation.LRESULT {
+    if (true) {
+        @panic("Removed feature. Should be handled by Mux");
+    }
+
     const long: usize = @intCast(win32_win.GetWindowLongPtrA(hwnd, .P_USERDATA));
 
     // Window has not been created yet. Pass through msg
@@ -935,7 +939,6 @@ pub const D11Context = struct {
 };
 
 pub const HINSTANCE = win32_foundation.HINSTANCE;
-pub const Window = @import("Window.zig");
 pub const Viewport = @import("Viewport.zig");
 
 const std = @import("std");

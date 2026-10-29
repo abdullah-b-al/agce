@@ -15,14 +15,12 @@ pub const Tick = struct {
     }
 };
 
-pub fn tick(state: *Tick, poll_timeout: Io.Timeout) !void {
-    _ = state.arena.reset(.{ .retain_with_limit = 1024 * 1024 });
+pub fn tick(state: *Tick, poll_result: Poll) !void {
+    defer _ = state.arena.reset(.{ .retain_with_limit = 1024 * 1024 });
 
     const ws = state.ws;
     const server = ws.server;
     const arena = state.arena.allocator();
-
-    const poll_result = try poll(arena, ws, server, poll_timeout);
 
     const messages = try server.messages_receive(arena, poll_result.clients);
     const ws_events = try server.messages_handle(arena, messages);
@@ -69,13 +67,6 @@ pub fn tick(state: *Tick, poll_timeout: Io.Timeout) !void {
             };
         }
     }
-
-    switch (ws.native_tag()) {
-        .wayland => |tag| {
-            _ = tag.window_system(ws).display.flush();
-        },
-        else => {},
-    }
 }
 
 const Poll = struct {
@@ -84,7 +75,7 @@ const Poll = struct {
     clients: []Server.MessageSource,
 };
 
-fn poll(
+pub fn poll(
     arena: std.mem.Allocator,
     ws: *WindowSystem,
     server: *const Server,
