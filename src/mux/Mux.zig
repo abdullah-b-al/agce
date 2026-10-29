@@ -38,7 +38,11 @@ pub fn create(
                 .compositor = maybe_globals.compositor orelse return error.NoWlCompositor,
                 .wm_base = maybe_globals.wm_base orelse return error.NoXdgWmBase,
                 .viewporter = maybe_globals.viewporter orelse return error.NoWpViewporter,
+                .seat = maybe_globals.seat orelse return error.NoWlSeat,
             };
+
+            const keyboard = try globals.seat.getKeyboard();
+            keyboard.setListener(*Mux, WaylandWindow.listener_keyboard, mux);
 
             const com: *Compositor = try .create_wayland(
                 io,
@@ -302,12 +306,15 @@ pub const WaylandObjects = if (os != .linux) void else struct {
     compositor: *cwl.Compositor,
     wm_base: *xdg.WmBase,
     viewporter: *wp.Viewporter,
+    seat: *cwl.Seat,
 
     pub fn deinit(wo: *WaylandObjects) void {
         wo.shm.destroy();
         wo.compositor.destroy();
         wo.wm_base.destroy();
         wo.viewporter.destroy();
+        wo.seat.destroy();
+
         wo.queue.destroy();
         wo.display.disconnect();
     }

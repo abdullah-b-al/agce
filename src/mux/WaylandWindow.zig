@@ -69,8 +69,8 @@ pub fn init(
         .buffer = buffer,
     };
 
-    xdg_surface.setListener(*Mux, xdg_surface_listener, mux);
-    xdg_toplevel.setListener(*Mux, xdg_toplevel_listener, mux);
+    xdg_surface.setListener(*Mux, listener_xdg_surface, mux);
+    xdg_toplevel.setListener(*Mux, listener_xdg_toplevel, mux);
 
     return window;
 }
@@ -150,7 +150,7 @@ fn fill_color(win: *WaylandWindow) void {
     }
 }
 
-pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event, mux: *Mux) void {
+pub fn listener_xdg_surface(xdg_surface: *xdg.Surface, event: xdg.Surface.Event, mux: *Mux) void {
     switch (event) {
         .configure => |configure| {
             xdg_surface.ackConfigure(configure.serial);
@@ -162,7 +162,7 @@ pub fn xdg_surface_listener(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
     }
 }
 
-pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: *Mux) void {
+pub fn listener_xdg_toplevel(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: *Mux) void {
     const window_id = window_id_from_toplevel(mux, tl);
 
     const win = mux.windows.get(window_id) orelse {
@@ -202,6 +202,36 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
             });
         },
     }
+}
+
+pub fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, mux: *Mux) void {
+    switch (event) {
+        inline .leave, .enter => |e, tag| {
+            const surface = e.surface orelse {
+                log.warn("Dropping keyboard event .{t}: No surface", .{tag});
+                return;
+            };
+
+            const window_id = window_id_from_window_surface(mux, surface) orelse {
+                return;
+            };
+
+            const win = mux.windows.get(window_id) orelse return;
+
+            mux.compositor.window_focused_by_keyboard(win.viewport_key);
+        },
+        else => {},
+    }
+}
+
+fn window_id_from_window_surface(mux: *Mux, surface: *cwl.Surface) ?WindowID {
+    for (mux.windows.values()) |win| {
+        if (win.linux.wayland.surface == surface) {
+            return win.id;
+        }
+    }
+
+    return null;
 }
 
 pub fn window_id_from_toplevel(mux: *const Mux, tl: *xdg.Toplevel) WindowID {

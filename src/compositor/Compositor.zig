@@ -211,6 +211,12 @@ pub fn window_update_size(com: *Compositor, id: WindowID, size: ptypes.Size) err
     win.size = size;
 }
 
+pub fn window_focused_by_keyboard(com: *Compositor, viewport_key: ViewportKey) void {
+    if (com.input_focus_keyboard == null) {
+        com.keyboard_focus_set(viewport_key);
+    }
+}
+
 pub fn native_tag(com: *const Compositor) NativeTag {
     return switch (os) {
         .linux => switch (com.linux) {
