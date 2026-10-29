@@ -13,9 +13,9 @@ pub fn init(key: ViewportKey, sub_viewport_id: ptypes.SubViewportID) SubViewport
 const std = @import("std");
 const ptypes = @import("protocol").types;
 const ClientID = @import("server/Clients.zig").ClientID;
-const WindowSystem = @import("WindowSystem.zig");
-const ViewportKey = WindowSystem.ViewportKey;
-const WindowID = WindowSystem.WindowID;
+const Compositor = @import("Compositor.zig");
+const ViewportKey = Compositor.ViewportKey;
+const WindowID = Compositor.WindowID;
 const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");

@@ -50,17 +50,17 @@ pub const TestServer = struct {
         defer rt.deinit();
         const io = rt.io();
 
-        const ws: *WindowSystem = try .create(io, gpa, &environ_map, src.fn_name);
-        defer ws.destroy();
+        const com: *Compositor = try .create(io, gpa, &environ_map, src.fn_name);
+        defer com.destroy();
 
-        var state: Tick = .init(ws);
+        var state: Tick = .init(com);
         defer state.deinit();
 
         while (!exit.isSet()) {
             const poll_result = poll(
                 state.arena.allocator(),
-                ws,
-                ws.server,
+                com,
+                com.server,
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => continue,
@@ -121,9 +121,9 @@ const testing = std.testing;
 const client = @import("client");
 const constants = @import("constants");
 const glad = @import("glad");
-const Tick = @import("window_system").Tick;
-const WindowSystem = @import("window_system").WindowSystem;
-const Server = @import("window_system").Server;
-const zio = @import("window_system").zio;
-const tick = @import("window_system").tick;
-const poll = @import("window_system").poll;
+const Tick = @import("compositor").Tick;
+const Compositor = @import("compositor").Compositor;
+const Server = @import("compositor").Server;
+const zio = @import("compositor").zio;
+const tick = @import("compositor").tick;
+const poll = @import("compositor").poll;

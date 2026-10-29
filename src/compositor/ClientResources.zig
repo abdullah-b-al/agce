@@ -31,17 +31,17 @@ pub fn init(id: ClientID) ClientResources {
     };
 }
 
-pub fn deinit(rs: *ClientResources, ws: *WindowSystem) void {
+pub fn deinit(rs: *ClientResources, com: *Compositor) void {
     var i = rs.buffers.count();
     while (i > 0) {
         i -= 1;
-        rs.buffer_destroy(ws, rs.buffers.keys()[i]);
+        rs.buffer_destroy(com, rs.buffers.keys()[i]);
     }
 
-    for (rs.viewports.values()) |vp| vp.destroy(ws.gpa);
+    for (rs.viewports.values()) |vp| vp.destroy(com.gpa);
 
     if (constants.os_has_gbm) {
-        for (rs.gbm_bos.values()) |*bo| bo.deinit(ws.gbm);
+        for (rs.gbm_bos.values()) |*bo| bo.deinit(com.gbm);
     }
 
     inline for (.{
@@ -53,18 +53,18 @@ pub fn deinit(rs: *ClientResources, ws: *WindowSystem) void {
         &rs.sub_viewports_pending,
         &rs.gbm_bos,
     }) |entry| {
-        entry.deinit(ws.gpa);
+        entry.deinit(com.gpa);
     }
 }
 
-pub fn buffer_destroy(rs: *ClientResources, ws: *WindowSystem, id: BufferID) void {
+pub fn buffer_destroy(rs: *ClientResources, com: *Compositor, id: BufferID) void {
     const buffer = rs.buffers.getPtr(id) orelse return;
 
-    switch (ws.native_tag()) {
+    switch (com.native_tag()) {
         .wayland => |tag| {
             const b = tag.buffer(buffer);
             if (rs.gbm_bos.getPtr(id)) |bo| {
-                bo.deinit(ws.gbm);
+                bo.deinit(com.gbm);
             }
             _ = rs.gbm_bos.orderedRemove(id);
             b.destroy();
@@ -94,8 +94,8 @@ pub fn sub_viewports_pending_fetch_remove_by_embeded_key(rs: *ClientResources, k
 
 pub fn viewport_create(
     rs: *ClientResources,
-    ws: *WindowSystem,
-    parent: WindowSystem.ParentOfViewport,
+    com: *Compositor,
+    parent: Compositor.ParentOfViewport,
     viewport_id: ViewportID,
     window_id: WindowID,
     rect: ptypes.Rect,
@@ -104,9 +104,9 @@ pub fn viewport_create(
     parent_key: ?ViewportKey,
     format: ptypes.BufferFormat,
 ) !void {
-    try rs.viewports.ensureUnusedCapacity(ws.gpa, 1);
+    try rs.viewports.ensureUnusedCapacity(com.gpa, 1);
     const vp = try Viewport.create(
-        ws,
+        com,
         parent,
         .{ .client_id = rs.client_id, .viewport_id = viewport_id },
         window_id,
@@ -142,7 +142,7 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
     acquire: ptypes.DrmSyncobjAcquireTimelineHandle,
     release: ptypes.DrmSyncobjReleaseTimelineHandle,
 
-    pub fn init(gbm: WindowSystem.Gbm, size: ptypes.Size, format: ptypes.BufferFormat) !GbmBo {
+    pub fn init(gbm: Compositor.Gbm, size: ptypes.Size, format: ptypes.BufferFormat) !GbmBo {
         const bo_format = switch (format) {
             .argb8888 => c_linux.GBM_BO_FORMAT_ARGB8888,
         };
@@ -177,13 +177,13 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
         };
     }
 
-    pub fn deinit(bo: *GbmBo, gbm: WindowSystem.Gbm) void {
+    pub fn deinit(bo: *GbmBo, gbm: Compositor.Gbm) void {
         _ = c_linux.drmSyncobjDestroy(gbm.dri.handle, @intFromEnum(bo.acquire));
         _ = c_linux.drmSyncobjDestroy(gbm.dri.handle, @intFromEnum(bo.release));
         c_linux.gbm_bo_destroy(bo.bo);
     }
 
-    pub fn acquire_fd(bo: *const GbmBo, gbm: WindowSystem.Gbm) ptypes.DrmSyncobjAcquireTimelineFd {
+    pub fn acquire_fd(bo: *const GbmBo, gbm: Compositor.Gbm) ptypes.DrmSyncobjAcquireTimelineFd {
         return @enumFromInt(
             gbm.syncobj_fd_from_handle(
                 @intFromEnum(bo.acquire),
@@ -191,7 +191,7 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
         );
     }
 
-    pub fn release_fd(bo: *const GbmBo, gbm: WindowSystem.Gbm) ptypes.DrmSyncobjReleaseTimelineFd {
+    pub fn release_fd(bo: *const GbmBo, gbm: Compositor.Gbm) ptypes.DrmSyncobjReleaseTimelineFd {
         return @enumFromInt(
             gbm.syncobj_fd_from_handle(
                 @intFromEnum(bo.release),
@@ -199,7 +199,7 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
         );
     }
 
-    pub fn signal_release_timeline(bo: *const GbmBo, gbm: WindowSystem.Gbm, point: ptypes.ReleaseTimelinePoint) void {
+    pub fn signal_release_timeline(bo: *const GbmBo, gbm: Compositor.Gbm, point: ptypes.ReleaseTimelinePoint) void {
         const handles = @intFromEnum(bo.release);
         var points = @intFromEnum(point);
 
@@ -231,10 +231,10 @@ const BufferFormat = ptypes.BufferFormat;
 const BufferAndTimelineFds = ptypes.BufferAndTimelineFds;
 const c_linux = @import("c_linux");
 const log = std.log.scoped(.ClientResources);
-const ViewportKey = @import("WindowSystem.zig").ViewportKey;
-const WindowID = @import("WindowSystem.zig").WindowID;
-const BufferKey = @import("WindowSystem.zig").BufferKey;
-const WindowSystem = @import("WindowSystem.zig");
+const ViewportKey = @import("Compositor.zig").ViewportKey;
+const WindowID = @import("Compositor.zig").WindowID;
+const BufferKey = @import("Compositor.zig").BufferKey;
+const Compositor = @import("Compositor.zig");
 const BufferID = ptypes.BufferID;
 const ViewportID = ptypes.ViewportID;
 const SubViewportID = ptypes.SubViewportID;

@@ -46,5 +46,5 @@ const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const Wayland = @import("wayland/Wayland.zig");
 const Win32 = @import("win32/Win32.zig");
-const WindowSystem = @import("WindowSystem.zig");
+const Compositor = @import("Compositor.zig");
 const os = @import("builtin").os.tag;

@@ -8,9 +8,9 @@ class_viewport: win32_win.WNDCLASSA,
 
 d11_context: D11Context,
 
-pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
-    const ptr = try ws.gpa.create(Win32);
-    errdefer ws.gpa.destroy(ptr);
+pub fn create(com: *Compositor, instance: win32_foundation.HINSTANCE) !*Win32 {
+    const ptr = try com.gpa.create(Win32);
+    errdefer com.gpa.destroy(ptr);
 
     const class_window: win32_win.WNDCLASSA = .{
         .style = .{},
@@ -22,7 +22,7 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         .hbrBackground = null,
         .lpfnWndProc = window_proc,
         .hInstance = instance,
-        .lpszClassName = ws.class_of_window,
+        .lpszClassName = com.class_of_window,
     };
 
     const class_viewport: win32_win.WNDCLASSA = .{
@@ -35,7 +35,7 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
         .hbrBackground = null,
         .lpfnWndProc = viewport_proc,
         .hInstance = instance,
-        .lpszClassName = ws.class_of_viewport,
+        .lpszClassName = com.class_of_viewport,
     };
 
     if (win32_win.RegisterClassA(&class_window) == 0) {
@@ -52,7 +52,7 @@ pub fn create(ws: *WindowSystem, instance: win32_foundation.HINSTANCE) !*Win32 {
 
     const d11_context: D11Context = try .init();
     ptr.* = .{
-        .gpa = ws.gpa,
+        .gpa = com.gpa,
         .instance = instance,
         .class_window = class_window,
         .class_viewport = class_viewport,
@@ -84,14 +84,14 @@ fn window_proc(
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
-    const ws: *WindowSystem = @ptrFromInt(long);
+    const com: *Compositor = @ptrFromInt(long);
 
-    if (ws.destroy_started) {
+    if (com.destroy_started) {
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
     const win = blk: {
-        for (ws.windows.values()) |win| {
+        for (com.windows.values()) |win| {
             if (hwnd == win.win32.handle) break :blk win;
         }
 
@@ -106,7 +106,7 @@ fn window_proc(
             const w: i16 = @truncate(low);
             const h: i16 = @truncate(high);
 
-            ws.deferred_events.append(ws.gpa, .{
+            com.deferred_events.append(com.gpa, .{
                 .window_resize_by_display_server = .{
                     .id = win.id,
                     .size = .{ .width = w, .height = h },
@@ -134,14 +134,14 @@ fn viewport_proc(
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
-    const ws: *WindowSystem = @ptrFromInt(long);
+    const com: *Compositor = @ptrFromInt(long);
 
-    if (ws.destroy_started) {
+    if (com.destroy_started) {
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     }
 
     const vp, const vp_key = blk: {
-        for (ws.resources.values()) |rs| {
+        for (com.resources.values()) |rs| {
             for (rs.viewports.values()) |vp| {
                 const key: ViewportKey = .{ .client_id = rs.client_id, .viewport_id = vp.id };
                 if (vp.win32.child_window_handle == hwnd) {
@@ -159,7 +159,7 @@ fn viewport_proc(
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
         win32_win.WM_CLOSE => {
-            ws.deferred_events.appendAssumeCapacity(.{
+            com.deferred_events.appendAssumeCapacity(.{
                 .viewport_should_close = .{ .viewport_key = vp_key },
             });
             return 0;
@@ -173,7 +173,7 @@ fn viewport_proc(
             const flags: KeyDownLParam = .from_lparam(msg, lparam);
 
             const modifiers = get_modifires();
-            ws.deferred_events.append(ws.gpa, .{
+            com.deferred_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = if (flags.previous_state == 1) .repeat else .pressed,
@@ -188,7 +188,7 @@ fn viewport_proc(
             const truncate: @typeInfo(kbm.VIRTUAL_KEY).@"enum".tag_type = @truncate(wparam);
             const key: kbm.VIRTUAL_KEY = @enumFromInt(truncate);
             const pkey = to_protocol_key(key) orelse return 0;
-            ws.deferred_events.append(ws.gpa, .{
+            com.deferred_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = .released,
@@ -208,7 +208,7 @@ fn viewport_proc(
         win32_win.WM_RBUTTONDOWN,
         win32_win.WM_RBUTTONUP,
         => |tag| {
-            ws.deferred_events.append(ws.gpa, .{
+            com.deferred_events.append(com.gpa, .{
                 .mouse_enter = .{ .viewport_key = vp_key },
             }) catch return 0;
 
@@ -226,7 +226,7 @@ fn viewport_proc(
                 }
             }
 
-            const mouse_event: WindowSystem.Event = blk: switch (tag) {
+            const mouse_event: Compositor.Event = blk: switch (tag) {
                 win32_win.WM_MOUSEMOVE => {
                     const x: i32 = @truncate(lparam & 0xFFFF);
                     const y: i32 = @truncate((lparam >> 16) & 0xFFFF);
@@ -250,14 +250,14 @@ fn viewport_proc(
                 else => comptime unreachable,
             };
 
-            ws.deferred_events.append(ws.gpa, mouse_event) catch return 0;
+            com.deferred_events.append(com.gpa, mouse_event) catch return 0;
 
             return 0;
         },
 
         win32_controls.WM_MOUSELEAVE => {
             vp.win32.mouse_tracking = false;
-            ws.deferred_events.append(ws.gpa, .{
+            com.deferred_events.append(com.gpa, .{
                 .mouse_leave = .{ .viewport_key = vp_key },
             }) catch return 0;
             return 0;
@@ -269,20 +269,20 @@ fn viewport_proc(
     return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
-pub fn present(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
+pub fn present(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
     comptime {
         std.debug.assert(native_tag == .win32);
     }
 
-    std.debug.assert(ws.server_events.capacity >= ws.present_queue.items.len);
+    std.debug.assert(com.server_events.capacity >= com.present_queue.items.len);
 
-    win32.present_queue_check_available_to_copy(ws, native_tag);
-    win32.present_queue_copy_if_ready(ws, native_tag);
-    win32.present_queue_present_if_ready(ws, native_tag);
+    win32.present_queue_check_available_to_copy(com, native_tag);
+    win32.present_queue_copy_if_ready(com, native_tag);
+    win32.present_queue_present_if_ready(com, native_tag);
 
-    for (ws.present_queue.items) |item| {
+    for (com.present_queue.items) |item| {
         if (item.state == .presented) {
-            ws.server_events.push_assume_capacity(.{
+            com.server_events.push_assume_capacity(.{
                 .buffer_released = .{
                     .client_id = item.client_id,
                     .payload = .{
@@ -295,11 +295,11 @@ pub fn present(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSyst
     }
 }
 
-fn present_queue_check_available_to_copy(_: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
-    for (ws.present_queue.items) |*item| {
+fn present_queue_check_available_to_copy(_: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+    for (com.present_queue.items) |*item| {
         std.debug.assert(item.state != .presented);
 
-        const rs = ws.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
         const nb = native_tag.buffer(buffer);
 
@@ -315,11 +315,11 @@ fn present_queue_check_available_to_copy(_: *Win32, ws: *WindowSystem, comptime 
     }
 }
 
-fn present_queue_copy_if_ready(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
-    for (ws.present_queue.items) |*item| {
+fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+    for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_copy) continue;
 
-        const rs = ws.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const nvp = native_tag.viewport(vp);
@@ -368,11 +368,11 @@ fn present_queue_copy_if_ready(win32: *Win32, ws: *WindowSystem, comptime native
     }
 }
 
-fn present_queue_present_if_ready(win32: *Win32, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
-    for (ws.present_queue.items) |*item| {
+fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+    for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_present) continue;
 
-        const rs = ws.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_id).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
@@ -402,7 +402,7 @@ pub fn buffer_copy_cpu_hdc(
     _: *Win32,
     nvp: *Viewport,
     cpu: *const Buffer.Cpu,
-    buffer_present_item: *WindowSystem.BufferPresent,
+    buffer_present_item: *Compositor.BufferPresent,
 ) void {
     const hdc = win32_gdi.GetDC(nvp.child_window_handle) orelse return;
     defer {
@@ -948,8 +948,8 @@ const win32_foundation = @import("win32").foundation;
 const win32_memory = @import("win32").system.memory;
 const kbm = @import("win32").ui.input.keyboard_and_mouse;
 const win32_controls = @import("win32").ui.controls;
-const WindowSystem = @import("../WindowSystem.zig");
-const ViewportKey = WindowSystem.ViewportKey;
+const Compositor = @import("../Compositor.zig");
+const ViewportKey = Compositor.ViewportKey;
 const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const BufferID = ptypes.BufferID;

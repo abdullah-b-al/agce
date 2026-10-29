@@ -1,6 +1,6 @@
 const Mux = @This();
 
-window_system: *WindowSystem,
+compositor: *Compositor,
 
 gpa: std.mem.Allocator,
 
@@ -17,19 +17,19 @@ pub fn create(
     const mux = try gpa.create(Mux);
     errdefer gpa.destroy(mux);
 
-    const muxi: WindowSystem.MuxInterface = .{
+    const muxi: Compositor.MuxInterface = .{
         .ptr = mux,
         .vtable = &vtable,
     };
 
     const class = "agce-mux";
 
-    const ws: *WindowSystem, const wayland_globals: WaylandObjects = blk: switch (os) {
+    const com: *Compositor, const wayland_globals: WaylandObjects = blk: switch (os) {
         .linux => {
             const display = try cwl.Display.connect(null);
             const queue = try display.createQueue();
 
-            const maybe_globals = try WindowSystem.Wayland.get_globals(display, queue);
+            const maybe_globals = try Compositor.Wayland.get_globals(display, queue);
 
             const globals: WaylandObjects = .{
                 .display = display,
@@ -40,7 +40,7 @@ pub fn create(
                 .viewporter = maybe_globals.viewporter orelse return error.NoWpViewporter,
             };
 
-            const ws: *WindowSystem = try .create_wayland(
+            const com: *Compositor = try .create_wayland(
                 io,
                 gpa,
                 environ_map,
@@ -49,11 +49,11 @@ pub fn create(
                 muxi,
             );
 
-            break :blk .{ ws, globals };
+            break :blk .{ com, globals };
         },
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
-            const ws: *WindowSystem = try .create_win32(
+            const com: *Compositor = try .create_win32(
                 io,
                 gpa,
                 environ_map,
@@ -62,7 +62,7 @@ pub fn create(
                 muxi,
             );
 
-            break :blk .{ ws, {} };
+            break :blk .{ com, {} };
         },
         else => @compileError("Unsupported OS"),
     };
@@ -70,7 +70,7 @@ pub fn create(
     mux.* = .{
         .gpa = gpa,
         .windows = .empty,
-        .window_system = ws,
+        .compositor = com,
         .next_window_id = .first,
         .wayland_objects = wayland_globals,
     };
@@ -79,8 +79,8 @@ pub fn create(
 }
 
 pub fn destroy(mux: *Mux) void {
-    const native_tag = mux.window_system.native_tag();
-    mux.window_system.destroy();
+    const native_tag = mux.compositor.native_tag();
+    mux.compositor.destroy();
 
     switch (native_tag) {
         .wayland => |tag| {
@@ -100,7 +100,7 @@ pub fn destroy(mux: *Mux) void {
 }
 
 pub fn dispatch(mux: *Mux) void {
-    switch (mux.window_system.native_tag()) {
+    switch (mux.compositor.native_tag()) {
         .wayland => |tag| {
             tag.guard();
 
@@ -143,7 +143,7 @@ pub fn dispatch(mux: *Mux) void {
 }
 
 pub fn flush(mux: *Mux) void {
-    switch (mux.window_system.native_tag()) {
+    switch (mux.compositor.native_tag()) {
         .wayland => |tag| {
             tag.guard();
             _ = mux.wayland_objects.display.flush();
@@ -152,7 +152,7 @@ pub fn flush(mux: *Mux) void {
     }
 }
 
-fn window_handle_for_viewport(ptr: *anyopaque) ?*WindowSystem.WindowHandle {
+fn window_handle_for_viewport(ptr: *anyopaque) ?*Compositor.WindowHandle {
     const mux: *Mux = @ptrCast(@alignCast(ptr));
 
     mux.windows.ensureUnusedCapacity(mux.gpa, 1) catch return null;
@@ -174,7 +174,7 @@ fn window_handle_for_viewport(ptr: *anyopaque) ?*WindowSystem.WindowHandle {
     }
 
     // TODO: Do not register windows here
-    mux.window_system.window_register(.{
+    mux.compositor.window_register(.{
         .handle = win.handle,
         .id = win.id,
         .size = win.get_size(),
@@ -183,13 +183,13 @@ fn window_handle_for_viewport(ptr: *anyopaque) ?*WindowSystem.WindowHandle {
     return win.handle;
 }
 
-const vtable: WindowSystem.MuxInterface.VTable = .{
+const vtable: Compositor.MuxInterface.VTable = .{
     .window_handle_for_viewport = window_handle_for_viewport,
 };
 
 pub const Window = struct {
     id: WindowID,
-    handle: *WindowSystem.WindowHandle,
+    handle: *Compositor.WindowHandle,
 
     linux: if (os == .linux) Linux else void,
     win32: if (os == .windows) Win32Window else void,
@@ -205,7 +205,7 @@ pub const Window = struct {
             .linux = undefined,
         };
 
-        win.handle = blk: switch (mux.window_system.native_tag()) {
+        win.handle = blk: switch (mux.compositor.native_tag()) {
             .wayland => |tag| {
                 tag.guard();
                 win.linux = .{ .wayland = try .init(mux, size) };
@@ -214,8 +214,8 @@ pub const Window = struct {
             .win32 => |tag| {
                 tag.guard();
                 @compileError("TODO");
-                // const win32 = tag.window_system(ws);
-                // win.win32 = try .init(win32, ws, win, requested_size);
+                // const win32 = tag.compositor(com);
+                // win.win32 = try .init(win32, com, win, requested_size);
             },
         };
 
@@ -250,7 +250,7 @@ pub const Window = struct {
         };
     }
 
-    pub fn native_tag(win: *const Window) WindowSystem.NativeTag {
+    pub fn native_tag(win: *const Window) Compositor.NativeTag {
         return switch (os) {
             .linux => switch (win.linux) {
                 .wayland => .wayland,
@@ -325,8 +325,8 @@ const Win32Window = struct {
 };
 
 const std = @import("std");
-const WindowSystem = @import("window_system").WindowSystem;
-const WindowID = WindowSystem.WindowID;
+const Compositor = @import("compositor").Compositor;
+const WindowID = Compositor.WindowID;
 const WaylandWindow = @import("WaylandWindow.zig");
 const os = @import("builtin").os.tag;
 const win32_foundation = @import("win32").foundation;

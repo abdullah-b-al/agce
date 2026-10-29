@@ -112,22 +112,22 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem.NativeTag) void {
-    std.debug.assert(ws.server_events.capacity >= ws.present_queue.items.len);
+pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+    std.debug.assert(com.server_events.capacity >= com.present_queue.items.len);
 
-    for (ws.present_queue.items) |*item| {
+    for (com.present_queue.items) |*item| {
         std.debug.assert(item.state == .new);
 
-        const win = ws.windows.get(item.window_id).?;
+        const win = com.windows.get(item.window_id).?;
 
-        const rs = ws.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_id).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
         const nvp = native_tag.viewport(vp);
         const b = &buffer.native.wayland;
 
-        const should_be_hidden = vp.should_be_hidden(ws);
+        const should_be_hidden = vp.should_be_hidden(com);
 
         if (should_be_hidden) {
             nvp.surface.attach(null, 0, 0);
@@ -154,7 +154,7 @@ pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem
 
                 if (should_be_hidden) {
                     // Maybe this should wait on the acquisition before releasing ?
-                    gbm_bo.signal_release_timeline(ws.gbm, item.sync.?.release_point);
+                    gbm_bo.signal_release_timeline(com.gbm, item.sync.?.release_point);
                 } else {
                     gpu.timeline_acquire.set(nvp.sync_surface.?, item.sync.?.acquire_point);
                     gpu.timeline_release.set(nvp.sync_surface.?, item.sync.?.release_point);
@@ -162,10 +162,10 @@ pub fn present(_: *Wayland, ws: *WindowSystem, comptime native_tag: WindowSystem
             },
             .cpu => {
                 std.debug.assert(item.sync == null);
-                const node = ws.server_events.create_assume_capacity();
+                const node = com.server_events.create_assume_capacity();
 
                 if (should_be_hidden) {
-                    ws.server_events.push(node, .{
+                    com.server_events.push(node, .{
                         .buffer_released = .{
                             .client_id = item.client_id,
                             .payload = .{
@@ -247,12 +247,12 @@ pub fn keyboard_repeat_info(wl: *Wayland, rate: i32, delay: i32) void {
     });
 }
 
-pub fn set_listeners(wl: *Wayland, ws: *WindowSystem) !void {
+pub fn set_listeners(wl: *Wayland, com: *Compositor) !void {
     const keyboard = try wl.seat.getKeyboard();
-    keyboard.setListener(*WindowSystem, listener_keyboard, ws);
+    keyboard.setListener(*Compositor, listener_keyboard, com);
 
     const pointer = try wl.seat.getPointer();
-    pointer.setListener(*WindowSystem, listener_pointer, ws);
+    pointer.setListener(*Compositor, listener_pointer, com);
 }
 
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
@@ -312,8 +312,8 @@ pub fn get_globals(display: *cwl.Display, queue: *cwl.EventQueue) !MaybeGlobals 
     return globals;
 }
 
-fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSystem) void {
-    const wl = ws.linux.wayland;
+fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Compositor) void {
+    const wl = com.linux.wayland;
     switch (event) {
         .keymap => |e| {
             wl.keyboard_keymap(e.fd, e.size, e.format) catch |err| {
@@ -347,17 +347,17 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             //     return;
             // };
 
-            // const window_id = window_id_from_window_surface(ws, surface) orelse {
+            // const window_id = window_id_from_window_surface(com, surface) orelse {
             //     log.err("Dropping keyboard event .{t}: Surface without a window", .{tag});
             //     return;
             // };
 
-            // const win = ws.windows.get(window_id) orelse return;
+            // const win = com.windows.get(window_id) orelse return;
 
             // const ws_event = @unionInit(Event, "keyboard_" ++ @tagName(tag), .{
             //     .viewport_key = win.viewport_key orelse return,
             // });
-            // ws.deferred_events.append(ws.gpa, ws_event) catch return;
+            // com.deferred_events.append(com.gpa, ws_event) catch return;
         },
         .key => |e| {
             const key = input.linux_key_to_protocol_key(e.key) orelse {
@@ -389,7 +389,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
             const control =
                 mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
 
-            ws.deferred_events.append(ws.gpa, .{
+            com.deferred_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = key,
                     .state = state,
@@ -401,8 +401,8 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, ws: *WindowSys
     }
 }
 
-fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *WindowSystem) void {
-    const wl = ws.linux.wayland;
+fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compositor) void {
+    const wl = com.linux.wayland;
     const ws_event: Event = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse {
@@ -410,13 +410,13 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
                 return;
             };
 
-            const key, _ = viewport_from_surface(ws, surface) orelse {
+            const key, _ = viewport_from_surface(com, surface) orelse {
                 log.warn("Dropping pointer event without a viewport {t}", .{tag});
                 return;
             };
 
             if (tag == .enter) {
-                const rs = ws.resources.getPtr(key.client_id).?;
+                const rs = com.resources.getPtr(key.client_id).?;
                 const viewport = rs.viewports.get(key.viewport_id).?;
                 const wl_vp = &viewport.linux.wayland;
 
@@ -478,22 +478,13 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, ws: *Window
         },
     };
 
-    ws.deferred_events.append(ws.gpa, ws_event) catch return;
+    com.deferred_events.append(com.gpa, ws_event) catch return;
 }
 
-pub fn window_id_from_toplevel(ws: *const WindowSystem, tl: *xdg.Toplevel) WindowID {
+pub fn window_id_from_toplevel(com: *const Compositor, tl: *xdg.Toplevel) WindowID {
     const id = tl.getId();
-    for (ws.windows.values()) |win| {
+    for (com.windows.values()) |win| {
         if (win.linux.wayland.xdg_toplevel.getId() == id) return win.id;
-    }
-
-    unreachable;
-}
-
-pub fn window_id_from_xdg_surface(ws: *const WindowSystem, xdg_surface: *xdg.Surface) WindowID {
-    const id = xdg_surface.getId();
-    for (ws.windows.values()) |win| {
-        if (win.linux.wayland.xdg_surface.getId() == id) return win.id;
     }
 
     unreachable;
@@ -505,8 +496,8 @@ pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?Vie
     return key;
 }
 
-pub fn viewport_from_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?struct { ViewportKey, *const Viewport } {
-    for (ws.resources.values()) |rs| {
+pub fn viewport_from_surface(com: *const Compositor, surface: *cwl.Surface) ?struct { ViewportKey, *const Viewport } {
+    for (com.resources.values()) |rs| {
         for (rs.viewports.values()) |vp| {
             if (vp.linux.wayland.surface == surface) {
                 return .{
@@ -520,12 +511,12 @@ pub fn viewport_from_surface(ws: *const WindowSystem, surface: *cwl.Surface) ?st
     return null;
 }
 
-pub fn frame_listener_set(ws: *WindowSystem, surface: *cwl.Surface, key: ViewportKey) !void {
-    const wl = ws.linux.wayland;
-    try wl.frame_callbacks.ensureUnusedCapacity(ws.gpa, 1);
+pub fn frame_listener_set(com: *Compositor, surface: *cwl.Surface, key: ViewportKey) !void {
+    const wl = com.linux.wayland;
+    try wl.frame_callbacks.ensureUnusedCapacity(com.gpa, 1);
     const cb = try surface.frame();
 
-    cb.setListener(*WindowSystem, frame_listener, ws);
+    cb.setListener(*Compositor, frame_listener, com);
     wl.frame_callbacks.putAssumeCapacityNoClobber(.from_callback(cb), key);
 }
 
@@ -543,19 +534,19 @@ fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
     };
 }
 
-fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, ws: *WindowSystem) void {
-    const wl = ws.linux.wayland;
+fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, com: *Compositor) void {
+    const wl = com.linux.wayland;
     const key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
     cb.destroy();
 
-    const rs = ws.resources.get(key.client_id) orelse return;
+    const rs = com.resources.get(key.client_id) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
     const nvp = &vp.linux.wayland;
     nvp.refresh_cycle += 1;
 
     // TODO: Figure out a way to detect that a callback has not been attached
-    ws.server_events.ensure_unused_capacity(1) catch return;
-    ws.server_events.push_assume_capacity(.{
+    com.server_events.ensure_unused_capacity(1) catch return;
+    com.server_events.push_assume_capacity(.{
         .frame_render = .{
             .client_id = key.client_id,
             .payload = .{
@@ -566,12 +557,12 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, ws: *WindowSystem) v
     });
 
     // TODO: Handle in case of error
-    frame_listener_set(ws, vp.linux.wayland.surface, key) catch {};
+    frame_listener_set(com, vp.linux.wayland.surface, key) catch {};
 }
 
 pub fn buffer_create_and_register_cpu(
     wl: *Wayland,
-    ws: *WindowSystem,
+    com: *Compositor,
     rs: *ClientResources,
     id: BufferID,
     fd: CpuBufferHandle,
@@ -580,16 +571,16 @@ pub fn buffer_create_and_register_cpu(
 ) !void {
     try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
     if (wl.buffer_listener_pool.free_list.len() == 0)
-        try wl.buffer_listener_pool.addCapacity(ws.gpa, 1);
+        try wl.buffer_listener_pool.addCapacity(com.gpa, 1);
 
     const cpu = try buffer_create_cpu(wl.shm, fd, size, format);
     Wayland.BufferListener.set_listener(
         wl,
-        ws,
+        com,
         rs,
         cpu.wl_buffer,
         id,
-        wl.buffer_listener_pool.create(ws.gpa) catch unreachable,
+        wl.buffer_listener_pool.create(com.gpa) catch unreachable,
     );
 
     rs.buffers.putAssumeCapacityNoClobber(id, .init_wayland(.{ .cpu = cpu }));
@@ -629,7 +620,7 @@ const TimelinePair = struct {
 pub fn buffer_create_and_register_gpu_async(
     wl: *Wayland,
     rs: *ClientResources,
-    ws: *WindowSystem,
+    com: *Compositor,
     viewport_id: ptypes.ViewportID,
     buffer: *const ClientResources.GbmBo,
     size: ptypes.Size,
@@ -655,16 +646,16 @@ pub fn buffer_create_and_register_gpu_async(
         try wl.register_gpu_buffer_pool.addCapacity(wl.gpa, 1);
 
     if (wl.buffer_listener_pool.free_list.len() == 0)
-        try wl.buffer_listener_pool.addCapacity(ws.gpa, 1);
+        try wl.buffer_listener_pool.addCapacity(com.gpa, 1);
 
-    try ws.server_events.ensure_unused_capacity(1);
+    try com.server_events.ensure_unused_capacity(1);
     try rs.wl_buffers_pending.ensureUnusedCapacity(wl.gpa, 1);
     try rs.buffers.ensureUnusedCapacity(wl.gpa, 1);
 
-    const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(ws.gbm);
+    const acquire_fd: ptypes.DrmSyncobjAcquireTimelineFd = buffer.acquire_fd(com.gbm);
     errdefer acquire_fd.close();
 
-    const release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(ws.gbm);
+    const release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(com.gbm);
     errdefer release_fd.close();
 
     const acquire: Viewport.AcquireTimeline = try .init(wl.sync_object_manager, acquire_fd);
@@ -694,20 +685,20 @@ pub fn buffer_create_and_register_gpu_async(
     const buffer_fd = c_linux.gbm_bo_get_fd(buffer.bo);
     std.debug.assert(buffer_fd >= 0);
     const data = wl.register_gpu_buffer_pool.create(wl.gpa) catch unreachable;
-    const buffer_listener = wl.buffer_listener_pool.create(ws.gpa) catch unreachable;
+    const buffer_listener = wl.buffer_listener_pool.create(com.gpa) catch unreachable;
     data.* = .{
         .buffer_id = buffer_id,
         .client_id = rs.client_id,
         .viewport_id = viewport_id,
         .wl = wl,
-        .ws = ws,
+        .com = com,
         .buffer_fd = @enumFromInt(buffer_fd),
         .acquire_timeline = acquire_fd,
         .release_timeline = release_fd,
         .size = size,
         .stride = stride,
         .format = b_format,
-        .node = ws.server_events.create_assume_capacity(),
+        .node = com.server_events.create_assume_capacity(),
         .buffer_listener = buffer_listener,
     };
 
@@ -761,13 +752,13 @@ pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDevi
 }
 
 const InputRepeatFuture = Io.Future(@typeInfo(@TypeOf(input_repeat)).@"fn".return_type.?);
-pub fn input_repeat(ws: *WindowSystem, ms: i32, key: pinput.Key, modifiers: pinput.Modifiers, char: ?u32) void {
-    ws.io.sleep(.fromMilliseconds(ms), .awake) catch return;
+pub fn input_repeat(com: *Compositor, ms: i32, key: pinput.Key, modifiers: pinput.Modifiers, char: ?u32) void {
+    com.io.sleep(.fromMilliseconds(ms), .awake) catch return;
 
     // FIXME: This is not thread safe
     // FIXME: This might end up sending stale data.
     // Add some checks to make sure that doesn't happen
-    ws.deferred_events.append(ws.gpa, .{
+    com.deferred_events.append(com.gpa, .{
         .keyboard_key = .{
             .key = key,
             .state = .repeat,
@@ -878,7 +869,7 @@ pub const Buffer = union(enum) {
 
 pub const RegisterGpuBuffer = struct {
     wl: *Wayland,
-    ws: *WindowSystem,
+    com: *Compositor,
 
     client_id: ClientID,
     buffer_id: BufferID,
@@ -907,21 +898,21 @@ pub const RegisterGpuBuffer = struct {
 
         switch (event) {
             .created => |result| {
-                const rs = data.ws.resources.getPtr(data.client_id) orelse return;
+                const rs = data.com.resources.getPtr(data.client_id) orelse return;
 
                 const buffer = rs.buffers.getPtr(data.buffer_id) orelse {
                     // assume it's been destoryed by client
                     data.buffer_fd.close();
                     data.acquire_timeline.close();
                     data.release_timeline.close();
-                    data.ws.server_events.destroy(data.node);
-                    data.ws.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
+                    data.com.server_events.destroy(data.node);
+                    data.com.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
                     return;
                 };
 
                 Wayland.BufferListener.set_listener(
                     data.wl,
-                    data.ws,
+                    data.com,
                     rs,
                     result.buffer,
                     data.buffer_id,
@@ -936,7 +927,7 @@ pub const RegisterGpuBuffer = struct {
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
 
-                data.ws.server_events.push(data.node, .{
+                data.com.server_events.push(data.node, .{
                     .buffer_created_gbm_bo = .{
                         .client_id = data.client_id,
                         .payload = .{
@@ -958,8 +949,8 @@ pub const RegisterGpuBuffer = struct {
                 data.buffer_fd.close();
                 data.acquire_timeline.close();
                 data.release_timeline.close();
-                data.ws.server_events.destroy(data.node);
-                data.ws.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
+                data.com.server_events.destroy(data.node);
+                data.com.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
                 @panic("TODO: Send failure message");
             },
         }
@@ -968,18 +959,18 @@ pub const RegisterGpuBuffer = struct {
 
 pub const BufferListener = struct {
     wl: *Wayland,
-    ws: *WindowSystem,
+    com: *Compositor,
     buffer_key: BufferKey,
 
     pub fn callback(_: *cwl.Buffer, event: cwl.Buffer.Event, data: *BufferListener) void {
         switch (event) {
             .release => {
                 const key = data.buffer_key;
-                const rs = data.ws.resources.getPtr(key.client_id) orelse return;
+                const rs = data.com.resources.getPtr(key.client_id) orelse return;
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
 
-                data.ws.server_events.push(entry.value.ptr, .{
+                data.com.server_events.push(entry.value.ptr, .{
                     .buffer_released = .{
                         .client_id = key.client_id,
                         .payload = .{
@@ -994,7 +985,7 @@ pub const BufferListener = struct {
 
     pub fn set_listener(
         wl: *Wayland,
-        ws: *WindowSystem,
+        com: *Compositor,
         rs: *ClientResources,
         wl_buffer: *cwl.Buffer,
         buffer_id: BufferID,
@@ -1002,7 +993,7 @@ pub const BufferListener = struct {
     ) void {
         data.* = .{
             .wl = wl,
-            .ws = ws,
+            .com = com,
             .buffer_key = .{ .client_id = rs.client_id, .buffer_id = buffer_id },
         };
         wl_buffer.setListener(*BufferListener, BufferListener.callback, data);
@@ -1020,20 +1011,20 @@ const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const ClientID = ptypes.ClientID;
-const WindowSystem = @import("../WindowSystem.zig");
-const WindowID = WindowSystem.WindowID;
+const Compositor = @import("../Compositor.zig");
+const WindowID = Compositor.WindowID;
 const log = std.log.scoped(.Wayland);
 const utils = @import("utils");
 const ClientResources = @import("../ClientResources.zig");
 const c_linux = @import("c_linux");
-const BufferKey = WindowSystem.BufferKey;
-const ViewportKey = WindowSystem.ViewportKey;
-const SubViewportKey = WindowSystem.SubViewportKey;
+const BufferKey = Compositor.BufferKey;
+const ViewportKey = Compositor.ViewportKey;
+const SubViewportKey = Compositor.SubViewportKey;
 const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;
 const BufferID = ptypes.BufferID;
-const Event = WindowSystem.Event;
+const Event = Compositor.Event;
 const input = @import("input.zig");
 const BufferFormat = ptypes.BufferFormat;
 const CpuBufferHandle = ptypes.CpuBufferHandle;

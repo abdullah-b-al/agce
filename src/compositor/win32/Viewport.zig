@@ -1,15 +1,15 @@
 const Viewport = @This();
 
-base: *const WindowSystem.Viewport,
+base: *const Compositor.Viewport,
 child_window_handle: win32_foundation.HWND,
 swap_chain: *dxgi.IDXGISwapChain1,
 
 mouse_tracking: bool = false,
 
 pub fn init(
-    ws: *WindowSystem,
+    com: *Compositor,
     win32: *Win32,
-    base: *const WindowSystem.Viewport,
+    base: *const Compositor.Viewport,
     parent: ParentOfViewport,
     client_id: ClientID,
 ) !Viewport {
@@ -46,7 +46,7 @@ pub fn init(
         return error.FailedToCreateChildWindow;
     };
 
-    const ilong: isize = @bitCast(@intFromPtr(ws));
+    const ilong: isize = @bitCast(@intFromPtr(com));
 
     // TODO: Check return value
     _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
@@ -80,9 +80,9 @@ pub fn deinit(vp: *Viewport) void {
 }
 
 const std = @import("std");
-const WindowSystem = @import("../WindowSystem.zig");
-const ParentOfViewport = WindowSystem.ParentOfViewport;
-const ViewportKey = WindowSystem.ViewportKey;
+const Compositor = @import("../Compositor.zig");
+const ParentOfViewport = Compositor.ParentOfViewport;
+const ViewportKey = Compositor.ViewportKey;
 const ptypes = @import("protocol").types;
 const Win32 = @import("Win32.zig");
 const ClientID = ptypes.ClientID;

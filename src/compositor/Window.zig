@@ -1,10 +1,10 @@
 const Window = @This();
 
 id: WindowID,
-handle: *WindowSystem.WindowHandle,
+handle: *Compositor.WindowHandle,
 size: ptypes.Size,
 
 const std = @import("std");
-const WindowSystem = @import("WindowSystem.zig");
-const WindowID = WindowSystem.WindowID;
+const Compositor = @import("Compositor.zig");
+const WindowID = Compositor.WindowID;
 const ptypes = @import("protocol").types;

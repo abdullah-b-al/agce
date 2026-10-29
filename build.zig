@@ -152,8 +152,8 @@ pub fn build(b: *std.Build) !void {
         break :blk wayland;
     };
 
-    const window_system = b.createModule(.{
-        .root_source_file = b.path("src/window_system/root.zig"),
+    const compositor = b.createModule(.{
+        .root_source_file = b.path("src/compositor/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -173,11 +173,11 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "utils", .module = utils },
             .{ .name = "constants", .module = constants },
             .{ .name = "zio", .module = zio },
-            .{ .name = "window_system", .module = window_system },
+            .{ .name = "compositor", .module = compositor },
         },
     });
 
-    inline for (&.{ window_system, mux }) |m| {
+    inline for (&.{ compositor, mux }) |m| {
         switch (target.result.os.tag) {
             .windows => {
                 m.addImport("win32", win32.module("win32"));
@@ -195,7 +195,7 @@ pub fn build(b: *std.Build) !void {
 
     install_exe(b, "agce-mux", mux, step_mux);
 
-    build_tests(b, target, optimize, client, window_system, constants, glad);
+    build_tests(b, target, optimize, client, compositor, constants, glad);
 }
 
 fn build_tests(
@@ -203,7 +203,7 @@ fn build_tests(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     client: *Build.Module,
-    window_system: *Build.Module,
+    compositor: *Build.Module,
     constants: *Build.Module,
     glad: Glad,
 ) void {
@@ -222,7 +222,7 @@ fn build_tests(
             .imports = &.{
                 .{ .name = "client", .module = client },
                 .{ .name = "glad", .module = glad.c },
-                .{ .name = "window_system", .module = window_system },
+                .{ .name = "compositor", .module = compositor },
                 .{ .name = "constants", .module = constants },
                 .{ .name = "z2d", .module = z2d },
             },

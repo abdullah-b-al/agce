@@ -34,7 +34,7 @@ pub fn init(
     errdefer xdg_surface.destroy();
 
     const xdg_toplevel = try xdg_surface.getToplevel();
-    xdg_toplevel.setAppId(mux.window_system.class_of_window);
+    xdg_toplevel.setAppId(mux.compositor.class_of_window);
 
     const format: ptypes.BufferFormat = .argb8888;
     const size = width * height * format.bytes_per_pixel();
@@ -179,7 +179,7 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
             win.linux.wayland.resize(mux, size) catch return;
             win.linux.wayland.surface.commit();
 
-            mux.window_system.window_update_size(win.id, size) catch |err| switch (err) {
+            mux.compositor.window_update_size(win.id, size) catch |err| switch (err) {
                 error.WindowNotRegistered => unreachable,
             };
 
@@ -188,7 +188,7 @@ pub fn xdg_toplevel_listener(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
 
         .close => {
             log.err("TODO: close", .{});
-            // ws.deferred_events.appendAssumeCapacity(.{
+            // com.deferred_events.appendAssumeCapacity(.{
             //     .viewport_should_close = .{ .viewport_key = key },
             // });
         },
@@ -253,9 +253,9 @@ const wp = @import("wayland").client.wp;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const Mux = @import("Mux.zig");
-const WindowID = @import("window_system").WindowSystem.WindowID;
+const WindowID = @import("compositor").Compositor.WindowID;
 const log = std.log.scoped(.Mux);
 const utils = @import("utils");
 const c_linux = @import("c_linux");
 const ptypes = @import("protocol").types;
-const WindowSystem = @import("window_system").WindowSystem;
+const Compositor = @import("compositor").Compositor;

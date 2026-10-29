@@ -1,6 +1,6 @@
 const Viewport = @This();
 
-base: *const WindowSystem.Viewport,
+base: *const Compositor.Viewport,
 
 refresh_cycle: u32,
 surface: *cwl.Surface,
@@ -10,9 +10,9 @@ viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 
 pub fn init(
-    ws: *WindowSystem,
+    com: *Compositor,
     wl: *Wayland,
-    base: *const WindowSystem.Viewport,
+    base: *const Compositor.Viewport,
     parent: ParentOfViewport,
     client_id: ClientID,
     create_sync_timeline: bool,
@@ -45,7 +45,7 @@ pub fn init(
     else
         null;
 
-    try Wayland.frame_listener_set(ws, surface, .{ .client_id = client_id, .viewport_id = base.id });
+    try Wayland.frame_listener_set(com, surface, .{ .client_id = client_id, .viewport_id = base.id });
 
     return .{
         .base = base,
@@ -77,7 +77,7 @@ pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubView
     return null;
 }
 
-pub fn min_source_size(vp: *const Viewport, win: WindowSystem.Window) ptypes.Size {
+pub fn min_source_size(vp: *const Viewport, win: Compositor.Window) ptypes.Size {
     const width = @min(
         vp.base.render_size.width,
         vp.base.clipping_rect.width,
@@ -96,7 +96,7 @@ pub fn min_source_size(vp: *const Viewport, win: WindowSystem.Window) ptypes.Siz
     };
 }
 
-pub fn min_source_size_with_buffer(vp: *const Viewport, win: WindowSystem.Window, buffer: *Buffer) ptypes.Size {
+pub fn min_source_size_with_buffer(vp: *const Viewport, win: Compositor.Window, buffer: *Buffer) ptypes.Size {
     const size = vp.min_source_size(win);
     return .{
         .width = @max(
@@ -204,10 +204,10 @@ const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const ptypes = @import("protocol").types;
 const ClientID = ptypes.ClientID;
-const WindowSystem = @import("../WindowSystem.zig");
-const ParentOfViewport = WindowSystem.ParentOfViewport;
-const ViewportKey = WindowSystem.ViewportKey;
-const WindowID = WindowSystem.WindowID;
+const Compositor = @import("../Compositor.zig");
+const ParentOfViewport = Compositor.ParentOfViewport;
+const ViewportKey = Compositor.ViewportKey;
+const WindowID = Compositor.WindowID;
 const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");

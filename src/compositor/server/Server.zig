@@ -73,7 +73,7 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) void {
+pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) void {
     const @"error" = switch (message.from) {
         .known => server.handle_message_from_known(message, events),
         .unknown => server.handle_message_from_unknown(message),
@@ -110,9 +110,9 @@ pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.Ar
     };
 }
 
-pub fn events_handle(server: *Server, ws: *WindowSystem) void {
-    while (ws.server_events.pop()) |node| {
-        defer ws.server_events.destroy(node);
+pub fn events_handle(server: *Server, com: *Compositor) void {
+    while (com.server_events.pop()) |node| {
+        defer com.server_events.destroy(node);
 
         const event = node.event;
         server.handle_event(event) catch |err| {
@@ -212,7 +212,7 @@ pub fn handle_event(
     }
 }
 
-fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(WindowSystemEvent)) !void {
+fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
     std.debug.assert(message.from == .known);
 
     const client_id = message.from.known;
@@ -232,7 +232,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
         },
         else => {
             const client = server.clients.known.get(client_id).?;
-            const wse = try server.window_system_event_from_message(client, msg);
+            const wse = try server.compositor_event_from_message(client, msg);
             events.appendAssumeCapacity(wse);
         },
     }
@@ -297,15 +297,15 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     }
 }
 
-pub fn window_system_event_from_message(
+pub fn compositor_event_from_message(
     _: *Server,
     client: *Client,
     payload: client_to_server.MessagePayload,
-) error{UnsupportedMessageOnOs}!WindowSystemEvent {
+) error{UnsupportedMessageOnOs}!CompositorEvent {
     switch (payload) {
         .register,
         .generate_client_full_id,
-        => @panic("Cannot be turned into a WindowSystemEvent. This is meant for the Server"),
+        => @panic("Cannot be turned into a CompositorEvent. This is meant for the Server"),
 
         inline .buffer_present,
         .buffer_present_with_sync,
@@ -323,7 +323,7 @@ pub fn window_system_event_from_message(
         .texture_create_d3d,
         => |msg, tag| {
             return @unionInit(
-                WindowSystemEvent,
+                CompositorEvent,
                 @tagName(tag),
                 .{ .client_id = client.id, .payload = msg },
             );
@@ -397,8 +397,8 @@ pub fn messages_receive(server: *Server, arena: std.mem.Allocator, poll_result: 
     return list.items;
 }
 
-pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []const ReceivedMessage) error{OutOfMemory}![]const WindowSystemEvent {
-    var list: std.ArrayList(WindowSystemEvent) = try .initCapacity(arena, messages.len);
+pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []const ReceivedMessage) error{OutOfMemory}![]const CompositorEvent {
+    var list: std.ArrayList(CompositorEvent) = try .initCapacity(arena, messages.len);
 
     for (messages) |msg| {
         server.handle_message(msg, &list);
@@ -531,8 +531,8 @@ const constants = @import("constants");
 const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
-const WindowSystem = @import("../WindowSystem.zig");
-const WindowSystemEvent = @import("../WindowSystem.zig").Event;
+const Compositor = @import("../Compositor.zig");
+const CompositorEvent = @import("../Compositor.zig").Event;
 const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;
 const ptypes = @import("protocol").types;

@@ -1,13 +1,13 @@
 pub const Server = @import("server/Server.zig");
-pub const WindowSystem = @import("WindowSystem.zig");
+pub const Compositor = @import("Compositor.zig");
 pub const zio = @import("zio");
 
 pub const Tick = struct {
-    ws: *WindowSystem,
+    com: *Compositor,
     arena: std.heap.ArenaAllocator,
 
-    pub fn init(ws: *WindowSystem) Tick {
-        return .{ .ws = ws, .arena = .init(ws.gpa) };
+    pub fn init(com: *Compositor) Tick {
+        return .{ .com = com, .arena = .init(com.gpa) };
     }
 
     pub fn deinit(state: *Tick) void {
@@ -18,23 +18,23 @@ pub const Tick = struct {
 pub fn tick(state: *Tick, poll_result: Poll) !void {
     defer _ = state.arena.reset(.{ .retain_with_limit = 1024 * 1024 });
 
-    const ws = state.ws;
-    const server = ws.server;
+    const com = state.com;
+    const server = com.server;
     const arena = state.arena.allocator();
 
     const messages = try server.messages_receive(arena, poll_result.clients);
     const ws_events = try server.messages_handle(arena, messages);
-    ws.events_handle(ws_events);
-    try ws.present();
+    com.events_handle(ws_events);
+    try com.present();
 
-    if (poll_result.window_system) {
-        ws.dispatch();
+    if (poll_result.dispatch) {
+        com.dispatch();
     }
 
-    ws.events_handle(ws.deferred_events.items);
-    ws.deferred_events.clearRetainingCapacity();
+    com.events_handle(com.deferred_events.items);
+    com.deferred_events.clearRetainingCapacity();
 
-    server.events_handle(ws);
+    server.events_handle(com);
 
     if (poll_result.accept) {
         // FIXME: In windows, we must accept all connections as resetting the accept event
@@ -50,19 +50,19 @@ pub fn tick(state: *Tick, poll_result: Poll) !void {
     server.clients.remove_closed_known_clients();
     server.clients.remove_promoted_or_closed_unknown_clients();
 
-    var i = ws.resources.count();
+    var i = com.resources.count();
     while (i > 0) {
         i -= 1;
-        const client_id = ws.resources.keys()[i];
+        const client_id = com.resources.keys()[i];
         if (!server.clients.known.contains(client_id)) {
-            ws.client_disconnected(client_id);
+            com.client_disconnected(client_id);
         }
     }
 
-    try ws.resources.ensureTotalCapacity(ws.gpa, server.clients.count());
+    try com.resources.ensureTotalCapacity(com.gpa, server.clients.count());
     for (server.clients.known.keys()) |client_id| {
-        if (!ws.resources.contains(client_id)) {
-            ws.client_registered(client_id) catch |err| switch (err) {
+        if (!com.resources.contains(client_id)) {
+            com.client_registered(client_id) catch |err| switch (err) {
                 error.OutOfMemory => unreachable,
             };
         }
@@ -70,29 +70,29 @@ pub fn tick(state: *Tick, poll_result: Poll) !void {
 }
 
 const Poll = struct {
-    window_system: bool,
+    dispatch: bool,
     accept: bool,
     clients: []Server.MessageSource,
 };
 
 pub fn poll(
     arena: std.mem.Allocator,
-    ws: *WindowSystem,
+    com: *Compositor,
     server: *const Server,
     timeout: Io.Timeout,
 ) error{ OutOfMemory, PollFailed, Timeout }!Poll {
     std.debug.assert(timeout != .deadline);
 
     return switch (os) {
-        .linux => try poll_linux(arena, ws, server, timeout),
-        .windows => try poll_windows(arena, ws, server, timeout),
+        .linux => try poll_linux(arena, com, server, timeout),
+        .windows => try poll_windows(arena, com, server, timeout),
         else => comptime unreachable,
     };
 }
 
 fn poll_windows(
     arena: std.mem.Allocator,
-    _: *WindowSystem,
+    _: *Compositor,
     server: *const Server,
     timeout: Io.Timeout,
 ) !Poll {
@@ -185,18 +185,18 @@ fn poll_windows(
             return .{
                 .clients = clients.items,
                 .accept = accept,
-                .window_system = false,
+                .dispatch = false,
             };
         },
         .window => {
-            return .{ .clients = &.{}, .accept = false, .window_system = true };
+            return .{ .clients = &.{}, .accept = false, .dispatch = true };
         },
     }
 }
 
 fn poll_linux(
     arena: std.mem.Allocator,
-    ws: *WindowSystem,
+    com: *Compositor,
     server: *const Server,
     timeout: Io.Timeout,
 ) !Poll {
@@ -221,9 +221,9 @@ fn poll_linux(
     var i: usize = 0;
 
     const display_i = i;
-    switch (ws.native_tag()) {
+    switch (com.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
+            const wl = tag.compositor(com);
             const display_fd = wl.display.getFd();
             fds[i].fd = display_fd;
             i += 1;
@@ -281,7 +281,7 @@ fn poll_linux(
     const compositor = (fds[display_i].revents & POLL.IN) != 0;
     const accept = (fds[server_socket_i].revents & POLL.IN) != 0;
     return .{
-        .window_system = compositor,
+        .dispatch = compositor,
         .accept = accept,
         .clients = clients.items,
     };

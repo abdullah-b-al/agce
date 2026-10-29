@@ -14,7 +14,7 @@ win32: if (os == .windows) Win32.Viewport else void,
 linux: if (os == .linux) Linux else void,
 
 pub fn create(
-    ws: *WindowSystem,
+    com: *Compositor,
     parent: ParentOfViewport,
     key: ViewportKey,
     window_id: WindowID,
@@ -24,8 +24,8 @@ pub fn create(
     create_sync_timeline: bool,
     format: ptypes.BufferFormat,
 ) !*Viewport {
-    const vp = try ws.gpa.create(Viewport);
-    errdefer ws.gpa.destroy(vp);
+    const vp = try com.gpa.create(Viewport);
+    errdefer com.gpa.destroy(vp);
 
     if (parent_key) |p| {
         std.debug.assert(key.viewport_id.is_server_id());
@@ -47,12 +47,12 @@ pub fn create(
         .linux = undefined,
     };
 
-    switch (ws.native_tag()) {
+    switch (com.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.window_system(ws);
+            const wl = tag.compositor(com);
             vp.linux = .{
                 .wayland = try .init(
-                    ws,
+                    com,
                     wl,
                     vp,
                     parent,
@@ -62,8 +62,8 @@ pub fn create(
             };
         },
         .win32 => |tag| {
-            const win32 = tag.window_system(ws);
-            vp.win32 = try .init(ws, win32, vp, parent, key.client_id);
+            const win32 = tag.compositor(com);
+            vp.win32 = try .init(com, win32, vp, parent, key.client_id);
         },
     }
 
@@ -92,7 +92,7 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
     gpa.destroy(vp);
 }
 
-pub fn native_tag(vp: *Viewport) WindowSystem.NativeTag {
+pub fn native_tag(vp: *Viewport) Compositor.NativeTag {
     return switch (os) {
         .linux => switch (vp.linux) {
             .wayland => .wayland,
@@ -102,15 +102,15 @@ pub fn native_tag(vp: *Viewport) WindowSystem.NativeTag {
     };
 }
 
-pub fn should_be_hidden(vp: *Viewport, ws: *WindowSystem) bool {
+pub fn should_be_hidden(vp: *Viewport, com: *Compositor) bool {
     if (vp.state == .hidden) return true;
 
-    var maybe_parent = ws.viewport_from_key(vp.parent_key orelse return false);
+    var maybe_parent = com.viewport_from_key(vp.parent_key orelse return false);
 
     while (maybe_parent) |parent| {
         if (parent.state == .hidden) return true;
 
-        maybe_parent = ws.viewport_from_key(parent.parent_key orelse return false);
+        maybe_parent = com.viewport_from_key(parent.parent_key orelse return false);
     }
 
     return false;
@@ -133,9 +133,9 @@ pub const Linux = union(enum) {
 const std = @import("std");
 const ptypes = @import("protocol").types;
 const ClientID = @import("server/Clients.zig").ClientID;
-const WindowSystem = @import("WindowSystem.zig");
-const ViewportKey = WindowSystem.ViewportKey;
-const WindowID = WindowSystem.WindowID;
+const Compositor = @import("Compositor.zig");
+const ViewportKey = Compositor.ViewportKey;
+const WindowID = Compositor.WindowID;
 const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");
@@ -143,6 +143,6 @@ const Wayland = @import("wayland/Wayland.zig");
 const Window = @import("Window.zig");
 const Buffer = @import("ClientResources.zig").Buffer;
 const SubViewport = @import("SubViewport.zig");
-const ParentOfViewport = WindowSystem.ParentOfViewport;
+const ParentOfViewport = Compositor.ParentOfViewport;
 const os = @import("builtin").os.tag;
 const Win32 = @import("win32/Win32.zig");

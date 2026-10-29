@@ -30,22 +30,22 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var mux: *Mux = try .create(io, gpa, &environ_map);
     defer mux.destroy();
 
-    var tick: window_system.Tick = .init(mux.window_system);
+    var tick: compositor.Tick = .init(mux.compositor);
     defer tick.deinit();
 
     while (!exit) {
-        const poll_result = try window_system.poll(
+        const poll_result = try compositor.poll(
             tick.arena.allocator(),
-            mux.window_system,
-            mux.window_system.server,
+            mux.compositor,
+            mux.compositor.server,
             .none,
         );
 
-        if (poll_result.window_system) {
+        if (poll_result.dispatch) {
             mux.dispatch();
         }
 
-        try window_system.tick(&tick, poll_result);
+        try compositor.tick(&tick, poll_result);
 
         mux.flush();
     }
@@ -72,9 +72,9 @@ const log = std.log.scoped(.main);
 const os = @import("builtin").os.tag;
 const win32_threading = @import("win32").system.threading;
 const win_sock = @import("win32").networking.win_sock;
-const window_system = @import("window_system");
-const WindowSystem = window_system.WindowSystem;
-const Server = window_system.Server;
+const compositor = @import("compositor");
+const Compositor = compositor.Compositor;
+const Server = compositor.Server;
 const zio = @import("zio");
 const cwl = @import("wayland").client.wl;
 const Mux = @import("Mux.zig");
