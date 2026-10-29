@@ -240,13 +240,18 @@ pub fn dispatch(com: *Compositor) void {
         },
         .win32 => |tag| {
             tag.guard();
-            log.err("TODO: Dispatch events of viewports only", .{});
-            // var msg: win32_win.MSG = undefined;
 
-            // while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
-            //     _ = win32_win.TranslateMessage(&msg);
-            //     _ = win32_win.DispatchMessageA(&msg);
-            // }
+            for (com.resources.values()) |rs| {
+                for (rs.viewports.values()) |vp| {
+                    const nvp = tag.viewport(vp);
+                    var msg: win32_win.MSG = undefined;
+
+                    while (win32_win.PeekMessageA(&msg, nvp.child_window_handle, 0, 0, win32_win.PM_REMOVE) > 0) {
+                        _ = win32_win.TranslateMessage(&msg);
+                        _ = win32_win.DispatchMessageA(&msg);
+                    }
+                }
+            }
         },
     }
 }

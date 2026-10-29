@@ -3,7 +3,6 @@ const Win32 = @This();
 gpa: std.mem.Allocator,
 
 instance: win32_foundation.HINSTANCE,
-class_window: win32_win.WNDCLASSA,
 class_viewport: win32_win.WNDCLASSA,
 
 d11_context: D11Context,
@@ -11,19 +10,6 @@ d11_context: D11Context,
 pub fn create(com: *Compositor, instance: win32_foundation.HINSTANCE) !*Win32 {
     const ptr = try com.gpa.create(Win32);
     errdefer com.gpa.destroy(ptr);
-
-    const class_window: win32_win.WNDCLASSA = .{
-        .style = .{},
-        .cbClsExtra = 0,
-        .cbWndExtra = 0,
-        .lpszMenuName = null,
-        .hIcon = null,
-        .hCursor = null,
-        .hbrBackground = null,
-        .lpfnWndProc = window_proc,
-        .hInstance = instance,
-        .lpszClassName = com.class_of_window,
-    };
 
     const class_viewport: win32_win.WNDCLASSA = .{
         .style = .{},
@@ -38,12 +24,6 @@ pub fn create(com: *Compositor, instance: win32_foundation.HINSTANCE) !*Win32 {
         .lpszClassName = com.class_of_viewport,
     };
 
-    if (win32_win.RegisterClassA(&class_window) == 0) {
-        const err = win32_foundation.GetLastError();
-        log.err("{}", .{err});
-        return error.FailedToRegisterClass;
-    }
-
     if (win32_win.RegisterClassA(&class_viewport) == 0) {
         const err = win32_foundation.GetLastError();
         log.err("{}", .{err});
@@ -54,7 +34,6 @@ pub fn create(com: *Compositor, instance: win32_foundation.HINSTANCE) !*Win32 {
     ptr.* = .{
         .gpa = com.gpa,
         .instance = instance,
-        .class_window = class_window,
         .class_viewport = class_viewport,
         .d11_context = d11_context,
     };
@@ -65,60 +44,6 @@ pub fn create(com: *Compositor, instance: win32_foundation.HINSTANCE) !*Win32 {
 pub fn destroy(win32: *Win32) void {
     win32.d11_context.deinit();
     win32.gpa.destroy(win32);
-}
-
-fn window_proc(
-    hwnd: win32_foundation.HWND,
-    msg: u32,
-    wparam: win32_foundation.WPARAM,
-    lparam: win32_foundation.LPARAM,
-) callconv(.winapi) win32_foundation.LRESULT {
-    if (true) {
-        @panic("Removed feature. Should be handled by Mux");
-    }
-
-    const long: usize = @intCast(win32_win.GetWindowLongPtrA(hwnd, .P_USERDATA));
-
-    // Window has not been created yet. Pass through msg
-    if (long == 0) {
-        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
-    }
-
-    const com: *Compositor = @ptrFromInt(long);
-
-    if (com.destroy_started) {
-        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
-    }
-
-    const win = blk: {
-        for (com.windows.values()) |win| {
-            if (hwnd == win.win32.handle) break :blk win;
-        }
-
-        // Window has been removed. Pass through msg
-        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
-    };
-
-    switch (msg) {
-        win32_win.WM_SIZE => {
-            const low: isize = lparam & 0xFFFF;
-            const high: isize = (lparam >> 16) & 0xFFFF;
-            const w: i16 = @truncate(low);
-            const h: i16 = @truncate(high);
-
-            com.deferred_events.append(com.gpa, .{
-                .window_resize_by_display_server = .{
-                    .id = win.id,
-                    .size = .{ .width = w, .height = h },
-                },
-            }) catch return 0;
-            return 0;
-        },
-
-        else => {},
-    }
-
-    return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
 fn viewport_proc(
@@ -150,7 +75,7 @@ fn viewport_proc(
             }
         }
 
-        // Window has been removed. Pass through msg
+        // Child window has been removed. Pass through msg
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     };
 

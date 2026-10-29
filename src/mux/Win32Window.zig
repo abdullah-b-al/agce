@@ -1,0 +1,104 @@
+const Window = @This();
+
+handle: win32_foundation.HWND,
+
+pub fn init(
+    mux: *Mux,
+    requested_size: ptypes.Size,
+) !Window {
+    const handle = win32_win.CreateWindowExA(
+        .{},
+
+        mux.win32.window_class.lpszClassName,
+        "agce",
+
+        .{
+            .TABSTOP = 1,
+            .GROUP = 1,
+            .THICKFRAME = 1,
+            .SYSMENU = 1,
+            .DLGFRAME = 1,
+            .BORDER = 1,
+            .VISIBLE = 1,
+            .CLIPCHILDREN = 1,
+        },
+
+        win32_win.CW_USEDEFAULT,
+        win32_win.CW_USEDEFAULT,
+        requested_size.width,
+        requested_size.height,
+
+        null,
+        null,
+        mux.win32.hinstance,
+        null,
+    ) orelse {
+        const err = win32_foundation.GetLastError();
+        log.err("{}", .{err});
+        return error.FailedToCreateWindow;
+    };
+
+    const ilong: isize = @bitCast(@intFromPtr(mux));
+
+    // TODO: Check return value
+    _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
+
+    return .{ .handle = handle };
+}
+
+pub fn deinit(win: *Window) void {
+    _ = win32_win.DestroyWindow(win.handle);
+}
+
+pub fn window_proc(
+    hwnd: win32_foundation.HWND,
+    msg: u32,
+    wparam: win32_foundation.WPARAM,
+    lparam: win32_foundation.LPARAM,
+) callconv(.winapi) win32_foundation.LRESULT {
+    const long: usize = @intCast(win32_win.GetWindowLongPtrA(hwnd, .P_USERDATA));
+
+    // Window has not been created yet. Pass through msg
+    if (long == 0) {
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+
+    const mux: *Mux = @ptrFromInt(long);
+
+    if (mux.destroy_started) {
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+
+    const win = blk: {
+        for (mux.windows.values()) |win| {
+            if (hwnd == win.win32.handle) break :blk win;
+        }
+
+        // Window has been removed. Pass through msg
+        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    };
+
+    switch (msg) {
+        win32_win.WM_SIZE => {
+            const low: isize = lparam & 0xFFFF;
+            const high: isize = (lparam >> 16) & 0xFFFF;
+            const w: i16 = @truncate(low);
+            const h: i16 = @truncate(high);
+
+            mux.compositor.window_update_size(win.id, .{ .width = w, .height = h }) catch |err| switch (err) {
+                error.WindowNotRegistered => unreachable,
+            };
+            return 0;
+        },
+
+        else => {},
+    }
+
+    return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+const std = @import("std");
+const log = std.log.scoped(.Mux);
+const ptypes = @import("protocol").types;
+const win32_foundation = @import("win32").foundation;
+const win32_win = @import("win32").ui.windows_and_messaging;
+const Mux = @import("Mux.zig");
