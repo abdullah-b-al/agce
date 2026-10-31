@@ -28,9 +28,7 @@ pub fn tick(state: *Tick, poll_result: Poll) !void {
     com.events_handle(ws_events);
     try com.present();
 
-    if (poll_result.dispatch) {
-        com.dispatch();
-    }
+    com.dispatch();
 
     com.events_handle(com.deferred_events.items);
     com.deferred_events.clearRetainingCapacity();
