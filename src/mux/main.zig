@@ -30,21 +30,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var mux: *Mux = try .create(io, gpa, &environ_map);
     defer mux.destroy();
 
-    var tick: compositor.Tick = .init(mux.compositor);
-    defer tick.deinit();
-
     while (!exit) {
-        const poll_result = try compositor.poll(
-            tick.arena.allocator(),
-            mux.compositor,
-            .none,
-        );
+        const poll_result = try mux.compositor.poll(.none);
 
         if (poll_result.dispatch) {
             mux.dispatch();
         }
 
-        try compositor.tick(&tick, poll_result);
+        try mux.compositor.tick(poll_result);
 
         mux.flush();
         mux.windows_destroy_if_closed();

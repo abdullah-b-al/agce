@@ -50,23 +50,20 @@ pub const TestServer = struct {
         defer rt.deinit();
         const io = rt.io();
 
-        const com: *Compositor = try .create(io, gpa, &environ_map, src.fn_name);
+        const com: *CompositorHandle = blk: {
+            break :blk @ptrCast(try Compositor.create(io, gpa, &environ_map, src.fn_name));
+        };
         defer com.destroy();
 
-        var state: Tick = .init(@ptrCast(com));
-        defer state.deinit();
-
         while (!exit.isSet()) {
-            const poll_result = poll(
-                state.arena.allocator(),
-                @ptrCast(com),
+            const poll_result = com.poll(
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => continue,
                 else => |e| return e,
             };
 
-            try tick(&state, poll_result);
+            try com.tick(poll_result);
         }
     }
 };
@@ -120,9 +117,8 @@ const testing = std.testing;
 const client = @import("client");
 const constants = @import("constants");
 const glad = @import("glad");
-const Tick = @import("compositor").Tick;
+const CompositorHandle = @import("compositor").CompositorHandle;
 const Compositor = @import("compositor").Compositor;
 const Server = @import("compositor").Server;
 const zio = @import("compositor").zio;
 const tick = @import("compositor").tick;
-const poll = @import("compositor").poll;
