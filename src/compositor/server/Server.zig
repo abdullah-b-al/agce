@@ -73,7 +73,52 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) void {
+pub fn process_incoming_messages(server: *Server, arena: std.mem.Allocator, poll_result: []const MessageSource) ![]const CompositorEvent {
+    if (poll_result.len == 0)
+        return &.{};
+
+    const messages_raw = blk: {
+        var messages_raw: std.ArrayList(RawMessage) = .empty;
+
+        for (poll_result) |source| {
+            const connection: *ClientConnection = switch (source) {
+                .known => |id| &server.clients.known.get(id).?.connection,
+                .unknown => |index| &server.clients.unknown.items[index].connection,
+            };
+
+            connection.receive_raw_all(server.io, arena, &messages_raw, source) catch |err|
+                switch (err) {
+                    error.OutOfMemory => continue,
+                };
+        }
+
+        break :blk messages_raw.items;
+    };
+
+    const messages_parsed = blk: {
+        var messages_parsed: std.ArrayList(ReceivedMessage) =
+            try .initCapacity(arena, messages_raw.len);
+
+        for (messages_raw) |raw| {
+            const payload = raw.parse(arena) catch |err| switch (err) {
+                error.ParseFailed => continue,
+            };
+
+            messages_parsed.appendAssumeCapacity(.{ .from = raw.from, .payload = payload });
+        }
+
+        break :blk messages_parsed.items;
+    };
+
+    var result: std.ArrayList(CompositorEvent) = try .initCapacity(arena, messages_parsed.len);
+    for (messages_parsed) |parsed| {
+        server.handle_message(parsed, &result);
+    }
+
+    return result.items;
+}
+
+fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) void {
     const @"error" = switch (message.from) {
         .known => server.handle_message_from_known(message, events),
         .unknown => server.handle_message_from_unknown(message),
@@ -232,8 +277,8 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
         },
         else => {
             const client = server.clients.known.get(client_id).?;
-            const wse = try server.compositor_event_from_message(client, msg);
-            events.appendAssumeCapacity(wse);
+            const ce = try server.compositor_event_from_message(client, msg);
+            events.appendAssumeCapacity(ce);
         },
     }
 }
@@ -342,71 +387,6 @@ pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
     return .{ .id = client_id, .fingerprint = fp };
 }
 
-pub fn messages_receive(server: *Server, arena: std.mem.Allocator, poll_result: []const MessageSource) error{OutOfMemory}![]const ReceivedMessage {
-    if (poll_result.len == 0)
-        return &.{};
-
-    var list = try std.ArrayList(ReceivedMessage).initCapacity(
-        arena,
-        server.clients.count() * 32,
-    );
-
-    var reader_buffer: [4096]u8 = undefined;
-    for (poll_result) |source| {
-        const connection: *ClientConnection = switch (source) {
-            .known => |id| &server.clients.known.get(id).?.connection,
-            .unknown => |index| &server.clients.unknown.items[index].connection,
-        };
-
-        std.debug.assert(!connection.closed);
-        var reader = connection.stream.reader(&reader_buffer);
-        reader.setTimeout(.fromNanoseconds(0));
-
-        var added_from_this_client: usize = 0;
-        while (true) {
-            const read = connection.receive_with_reader(server.io, arena, &reader.interface) catch |err|
-                switch (err) {
-                    error.EndOfStream => {
-                        if (added_from_this_client == 0) {
-                            connection.close_with_error = error.ConnectionClosed;
-                        }
-                        break;
-                    },
-                    error.ReadFailed => switch (reader.err.?) {
-                        error.Timeout => break,
-                        else => |e| {
-                            connection.close_with_error = e;
-                            break;
-                        },
-                    },
-                    error.OutOfMemory,
-                    error.ParseFailed,
-                    error.InvalidHeader,
-                    error.HeaderWithoutPayload,
-                    => |e| {
-                        log.err("{}", .{e});
-                        continue;
-                    },
-                };
-
-            try list.append(arena, .{ .from = source, .payload = read });
-            added_from_this_client += 1;
-        }
-    }
-
-    return list.items;
-}
-
-pub fn messages_handle(server: *Server, arena: std.mem.Allocator, messages: []const ReceivedMessage) error{OutOfMemory}![]const CompositorEvent {
-    var list: std.ArrayList(CompositorEvent) = try .initCapacity(arena, messages.len);
-
-    for (messages) |msg| {
-        server.handle_message(msg, &list);
-    }
-
-    return list.items;
-}
-
 pub fn close_marked_clients(server: *Server) void {
     for (server.clients.known.values()) |client| {
         if (client.connection.close_with_error) |err| {
@@ -460,6 +440,33 @@ const ReceivedMessage = struct {
     from: MessageSource,
 
     const Payload = client_to_server.MessagePayload;
+};
+
+pub const RawMessage = struct {
+    header: client_to_server.MessageHeader,
+    raw: []const u8,
+    from: MessageSource,
+
+    pub fn parse(raw: RawMessage, arena: std.mem.Allocator) error{ParseFailed}!client_to_server.MessagePayload {
+        switch (raw.header.message_tag) {
+            inline else => |tag| {
+                switch (raw.header.format) {
+                    .json => {
+                        const T = utils.TypeOfField(client_to_server.MessagePayload, @tagName(tag));
+                        const p = std.json.parseFromSliceLeaky(T, arena, raw.raw, .{
+                            .allocate = .alloc_if_needed,
+                        }) catch |err| {
+                            // TODO: Check errors
+                            log.err("{}", .{err});
+                            return error.ParseFailed;
+                        };
+
+                        return @unionInit(client_to_server.MessagePayload, @tagName(tag), p);
+                    },
+                }
+            },
+        }
+    }
 };
 
 pub const MessageSource = union(enum) {

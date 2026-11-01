@@ -108,9 +108,9 @@ pub const CompositorHandle = opaque {
         const server = com.server;
         const arena = com.tick_arena.allocator();
 
-        const messages = try server.messages_receive(arena, poll_result.clients);
-        const ws_events = try server.messages_handle(arena, messages);
-        com.events_handle(ws_events);
+        const compositor_events = try server.process_incoming_messages(arena, poll_result.clients);
+
+        com.events_handle(compositor_events);
         try com.present();
 
         com.dispatch();

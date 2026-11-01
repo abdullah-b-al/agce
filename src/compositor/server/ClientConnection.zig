@@ -16,17 +16,58 @@ pub fn close(c: *ClientConnection) void {
     c.closed = true;
 }
 
-pub const ReceiveError =
-    error{ConnectionClosed} ||
-    zio.ev.NetRecv.Error ||
-    utils.ErrorSetOf(receive_with_reader);
+pub fn receive_raw_all(
+    c: *ClientConnection,
+    io: Io,
+    arena: std.mem.Allocator,
+    list: *std.ArrayList(Server.RawMessage),
+    source: Server.MessageSource,
+) error{OutOfMemory}!void {
+    std.debug.assert(!c.closed);
+    std.debug.assert(c.close_with_error == null);
 
-pub fn receive_with_reader(
+    var reader_buffer: [4096]u8 = undefined;
+    var reader = c.stream.reader(&reader_buffer);
+    reader.setTimeout(.fromNanoseconds(0));
+
+    var added_from_this_client: usize = 0;
+    while (true) {
+        const header, const raw = c.receive_raw_with_reader(io, arena, &reader.interface) catch |err|
+            switch (err) {
+                error.EndOfStream => {
+                    if (added_from_this_client == 0) {
+                        c.close_with_error = error.ConnectionClosed;
+                    }
+                    return;
+                },
+                error.ReadFailed => switch (reader.err.?) {
+                    error.Timeout => break,
+                    else => |e| {
+                        c.close_with_error = e;
+                        return;
+                    },
+                },
+
+                error.OutOfMemory,
+                error.InvalidHeader,
+                error.HeaderWithoutPayload,
+                => |e| {
+                    log.err("{}", .{e});
+                    continue;
+                },
+            };
+
+        try list.append(arena, .{ .from = source, .raw = raw, .header = header });
+        added_from_this_client += 1;
+    }
+}
+
+pub fn receive_raw_with_reader(
     _: *ClientConnection,
     _: Io,
     arena: std.mem.Allocator,
     reader: *Io.Reader,
-) error{ ReadFailed, OutOfMemory, EndOfStream, InvalidHeader, HeaderWithoutPayload, ParseFailed }!client_to_server.MessagePayload {
+) error{ ReadFailed, OutOfMemory, EndOfStream, InvalidHeader, HeaderWithoutPayload }!struct { client_to_server.MessageHeader, []const u8 } {
     const header_bytes = try reader.take(@sizeOf(client_to_server.MessageHeader));
 
     const header = client_to_server.parse_message_header(header_bytes) catch |err| switch (err) {
@@ -35,34 +76,15 @@ pub fn receive_with_reader(
             return error.InvalidHeader;
         },
     };
-    const err_data = if (header.payload_len > reader.buffer.len)
-        reader.readAlloc(arena, header.payload_len)
-    else
-        reader.take(header.payload_len);
 
-    const data = err_data catch |err| return switch (err) {
+    const data = reader.readAlloc(arena, header.payload_len) catch |err| return switch (err) {
         error.EndOfStream => error.HeaderWithoutPayload,
         error.ReadFailed, error.OutOfMemory => |e| e,
     };
 
-    switch (header.message_tag) {
-        inline else => |tag| {
-            switch (header.format) {
-                .json => {
-                    const T = utils.TypeOfField(client_to_server.MessagePayload, @tagName(tag));
-                    const parsed = std.json.parseFromSliceLeaky(T, arena, data, .{
-                        .allocate = .alloc_if_needed,
-                    }) catch |err| {
-                        log.err("{}", .{err});
-                        return error.ParseFailed;
-                    };
-
-                    return @unionInit(client_to_server.MessagePayload, @tagName(tag), parsed);
-                },
-            }
-        },
-    }
+    return .{ header, data };
 }
+
 pub fn send_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.Void) !void {
     const message = try c.stringify(gpa, .{ .registered = payload });
     try c.send(io, gpa, message);
@@ -310,7 +332,7 @@ fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
 }
 
 pub const CloseError =
-    ReceiveError ||
+    zio.ev.NetRecv.Error ||
     Server.HandleMessageFromUnknownError ||
     error{ FailedToSendHandle, FailedToSendFds, FailedToCreateWin32EventHandle };
 
