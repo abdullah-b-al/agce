@@ -708,6 +708,7 @@ pub fn viewport_create(com: *Compositor, args: Event.TypeOf(.viewport_create)) !
                         .sub_viewport_id = v.embeder.key.sub_viewport_id,
                         .status = .success,
                         .render_size = v.embeder.render_size,
+                        .viewport_key = v.embeded,
                     },
                 },
             });
@@ -1279,10 +1280,7 @@ pub fn mouse_scroll(com: *Compositor, args: Event.TypeOf(.mouse_scroll)) !void {
     });
 }
 
-pub const ViewportKey = struct {
-    client_id: ClientID,
-    viewport_id: ViewportID,
-};
+const ViewportKey = ptypes.ViewportKey;
 
 pub const SubViewportKey = struct {
     client_id: ClientID,

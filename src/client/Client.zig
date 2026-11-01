@@ -265,6 +265,7 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
                 .failure => svp.state = .failed,
             }
             svp.render_size = e.render_size;
+            svp.viewport_key = e.viewport_key;
         },
         .sub_viewport_display_state => |e| {
             const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;

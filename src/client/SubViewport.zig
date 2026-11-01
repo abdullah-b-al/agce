@@ -8,6 +8,7 @@ render_size: ptypes.Size,
 pos: ptypes.Pos,
 size: ptypes.Size,
 state: State,
+viewport_key: ?ptypes.ViewportKey,
 
 pub fn init(
     parent: ViewportID,
@@ -24,6 +25,7 @@ pub fn init(
         .size = .from_rect(rect),
         .render_size = .{ .width = 0, .height = 0 },
         .state = .pending,
+        .viewport_key = null,
     };
 }
 pub fn deinit(svp: *SubViewport) void {

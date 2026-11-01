@@ -51,7 +51,7 @@ pub const CompositorHandle = opaque {
         try h.cast().window_update_size(id, size);
     }
 
-    pub fn window_focused_by_keyboard(h: *CompositorHandle, key: Compositor.ViewportKey) void {
+    pub fn window_focused_by_keyboard(h: *CompositorHandle, key: ptypes.ViewportKey) void {
         h.cast().window_focused_by_keyboard(key);
     }
 
@@ -61,7 +61,7 @@ pub const CompositorHandle = opaque {
 
     pub fn viewport_resize(
         h: *CompositorHandle,
-        key: Compositor.ViewportKey,
+        key: ptypes.ViewportKey,
         size: ptypes.Size,
     ) error{OutOfMemory}!void {
         const com = h.cast();
@@ -79,7 +79,7 @@ pub const CompositorHandle = opaque {
 
     pub fn viewport_should_close(
         h: *CompositorHandle,
-        key: Compositor.ViewportKey,
+        key: ptypes.ViewportKey,
     ) error{OutOfMemory}!void {
         const com = h.cast();
         try com.deferred_events.append(com.gpa, .{

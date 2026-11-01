@@ -82,7 +82,7 @@ pub fn deinit(vp: *Viewport) void {
 const std = @import("std");
 const Compositor = @import("../Compositor.zig");
 const ParentOfViewport = Compositor.ParentOfViewport;
-const ViewportKey = Compositor.ViewportKey;
+const ViewportKey = ptypes.ViewportKey;
 const ptypes = @import("protocol").types;
 const Win32 = @import("Win32.zig");
 const ClientID = ptypes.ClientID;

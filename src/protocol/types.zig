@@ -140,6 +140,11 @@ pub const BufferID = enum(u32) {
     }
 };
 
+pub const ViewportKey = struct {
+    client_id: ClientID,
+    viewport_id: ViewportID,
+};
+
 pub const Status = enum { success, failure };
 
 pub const AcquireTimelinePoint = enum(u64) {

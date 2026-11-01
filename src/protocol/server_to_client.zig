@@ -224,6 +224,7 @@ pub const SubViewportEmbeded = struct {
     sub_viewport_id: types.SubViewportID,
     status: types.Status,
     render_size: types.Size,
+    viewport_key: types.ViewportKey,
 };
 
 pub const SubviewportClosed = struct {

@@ -181,7 +181,7 @@ pub fn flush(mux: *Mux) void {
     }
 }
 
-fn window_handle_for_viewport(ptr: *anyopaque, key: Compositor.ViewportKey, size: ptypes.Size) ?*Compositor.WindowHandle {
+fn window_handle_for_viewport(ptr: *anyopaque, key: ptypes.ViewportKey, size: ptypes.Size) ?*Compositor.WindowHandle {
     std.debug.assert(size.width > 0);
     std.debug.assert(size.height > 0);
 
@@ -243,12 +243,12 @@ pub fn windows_destroy_if_closed(mux: *Mux) void {
 
 pub const Window = struct {
     id: WindowID,
-    viewport_key: Compositor.ViewportKey,
+    viewport_key: ptypes.ViewportKey,
 
     linux: if (os == .linux) Linux else void,
     win32: if (os == .windows) Win32Window else void,
 
-    pub fn create(mux: *Mux, id: WindowID, key: Compositor.ViewportKey, size: ptypes.Size) !*Window {
+    pub fn create(mux: *Mux, id: WindowID, key: ptypes.ViewportKey, size: ptypes.Size) !*Window {
         const win = try mux.gpa.create(Window);
         errdefer mux.gpa.destroy(win);
 
