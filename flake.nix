@@ -25,6 +25,8 @@
           mesa
           libgbm
           libxkbcommon
+
+          sdl3
         ];
       };
       packages.${system}.default = pkgs.stdenv.mkDerivation {

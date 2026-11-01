@@ -31,7 +31,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer mux.destroy();
 
     while (!exit) {
-        const poll_result = try mux.compositor.poll(.none);
+        const poll_result = try mux.compositor.poll(.mux, .none);
 
         if (poll_result.dispatch) {
             mux.dispatch();

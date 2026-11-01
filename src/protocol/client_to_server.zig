@@ -13,6 +13,9 @@ pub const Message = struct {
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     register: Register,
+
+    wake_up: Void,
+
     generate_client_full_id: Void,
 
     buffer_create_cpu: BufferCreateCpu,

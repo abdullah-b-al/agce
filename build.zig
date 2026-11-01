@@ -177,6 +177,19 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
+    const embeded = b.createModule(.{
+        .root_source_file = b.path("src/embeded/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = protocol },
+            .{ .name = "utils", .module = utils },
+            .{ .name = "constants", .module = constants },
+            .{ .name = "zio", .module = zio },
+            .{ .name = "compositor", .module = compositor },
+        },
+    });
+
     inline for (&.{ compositor, mux }) |m| {
         switch (target.result.os.tag) {
             .windows => {
@@ -196,6 +209,7 @@ pub fn build(b: *std.Build) !void {
     install_exe(b, "agce-mux", mux, step_mux);
 
     build_tests(b, target, optimize, client, compositor, constants, glad);
+    build_sdl_test(b, target, optimize, embeded);
 }
 
 fn build_tests(
@@ -269,6 +283,50 @@ fn build_tests(
         const t_check = b.addTest(.{ .root_module = module, .use_llvm = false });
         step_check.dependOn(&t_check.step);
     }
+}
+
+fn build_sdl_test(
+    b: *Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    embeded: *Build.Module,
+) void {
+    const step = b.step("sdl3", "Build SDL3 test");
+
+    const sdl = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const sdl3 = sdl.artifact("SDL3");
+
+    const header = blk: {
+        const c = b.addTranslateC(.{
+            .root_source_file = b.addWriteFiles().add("c.h",
+                \\#include <SDL3/SDL.h>
+            ),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        c.linkSystemLibrary("SDL3", .{});
+        const module = c.createModule();
+        module.linkLibrary(sdl3);
+
+        break :blk module;
+    };
+
+    const module = b.createModule(.{
+        .root_source_file = b.path("src/tests/sdl.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sdl", .module = header },
+            .{ .name = "embeded", .module = embeded },
+        },
+    });
+    module.linkLibrary(sdl3);
+
+    install_exe(b, "sdl3", module, step);
 }
 
 const Glad = struct {

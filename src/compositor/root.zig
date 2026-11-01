@@ -3,6 +3,11 @@ pub const Compositor = @import("Compositor.zig");
 pub const zio = @import("zio");
 pub const ClientResources = @import("ClientResources.zig");
 
+pub const CompositorController = enum {
+    mux,
+    embeded,
+};
+
 pub const CompositorHandle = opaque {
     fn cast(ptr: *CompositorHandle) *Compositor {
         return @ptrCast(@alignCast(ptr));
@@ -165,6 +170,7 @@ pub const CompositorHandle = opaque {
 
     pub fn poll(
         h: *CompositorHandle,
+        comptime controller: CompositorController,
         timeout: Io.Timeout,
     ) error{ OutOfMemory, PollFailed, Timeout }!Poll {
         std.debug.assert(timeout != .deadline);
@@ -173,7 +179,7 @@ pub const CompositorHandle = opaque {
         const arena = com.tick_arena.allocator();
 
         return switch (os) {
-            .linux => try poll_linux(arena, com, server, timeout),
+            .linux => try poll_linux(arena, controller, com, server, timeout),
             .windows => try poll_windows(arena, com, server, timeout),
             else => comptime unreachable,
         };
@@ -181,6 +187,7 @@ pub const CompositorHandle = opaque {
 
     fn poll_linux(
         arena: std.mem.Allocator,
+        comptime controller: CompositorController,
         com: *Compositor,
         server: *const Server,
         timeout: Io.Timeout,
@@ -189,7 +196,15 @@ pub const CompositorHandle = opaque {
 
         const Pollfd, const POLL = .{ std.os.linux.pollfd, std.os.linux.POLL };
 
-        const fds_len = server.clients.count() + 2;
+        const poll_display = switch (controller) {
+            .embeded => false,
+            .mux => true,
+        };
+
+        const fds_len = blk: {
+            const add = if (poll_display) 2 else 1;
+            break :blk server.clients.count() + add;
+        };
         const fds = try arena.alloc(Pollfd, fds_len);
         var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
 
@@ -205,16 +220,22 @@ pub const CompositorHandle = opaque {
 
         var i: usize = 0;
 
-        const display_i = i;
-        switch (com.native_tag()) {
-            .wayland => |tag| {
-                const wl = tag.compositor(com);
-                const display_fd = wl.display.getFd();
-                fds[i].fd = display_fd;
-                i += 1;
-            },
-            else => unreachable,
-        }
+        const display_i: ?usize = blk: {
+            if (!poll_display) break :blk null;
+
+            const display_i = i;
+            switch (com.native_tag()) {
+                .wayland => |tag| {
+                    const wl = tag.compositor(com);
+                    const display_fd = wl.display.getFd();
+                    fds[i].fd = display_fd;
+                    i += 1;
+                },
+                else => unreachable,
+            }
+
+            break :blk display_i;
+        };
 
         const server_socket_i = i;
         {
@@ -276,7 +297,7 @@ pub const CompositorHandle = opaque {
             }
         }
 
-        const compositor = (fds[display_i].revents & POLL.IN) != 0;
+        const compositor = if (display_i) |di| (fds[di].revents & POLL.IN) != 0 else false;
         const accept = (fds[server_socket_i].revents & POLL.IN) != 0;
         return .{
             .dispatch = compositor,

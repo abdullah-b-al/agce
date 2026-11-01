@@ -24,6 +24,10 @@
             .url = "git+https://github.com/vancluever/z2d.git#143ff5f45be885606b1694d0fcdad85a0c7dbb84",
             .hash = "z2d-0.12.2-pre-j5P_HqdBEQCQcvxLJtL6TlM_VTYoPROntkls8YcYqTlt",
         },
+        .sdl = .{
+            .url = "git+https://github.com/castholm/SDL.git#88f45bb1621c4373dd3633280ca01446b3eb8b11",
+            .hash = "sdl-0.6.1-dev+3.4.18-SDL--pegqAGHW2CzWPJalwfjV_8Q5qdmSjk3uPRTsFUE",
+        },
     },
     .paths = .{
         "build.zig",

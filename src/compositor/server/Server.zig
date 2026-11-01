@@ -279,9 +279,14 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
             client.connection.send_generated_client_full_id(server.io, server.gpa, .{ .full_id = full_id }) catch
                 return error.ConnectionClosed;
         },
-        else => {
+
+        .register,
+        .wake_up,
+        => |_, tag| log.err("Received invalid message for client {s}", .{@tagName(tag)}),
+
+        inline else => |_, tag| {
             const client = server.clients.known.get(client_id).?;
-            const ce = try server.compositor_event_from_message(client, msg);
+            const ce = try server.compositor_event_from_message(client, tag, msg);
             events.appendAssumeCapacity(ce);
         },
     }
@@ -354,19 +359,35 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 
 fn handle_message_from_local(server: *Server, message: ReceivedMessage) !void {
     std.debug.assert(message.from == .local);
+
+    const index = message.from.local;
+    const msg = message.payload;
+
     _ = server;
-    @panic("TODO");
+    _ = index;
+    switch (msg) {
+        .wake_up => {
+            log.debug("Received wake_up", .{});
+        },
+        else => {
+            log.err("Received invalid message for local client", .{});
+            return;
+        },
+    }
 }
 
 pub fn compositor_event_from_message(
     _: *Server,
     client: *Client,
+    comptime payload_tag: client_to_server.MessageTag,
     payload: client_to_server.MessagePayload,
 ) error{UnsupportedMessageOnOs}!CompositorEvent {
-    switch (payload) {
+    std.debug.assert(payload_tag == payload);
+    switch (payload_tag) {
         .register,
+        .wake_up,
         .generate_client_full_id,
-        => @panic("Cannot be turned into a CompositorEvent. This is meant for the Server"),
+        => @compileError(@tagName(payload_tag) ++ " Cannot be turned into a CompositorEvent. This is meant for the Server"),
 
         inline .buffer_present,
         .buffer_present_with_sync,
@@ -382,10 +403,11 @@ pub fn compositor_event_from_message(
         .buffer_create_cpu,
         .buffer_create_gbm_bo,
         .texture_create_d3d,
-        => |msg, tag| {
+        => {
+            const msg = @field(payload, @tagName(payload_tag));
             return @unionInit(
                 CompositorEvent,
-                @tagName(tag),
+                @tagName(payload_tag),
                 .{ .client_id = client.id, .payload = msg },
             );
         },
@@ -578,6 +600,7 @@ const Compositor = @import("../Compositor.zig");
 const CompositorEvent = @import("../Compositor.zig").Event;
 const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;
+const local_client = @import("protocol").local_client;
 const ptypes = @import("protocol").types;
 const ClientID = ptypes.ClientID;
 const Client = Clients.Client;
