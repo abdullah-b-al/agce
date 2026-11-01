@@ -34,8 +34,21 @@ pub fn receive_with_reader(_: Io, arena: std.mem.Allocator, reader: *Io.Reader) 
     }
 }
 
-pub fn send_register(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.Register) !void {
-    const message = try c.stringify(gpa, .{ .register = payload });
+pub fn send_register(
+    c: *ServerConnection,
+    io: Io,
+    gpa: std.mem.Allocator,
+    full_id: ?ptypes.ClientFullID,
+    pid: ?ptypes.PID,
+) !void {
+    const message = try c.stringify(gpa, .{
+        .register = .{
+            .full_id = full_id,
+            .pid = pid,
+            .is_local = false,
+        },
+    });
+
     try c.send(io, gpa, message);
 }
 

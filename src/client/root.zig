@@ -36,7 +36,8 @@ pub fn init(
     try client.connection.send_register(
         io,
         gpa,
-        .{ .full_id = client.env.client_full_id, .pid = pid },
+        client.env.client_full_id,
+        pid,
     );
 
     const duration: Io.Clock.Duration = .{ .raw = .fromSeconds(1), .clock = .awake };

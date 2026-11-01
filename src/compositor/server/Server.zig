@@ -84,6 +84,7 @@ pub fn process_incoming_messages(server: *Server, arena: std.mem.Allocator, poll
             const connection: *ClientConnection = switch (source) {
                 .known => |id| &server.clients.known.get(id).?.connection,
                 .unknown => |index| &server.clients.unknown.items[index].connection,
+                .local => |index| &server.clients.local.items[index].connection,
             };
 
             connection.receive_raw_all(server.io, arena, &messages_raw, source) catch |err|
@@ -118,10 +119,15 @@ pub fn process_incoming_messages(server: *Server, arena: std.mem.Allocator, poll
     return result.items;
 }
 
+pub fn connect_local(server: *Server) !zio.net.Stream {
+    return try server.server.socket.address.connect(.{ .timeout = .none });
+}
+
 fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) void {
     const @"error" = switch (message.from) {
         .known => server.handle_message_from_known(message, events),
         .unknown => server.handle_message_from_unknown(message),
+        .local => server.handle_message_from_local(message),
     };
 
     @"error" catch |err| switch (err) {
@@ -131,19 +137,17 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
         => |e| {
             switch (message.from) {
                 .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                .known => @panic("Not possiable with a known client"),
+                .known => @panic("Not possible with a known client"),
+                .local => @panic("Not possible with a local client"),
             }
         },
 
         error.ConnectionClosed,
         => |e| {
             switch (message.from) {
-                .known => |id| {
-                    server.mark_for_closing_known_client_with(id, e);
-                },
-                .unknown => |index| {
-                    server.mark_for_closing_unknown_client_with(index, e);
-                },
+                .known => |id| server.mark_for_closing_known_client_with(id, e),
+                .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
+                .local => |index| server.mark_for_closing_local_client_with(index, e),
             }
         },
 
@@ -303,43 +307,55 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
         },
     };
 
-    const id = blk: {
-        const full_id =
-            register.full_id orelse
-            break :blk server.clients.next_id.increment();
+    if (register.is_local) {
+        std.debug.assert(register.full_id == null);
+        server.clients.promote_client_to_local(server.gpa, index);
+        log.debug("Promoted unknown client to local", .{});
+    } else {
+        const id = blk: {
+            const full_id =
+                register.full_id orelse
+                break :blk server.clients.next_id.increment();
 
-        if (server.generated_full_ids.contains(full_id)) {
-            _ = server.generated_full_ids.orderedRemove(full_id);
-            break :blk full_id.id;
+            if (server.generated_full_ids.contains(full_id)) {
+                _ = server.generated_full_ids.orderedRemove(full_id);
+                break :blk full_id.id;
+            }
+
+            log.err("{} {}", .{ error.ClientSentInvalidClientFullID, full_id });
+            return error.ClientSentInvalidClientFullID;
+        };
+
+        server.clients.promote_client_to_known(server.gpa, index, id, register.pid);
+        log.debug("Promoted unknown client to {f}", .{id});
+
+        //
+        // Finalize registration
+        //
+
+        const client = server.clients.known.get(id).?;
+
+        client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemoryDuringRegister,
+            else => return error.ConnectionClosed,
+        };
+
+        errdefer comptime unreachable;
+
+        // broadcast the new client
+        for (server.clients.known.values()) |other| {
+            if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
+
+            other.connection.send_client_registered(server.io, server.gpa, .{ .client_id = client.id }) catch |err|
+                log.err("{} from {f} during broadcast", .{ err, other.id });
         }
-
-        log.err("{} {}", .{ error.ClientSentInvalidClientFullID, full_id });
-        return error.ClientSentInvalidClientFullID;
-    };
-
-    server.clients.promote_client_to_known(server.gpa, index, id, register.pid);
-    log.debug("Promoted unknown client to {f}", .{id});
-
-    //
-    // Finalize registration
-    //
-
-    const client = server.clients.known.get(id).?;
-
-    client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
-        error.OutOfMemory => error.OutOfMemoryDuringRegister,
-        else => return error.ConnectionClosed,
-    };
-
-    errdefer comptime unreachable;
-
-    // broadcast the new client
-    for (server.clients.known.values()) |other| {
-        if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
-
-        other.connection.send_client_registered(server.io, server.gpa, .{ .client_id = client.id }) catch |err|
-            log.err("{} from {f} during broadcast", .{ err, other.id });
     }
+}
+
+fn handle_message_from_local(server: *Server, message: ReceivedMessage) !void {
+    std.debug.assert(message.from == .local);
+    _ = server;
+    @panic("TODO");
 }
 
 pub fn compositor_event_from_message(
@@ -387,7 +403,7 @@ pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
     return .{ .id = client_id, .fingerprint = fp };
 }
 
-pub fn close_marked_clients(server: *Server) void {
+pub fn close_clients_marked_with_error(server: *Server) void {
     for (server.clients.known.values()) |client| {
         if (client.connection.close_with_error) |err| {
             client.connection.close();
@@ -402,6 +418,20 @@ pub fn close_marked_clients(server: *Server) void {
                 if (c.id == client.id or c.connection.closed) continue;
 
                 c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_id = client.id }) catch {};
+            }
+        }
+    }
+
+    for (server.clients.local.items) |client| {
+        if (client.connection.close_with_error) |err| {
+            client.connection.close();
+            log.err("Closing client local with {}", .{err});
+
+            switch (err) {
+                error.MisbehavingUnknownClient => {
+                    log.err("Expected only a register message during register phase", .{});
+                },
+                else => {},
             }
         }
     }
@@ -428,6 +458,11 @@ fn mark_for_closing_known_client_with(server: *Server, id: ClientID, err: Client
 
 fn mark_for_closing_unknown_client_with(server: *Server, index: usize, err: ClientConnection.CloseError) void {
     const client = server.clients.unknown.items[index];
+    client.connection.close_with_error = err;
+}
+
+fn mark_for_closing_local_client_with(server: *Server, index: usize, err: ClientConnection.CloseError) void {
+    const client = server.clients.local.items[index];
     client.connection.close_with_error = err;
 }
 
@@ -472,6 +507,7 @@ pub const RawMessage = struct {
 pub const MessageSource = union(enum) {
     known: ClientID,
     unknown: usize,
+    local: usize,
 };
 
 pub const Event = union(enum) {

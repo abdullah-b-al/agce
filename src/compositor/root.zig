@@ -72,6 +72,10 @@ pub const CompositorHandle = opaque {
         h.cast().window_focused_by_keyboard(key);
     }
 
+    pub fn connect_local(h: *CompositorHandle) !zio.net.Stream {
+        return try h.cast().server.connect_local();
+    }
+
     pub fn viewport_resize(
         h: *CompositorHandle,
         key: Compositor.ViewportKey,
@@ -130,8 +134,8 @@ pub const CompositorHandle = opaque {
             }
         }
 
-        server.close_marked_clients();
-        server.clients.remove_closed_known_clients();
+        server.close_clients_marked_with_error();
+        server.clients.remove_closed_clients_known_or_local();
         server.clients.remove_promoted_or_closed_unknown_clients();
 
         var i = com.resources.count();
@@ -230,6 +234,12 @@ pub const CompositorHandle = opaque {
             i += 1;
         }
 
+        const local_i = i;
+        for (server.clients.local.items) |c| {
+            fds[i].fd = c.connection.stream.socket.handle;
+            i += 1;
+        }
+
         std.debug.assert(i == fds.len);
 
         const ms: i32 = switch (timeout) {
@@ -256,6 +266,13 @@ pub const CompositorHandle = opaque {
             const fd = fds[unknown_i + ci];
             if ((fd.revents & events) != 0) {
                 clients.appendAssumeCapacity(.{ .unknown = ci });
+            }
+        }
+
+        for (server.clients.local.items, 0..) |_, ci| {
+            const fd = fds[local_i + ci];
+            if ((fd.revents & events) != 0) {
+                clients.appendAssumeCapacity(.{ .local = ci });
             }
         }
 
@@ -293,6 +310,12 @@ pub const CompositorHandle = opaque {
 
         const unknown_i = i;
         for (server.clients.unknown.items) |c| {
+            events[i] = c.connection.win32_event_handle.handle;
+            i += 1;
+        }
+
+        const local_i = i;
+        for (server.clients.local.items) |c| {
             events[i] = c.connection.win32_event_handle.handle;
             i += 1;
         }
@@ -343,6 +366,16 @@ pub const CompositorHandle = opaque {
                     const event = events[unknown_i + ci];
                     if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
                         clients.appendAssumeCapacity(.{ .unknown = ci });
+                        std.debug.assert(
+                            win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
+                        );
+                    }
+                }
+
+                for (server.clients.local.items, 0..) |_, ci| {
+                    const event = events[local_i + ci];
+                    if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
+                        clients.appendAssumeCapacity(.{ .local = ci });
                         std.debug.assert(
                             win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
                         );
