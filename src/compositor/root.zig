@@ -3,7 +3,7 @@ pub const Compositor = @import("Compositor.zig");
 pub const zio = @import("zio");
 pub const ClientResources = @import("ClientResources.zig");
 
-pub const CompositorController = enum {
+pub const CompositorOwner = enum {
     mux,
     embeded,
 };
@@ -148,7 +148,7 @@ pub const CompositorHandle = opaque {
 
     pub fn poll(
         h: *CompositorHandle,
-        comptime controller: CompositorController,
+        comptime owner: CompositorOwner,
         timeout: Io.Timeout,
     ) error{ OutOfMemory, PollFailed, Timeout }!Poll {
         std.debug.assert(timeout != .deadline);
@@ -157,7 +157,7 @@ pub const CompositorHandle = opaque {
         const arena = com.tick_arena.allocator();
 
         return switch (os) {
-            .linux => try poll_linux(arena, controller, com, server, timeout),
+            .linux => try poll_linux(arena, owner, com, server, timeout),
             .windows => try poll_windows(arena, com, server, timeout),
             else => comptime unreachable,
         };
@@ -165,7 +165,7 @@ pub const CompositorHandle = opaque {
 
     fn poll_linux(
         arena: std.mem.Allocator,
-        comptime controller: CompositorController,
+        comptime owner: CompositorOwner,
         com: *Compositor,
         server: *const Server,
         timeout: Io.Timeout,
@@ -174,7 +174,7 @@ pub const CompositorHandle = opaque {
 
         const Pollfd, const POLL = .{ std.os.linux.pollfd, std.os.linux.POLL };
 
-        const poll_display = switch (controller) {
+        const poll_display = switch (owner) {
             .embeded => false,
             .mux => true,
         };
