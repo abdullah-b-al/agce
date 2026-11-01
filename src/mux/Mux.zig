@@ -22,14 +22,17 @@ pub fn create(
     const mux = try gpa.create(Mux);
     errdefer gpa.destroy(mux);
 
-    const muxi: Compositor.MuxInterface = .{
-        .ptr = mux,
-        .vtable = &vtable,
-    };
-
     const class_of_window = try gpa.dupeZ(u8, "agce-mux");
     errdefer gpa.free(class_of_window);
 
+    const create_args: Compositor.CreateArgs = .{
+        .io = io,
+        .gpa = gpa,
+        .environ_map = environ_map,
+        .class = class_of_window,
+        .muxi = .{ .ptr = mux, .vtable = &vtable },
+        .socket_owner = .mux,
+    };
     const com: *CompositorHandle, const wayland_globals: WaylandObjects, const win32: Win32 =
         blk: switch (os) {
             .linux => {
@@ -51,14 +54,7 @@ pub fn create(
                 const keyboard = try globals.seat.getKeyboard();
                 keyboard.setListener(*Mux, WaylandWindow.listener_keyboard, mux);
 
-                const com: *CompositorHandle = try .create_wayland(
-                    io,
-                    gpa,
-                    environ_map,
-                    display,
-                    class_of_window,
-                    muxi,
-                );
+                const com: *CompositorHandle = try .create_wayland(display, create_args);
 
                 break :blk .{ com, globals, {} };
             },
@@ -85,14 +81,7 @@ pub fn create(
 
                 const win32: Win32 = .{ .hinstance = hinstance, .window_class = window_class };
 
-                const com: *CompositorHandle = try .create_win32(
-                    io,
-                    gpa,
-                    environ_map,
-                    hinstance,
-                    class_of_window,
-                    muxi,
-                );
+                const com: *CompositorHandle = try .create_win32(hinstance, create_args);
 
                 break :blk .{ com, {}, win32 };
             },

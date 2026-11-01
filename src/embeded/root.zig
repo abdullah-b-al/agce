@@ -25,20 +25,19 @@ pub const Embeded = struct {
         const rt = try zio.Runtime.init(gpa, .{
             .executors = .exact(1),
             .enable_main_executor = false,
-            .enable_task_migration = false,
         });
         errdefer rt.deinit();
         const io = rt.io();
 
         const com = switch (native) {
-            .wayland_display => try compositor.CompositorHandle.create_wayland(
-                io,
-                gpa,
-                environ_map,
-                @ptrCast(ptr),
-                class,
-                null,
-            ),
+            .wayland_display => try compositor.CompositorHandle.create_wayland(@ptrCast(ptr), .{
+                .io = io,
+                .gpa = gpa,
+                .environ_map = environ_map,
+                .class = class,
+                .muxi = null,
+                .socket_owner = .{ .embeded = class },
+            }),
         };
         errdefer com.destroy();
 
@@ -101,4 +100,4 @@ const Io = std.Io;
 const compositor = @import("compositor");
 const zio = @import("zio");
 const LocalConnection = @import("LocalConnection.zig");
-const log = std.log.scoped(.agce_embdede);
+const log = std.log.scoped(.agce_embeded);

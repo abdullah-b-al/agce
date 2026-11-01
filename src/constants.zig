@@ -1,4 +1,6 @@
-pub const socket_name = "agce.sock";
+pub const socket_dir_name = "agce";
+pub const socket_mux_file_name = "mux" ++ "." ++ socket_extension;
+pub const socket_extension = "sock";
 pub const socket_max_path = net.UnixAddress.max_len;
 pub const env_agce_socket_path = "AGCE_SOCKET_PATH";
 pub const env_expect_viewport_key = "AGCE_EXPECT_VIEWPORT";

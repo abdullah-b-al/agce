@@ -36,9 +36,22 @@ pub fn init(
 
     const env: Env = .extract(&map);
 
-    var path_buf: [constants.socket_max_path]u8 = undefined;
-    const path = try utils.unix_address_path(io, gpa, environ_map, &path_buf);
-    const address = try net.UnixAddress.init(path);
+    const unix_path = if (environ_map.get(constants.env_agce_socket_path)) |path| blk: {
+        break :blk try gpa.dupe(u8, path);
+    } else blk: {
+        const runtime_path = try known_folders.getPath(io, gpa, environ_map, .runtime) orelse
+            return error.CouldNotGetRuntimeDirPath;
+        defer gpa.free(runtime_path);
+
+        break :blk try std.fs.path.join(gpa, &.{
+            runtime_path,
+            constants.socket_dir_name,
+            constants.socket_mux_file_name,
+        });
+    };
+    defer gpa.free(unix_path);
+
+    const address = try net.UnixAddress.init(unix_path);
 
     const queues: *MessagesQueue = try .create(gpa);
     errdefer queues.destroy(gpa);
@@ -753,3 +766,4 @@ const os = @import("builtin").os.tag;
 const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
 const win32_foundation = @import("win32").foundation;
+const known_folders = @import("known-folders");

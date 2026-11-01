@@ -36,6 +36,7 @@ pub fn create(
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
     class: []const u8,
+    suffix: Server.UnixSocketOwner,
 ) !*Compositor {
     return blk: switch (os) {
         .linux => {
@@ -46,6 +47,7 @@ pub fn create(
                 .environ_map = environ_map,
                 .class = class,
                 .muxi = null,
+                .socket_owner = suffix,
             });
         },
         .windows => {
@@ -56,6 +58,7 @@ pub fn create(
                 .environ_map = environ_map,
                 .class = class,
                 .muxi = null,
+                .socket_owner = suffix,
             });
         },
         else => @compileError("Unsupported OS"),
@@ -81,15 +84,16 @@ pub fn create_win32(instance: Win32.HINSTANCE, args: CreateArgs) !*Compositor {
     return com;
 }
 
-const CreateArgs = struct {
+pub const CreateArgs = struct {
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
     class: []const u8,
     muxi: ?MuxInterface,
+    socket_owner: Server.UnixSocketOwner,
 };
 fn create_undefined_native(args: CreateArgs) !*Compositor {
-    const server = try Server.create(args.io, args.environ_map, args.gpa);
+    const server = try Server.create(args.io, args.environ_map, args.gpa, args.socket_owner);
     errdefer server.destroy();
 
     const class_window_dupe = try args.gpa.dupeZ(u8, args.class);

@@ -51,7 +51,13 @@ pub const TestServer = struct {
         const io = rt.io();
 
         const com: *CompositorHandle = blk: {
-            break :blk @ptrCast(try Compositor.create(io, gpa, &environ_map, src.fn_name));
+            break :blk @ptrCast(try Compositor.create(
+                io,
+                gpa,
+                &environ_map,
+                src.fn_name,
+                .mux,
+            ));
         };
         defer com.destroy();
 

@@ -15,17 +15,65 @@ pub fn create(
     io: Io,
     environ_map: *const std.process.Environ.Map,
     gpa: std.mem.Allocator,
+    socket_owner: UnixSocketOwner,
 ) !*Server {
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
 
-    var path_buf: [constants.socket_max_path]u8 = undefined;
-    const unix_path = blk: {
-        const path = try utils.unix_address_path(io, gpa, environ_map, &path_buf);
+    var rand: std.Random.DefaultPrng = .init(
+        @bitCast(Io.Timestamp.now(io, .real).toMilliseconds()),
+    );
+
+    const unix_path = if (environ_map.get(constants.env_agce_socket_path)) |path| blk: {
         break :blk try gpa.dupe(u8, path);
+    } else blk: {
+        const runtime_path = try known_folders.getPath(io, gpa, environ_map, .runtime) orelse
+            return error.CouldNotGetRuntimeDirPath;
+        defer gpa.free(runtime_path);
+
+        const runtime_dir = Io.Dir.openDirAbsolute(io, runtime_path, .{}) catch |err| {
+            log.err("{}", .{err});
+            return error.CouldNotOpenRuntimeDir;
+        };
+        defer runtime_dir.close(io);
+
+        const agce_dir = runtime_dir.createDirPathOpen(io, constants.socket_dir_name, .{}) catch |err| {
+            log.err("{}", .{err});
+            return error.CouldNotOpenOrCreateAgceSocketDir;
+        };
+        defer agce_dir.close(io);
+
+        if (socket_owner == .embeded) {
+            agce_dir.createDir(io, socket_owner.embeded, .default_dir) catch |err| switch (err) {
+                error.PathAlreadyExists => {},
+                else => {
+                    log.err("{}", .{err});
+                    return error.CouldNotCreateEmbededSocketDir;
+                },
+            };
+        }
+
+        var random_digits: [5]u8 = undefined;
+        for (&random_digits) |*d| d.* = rand.random().intRangeAtMost(u8, '0', '9');
+
+        switch (socket_owner) {
+            .mux => break :blk try std.fs.path.join(gpa, &.{
+                runtime_path,
+                constants.socket_dir_name,
+                constants.socket_mux_file_name,
+            }),
+            .embeded => |embeded| break :blk try std.fs.path.join(gpa, &.{
+                runtime_path,
+                constants.socket_dir_name,
+                embeded,
+                random_digits ++ "." ++ constants.socket_extension,
+            }),
+        }
     };
+    errdefer gpa.free(unix_path);
+
     const address = zio.net.UnixAddress.init(unix_path) catch |err| switch (err) {
-        error.NameTooLong => unreachable,
+        error.NameTooLong => return error.UnixSocketPathTooLong,
     };
     const net_server = address.listen(.{}) catch |err| {
         log.err("Failed to listen to socket {s} {}", .{ unix_path, err });
@@ -38,7 +86,7 @@ pub fn create(
     server.* = .{
         .io = io,
         .gpa = gpa,
-        .rand = .init(0),
+        .rand = rand,
         .generated_full_ids = .empty,
 
         .unix_path = unix_path,
@@ -492,6 +540,11 @@ fn ReturnType(comptime func: anytype) type {
     return @typeInfo(@TypeOf(func)).@"fn".return_type.?;
 }
 
+pub const UnixSocketOwner = union(enum) {
+    mux,
+    embeded: []const u8,
+};
+
 const ReceivedMessage = struct {
     payload: Payload,
     from: MessageSource,
@@ -610,3 +663,4 @@ const ClientConnection = @import("ClientConnection.zig");
 const zio = @import("zio");
 const win_sock = @import("win32").networking.win_sock;
 const Win32EventHandle = @import("Win32EventHandle.zig");
+const known_folders = @import("known-folders");

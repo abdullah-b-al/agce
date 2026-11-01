@@ -58,7 +58,6 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "constants", .module = constants },
-            .{ .name = "known-folders", .module = known_folders },
         },
     });
 
@@ -105,6 +104,7 @@ pub fn build(b: *std.Build) !void {
                 .{ .name = "utils", .module = utils },
                 .{ .name = "glad", .module = glad.c },
                 .{ .name = "constants", .module = constants },
+                .{ .name = "known-folders", .module = known_folders },
             },
         });
 
@@ -161,6 +161,7 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "utils", .module = utils },
             .{ .name = "constants", .module = constants },
             .{ .name = "zio", .module = zio },
+            .{ .name = "known-folders", .module = known_folders },
         },
     });
 

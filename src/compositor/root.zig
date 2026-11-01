@@ -14,39 +14,19 @@ pub const CompositorHandle = opaque {
     }
 
     pub fn create_wayland(
-        io: Io,
-        gpa: std.mem.Allocator,
-        environ_map: *const std.process.Environ.Map,
         display: *cwl.Display,
-        class: []const u8,
-        muxi: ?Compositor.MuxInterface,
+        args: Compositor.CreateArgs,
     ) !*CompositorHandle {
-        const com: *Compositor = try .create_wayland(display, .{
-            .io = io,
-            .gpa = gpa,
-            .environ_map = environ_map,
-            .class = class,
-            .muxi = muxi,
-        });
+        const com: *Compositor = try .create_wayland(display, args);
 
         return @ptrCast(com);
     }
 
     pub fn create_win32(
-        io: Io,
-        gpa: std.mem.Allocator,
-        environ_map: *const std.process.Environ.Map,
         instance: win32_foundation.HINSTANCE,
-        class: []const u8,
-        muxi: ?Compositor.MuxInterface,
+        args: Compositor.CreateArgs,
     ) !*CompositorHandle {
-        const com: *Compositor = try .create_win32(instance, .{
-            .io = io,
-            .gpa = gpa,
-            .environ_map = environ_map,
-            .class = class,
-            .muxi = muxi,
-        });
+        const com: *Compositor = try .create_win32(instance, args);
 
         return @ptrCast(com);
     }

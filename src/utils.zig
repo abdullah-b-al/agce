@@ -59,25 +59,6 @@ pub fn format_struct(value: anytype, writer: *Io.Writer) Io.Writer.Error!void {
     try writer.print(" }}", .{});
 }
 
-pub fn unix_address_path(io: Io, gpa: std.mem.Allocator, environ: *const std.process.Environ.Map, buf: []u8) ![]const u8 {
-    std.debug.assert(buf.len >= constants.socket_max_path);
-
-    if (environ.get(constants.env_agce_socket_path)) |path| {
-        std.mem.copyForwards(u8, buf, path);
-        return buf[0..path.len];
-    } else {
-        const path = try known_folders.getPath(io, gpa, environ, .runtime) orelse
-            return error.CouldNotGetRuntimeDirPath;
-        defer gpa.free(path);
-
-        return std.fmt.bufPrint(
-            buf,
-            "{s}{c}{s}",
-            .{ path, std.fs.path.sep, constants.socket_name },
-        ) catch unreachable;
-    }
-}
-
 pub fn TypeOfField(comptime U: type, comptime name: []const u8) type {
     switch (@typeInfo(U)) {
         .@"union" => |info| {
