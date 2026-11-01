@@ -21,14 +21,13 @@ pub const CompositorHandle = opaque {
         class: []const u8,
         muxi: ?Compositor.MuxInterface,
     ) !*CompositorHandle {
-        const com: *Compositor = try .create_wayland(
-            io,
-            gpa,
-            environ_map,
-            display,
-            class,
-            muxi,
-        );
+        const com: *Compositor = try .create_wayland(display, .{
+            .io = io,
+            .gpa = gpa,
+            .environ_map = environ_map,
+            .class = class,
+            .muxi = muxi,
+        });
 
         return @ptrCast(com);
     }
@@ -41,14 +40,13 @@ pub const CompositorHandle = opaque {
         class: []const u8,
         muxi: ?Compositor.MuxInterface,
     ) !*CompositorHandle {
-        const com: *Compositor = try .create_win32(
-            io,
-            gpa,
-            environ_map,
-            instance,
-            class,
-            muxi,
-        );
+        const com: *Compositor = try .create_win32(instance, .{
+            .io = io,
+            .gpa = gpa,
+            .environ_map = environ_map,
+            .class = class,
+            .muxi = muxi,
+        });
 
         return @ptrCast(com);
     }

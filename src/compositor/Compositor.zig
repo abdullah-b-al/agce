@@ -40,40 +40,32 @@ pub fn create(
     return blk: switch (os) {
         .linux => {
             const display = try cwl.Display.connect(null);
-            break :blk try .create_wayland(io, gpa, environ_map, display, class, null);
+            break :blk try .create_wayland(display, .{
+                .io = io,
+                .gpa = gpa,
+                .environ_map = environ_map,
+                .class = class,
+                .muxi = null,
+            });
         },
         .windows => {
             const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
-            break :blk try .create_win32(
-                io,
-                gpa,
-                environ_map,
-                hinstance,
-                class,
-                null,
-            );
+            break :blk try .create_win32(hinstance, .{
+                .io = io,
+                .gpa = gpa,
+                .environ_map = environ_map,
+                .class = class,
+                .muxi = null,
+            });
         },
         else => @compileError("Unsupported OS"),
     };
 }
 
-pub fn create_wayland(
-    io: Io,
-    gpa: std.mem.Allocator,
-    environ_map: *const std.process.Environ.Map,
-    display: *cwl.Display,
-    class: []const u8,
-    muxi: ?MuxInterface,
-) !*Compositor {
-    const com: *Compositor = try .create_undefined_native(
-        io,
-        gpa,
-        environ_map,
-        class,
-        muxi,
-    );
+pub fn create_wayland(display: *cwl.Display, args: CreateArgs) !*Compositor {
+    const com: *Compositor = try .create_undefined_native(args);
 
-    const wl: *Wayland = try .create(io, gpa, display);
+    const wl: *Wayland = try .create(args.io, args.gpa, display);
     com.linux = .{ .wayland = wl };
 
     try wl.set_listeners(com);
@@ -81,50 +73,38 @@ pub fn create_wayland(
     return com;
 }
 
-pub fn create_win32(
-    io: Io,
-    gpa: std.mem.Allocator,
-    environ_map: *const std.process.Environ.Map,
-    instance: Win32.HINSTANCE,
-    class: []const u8,
-    muxi: ?MuxInterface,
-) !*Compositor {
-    const com: *Compositor = try .create_undefined_native(
-        io,
-        gpa,
-        environ_map,
-        class,
-        muxi,
-    );
+pub fn create_win32(instance: Win32.HINSTANCE, args: CreateArgs) !*Compositor {
+    const com: *Compositor = try .create_undefined_native(args);
 
     com.win32 = try .create(com, instance);
 
     return com;
 }
 
-fn create_undefined_native(
+const CreateArgs = struct {
     io: Io,
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
     class: []const u8,
     muxi: ?MuxInterface,
-) !*Compositor {
-    const server = try Server.create(io, environ_map, gpa);
+};
+fn create_undefined_native(args: CreateArgs) !*Compositor {
+    const server = try Server.create(args.io, args.environ_map, args.gpa);
     errdefer server.destroy();
 
-    const class_window_dupe = try gpa.dupeZ(u8, class);
-    errdefer gpa.free(class_window_dupe);
-    const class_viewport = try std.fmt.allocPrintSentinel(gpa, "{s}-viewport", .{class_window_dupe}, 0);
-    errdefer gpa.free(class_viewport);
+    const class_window_dupe = try args.gpa.dupeZ(u8, args.class);
+    errdefer args.gpa.free(class_window_dupe);
+    const class_viewport = try std.fmt.allocPrintSentinel(args.gpa, "{s}-viewport", .{class_window_dupe}, 0);
+    errdefer args.gpa.free(class_viewport);
 
-    const com = try gpa.create(Compositor);
-    errdefer gpa.destroy(com);
+    const com = try args.gpa.create(Compositor);
+    errdefer args.gpa.destroy(com);
 
     const gbm: Gbm = if (!constants.os_has_gbm) {} else blk: {
         std.debug.assert(os == .linux);
 
         const dri = try Io.Dir.openFileAbsolute(
-            io,
+            args.io,
             "/dev/dri/renderD128",
             .{ .mode = .read_write },
         );
@@ -136,11 +116,11 @@ fn create_undefined_native(
     };
 
     com.* = .{
-        .io = io,
-        .gpa = gpa,
-        .tick_arena = .init(gpa),
+        .io = args.io,
+        .gpa = args.gpa,
+        .tick_arena = .init(args.gpa),
         .server = server,
-        .muxi = muxi,
+        .muxi = args.muxi,
         .class_of_window = class_window_dupe,
         .class_of_viewport = class_viewport,
         .resources = .empty,
@@ -150,7 +130,7 @@ fn create_undefined_native(
         .window_next_id = .first,
         .destroy_started = false,
 
-        .server_events = .init(gpa),
+        .server_events = .init(args.gpa),
         .deferred_events = .empty,
         .present_queue = .empty,
 
