@@ -228,7 +228,7 @@ pub const SubViewportEmbeded = struct {
 };
 
 pub const SubviewportClosed = struct {
-    sub_viewport_id: types.SubViewportID,
+    viewport_key: types.ViewportKey,
 };
 
 pub const ClientRegistered = struct {
@@ -269,7 +269,7 @@ pub const ViewportDisplayState = struct {
 };
 
 pub const SubViewportDisplayState = struct {
-    sub_viewport_id: types.SubViewportID,
+    viewport_key: types.ViewportKey,
     state: types.ViewportDisplayState,
 };
 

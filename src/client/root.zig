@@ -440,10 +440,14 @@ pub const SubViewportHandle = opaque {
 
     pub fn send_close(handle: *SubViewportHandle) !void {
         const svp = handle.cast();
+        const vp_key = switch (svp.state) {
+            .shown, .hidden => |key| key,
+            .failed, .pending, .closed => return,
+        };
         try svp.client.connection.send_sub_viewport_close(
             svp.client.io,
             svp.client.gpa,
-            .{ .sub_viewport_id = svp.id },
+            .{ .viewport_key = vp_key },
         );
     }
 
@@ -471,16 +475,16 @@ pub const SubViewportHandle = opaque {
     pub fn pos_set(handle: *SubViewportHandle, pos: Pos) !void {
         const svp = handle.cast();
 
-        switch (svp.state) {
-            .shown, .hidden => {},
+        const key = switch (svp.state) {
+            .shown, .hidden => |key| key,
             .pending, .failed, .closed => return,
-        }
+        };
 
         if (pos.x != svp.pos.x or pos.y != svp.pos.y) {
             try svp.client.connection.send_sub_viewport_pos_set(
                 svp.client.io,
                 svp.client.gpa,
-                .{ .pos = pos, .sub_viewport_id = svp.id },
+                .{ .pos = pos, .viewport_key = key },
             );
         }
 
@@ -490,16 +494,16 @@ pub const SubViewportHandle = opaque {
     pub fn size_set(handle: *SubViewportHandle, size: Size) !void {
         const svp = handle.cast();
 
-        switch (svp.state) {
-            .shown, .hidden => {},
+        const vp_key = switch (svp.state) {
+            .shown, .hidden => |key| key,
             .pending, .failed, .closed => return,
-        }
+        };
 
         if (size.width != svp.size.width or size.height != svp.size.height) {
             try svp.client.connection.send_sub_viewport_size_set(
                 svp.client.io,
                 svp.client.gpa,
-                .{ .size = size, .sub_viewport_id = svp.id },
+                .{ .size = size, .viewport_key = vp_key },
             );
         }
 
@@ -518,19 +522,23 @@ pub const SubViewportHandle = opaque {
     pub fn display_state_set(handle: *SubViewportHandle, s: ptypes.ViewportDisplayState) !void {
         const svp = handle.cast();
 
-        switch (svp.state) {
-            .shown => if (s == .shown) return,
-            .hidden => if (s == .hidden) return,
+        const vp_key = switch (svp.state) {
+            .shown => |key| if (s != .shown) key else return,
+            .hidden => |key| if (s != .hidden) key else return,
             .pending, .failed, .closed => return,
-        }
+        };
 
         try svp.client.connection.send_sub_viewport_display_state_set(
             svp.client.io,
             svp.client.gpa,
-            .{ .sub_viewport_id = svp.id, .state = s },
+            .{
+                .sub_viewport_id = svp.id,
+                .viewport_key = vp_key,
+                .state = s,
+            },
         );
 
-        svp.state = .from_display_state(s);
+        svp.state = .from_display_state(s, vp_key);
     }
 };
 

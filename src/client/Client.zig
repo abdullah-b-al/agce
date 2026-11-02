@@ -260,26 +260,42 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
                     if (client.viewports.get(svp.parent)) |vp| {
                         vp.event_push(.{ .sub_viewport_embeded = svp.id });
                     }
-                    svp.state = .shown;
+                    svp.state = .{ .shown = e.viewport_key };
                 },
                 .failure => svp.state = .failed,
             }
             svp.render_size = e.render_size;
-            svp.viewport_key = e.viewport_key;
         },
         .sub_viewport_display_state => |e| {
-            const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
-            switch (svp.state) {
-                .closed, .pending, .failed => return,
-                .shown, .hidden => {},
-            }
-            svp.state = switch (e.state) {
-                .shown => .shown,
-                .hidden => .hidden,
+            const svp = blk: for (client.sub_viewports.values()) |svp| {
+                const key = switch (svp.state) {
+                    .shown, .hidden => |key| key,
+                    .closed, .pending, .failed => continue,
+                };
+
+                if (std.meta.eql(key, e.viewport_key)) {
+                    break :blk svp;
+                }
+            } else return;
+
+            const key = switch (svp.state) {
+                .shown, .hidden => |key| key,
+                .closed, .failed, .pending => return,
             };
+            svp.state = .from_display_state(e.state, key);
         },
         .sub_viewport_closed => |e| {
-            const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
+            const svp = blk: for (client.sub_viewports.values()) |svp| {
+                const key = switch (svp.state) {
+                    .shown, .hidden => |key| key,
+                    .closed, .pending, .failed => continue,
+                };
+
+                if (std.meta.eql(key, e.viewport_key)) {
+                    break :blk svp;
+                }
+            } else return;
+
             svp.state = .closed;
 
             if (client.viewports.get(svp.parent)) |vp| {

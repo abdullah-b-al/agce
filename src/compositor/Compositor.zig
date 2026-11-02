@@ -317,15 +317,10 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     const vp = rs.viewports.get(key.viewport_id) orelse return;
 
     if (vp.parent_key) |parent| {
-        const p = com.viewport_from_key(parent).?;
-
-        const svp_id = p.sub_viewport_id_from_key(key).?;
-
-        _ = p.sub_viewports.orderedRemove(svp_id);
         com.server_events.push_assume_capacity(.{
             .sub_viewport_closed = .{
                 .client_id = parent.client_id,
-                .payload = .{ .sub_viewport_id = svp_id },
+                .payload = .{ .viewport_key = key },
             },
         });
 
@@ -340,7 +335,7 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
         vp.parent_key = null;
     }
 
-    for (vp.sub_viewports.values()) |svp_key| {
+    for (vp.sub_viewports.items) |svp_key| {
         const svp = com.viewport_from_key(svp_key).?;
         svp.parent_key = null;
     }
@@ -754,10 +749,7 @@ fn viewport_create_with_sub_viewport(
         args.payload.format,
     );
 
-    embeder_viewport.sub_viewports.putAssumeCapacityNoClobber(
-        sub_viewport_data.sub_viewport_id,
-        embeded_key,
-    );
+    embeder_viewport.sub_viewports.appendAssumeCapacity(embeded_key);
 
     log.info("{f} of {f} {f} created with {f} {f}", .{
         sub_viewport_data.sub_viewport_id,
@@ -830,6 +822,17 @@ pub fn viewport_from_key(com: *Compositor, key: ViewportKey) ?*Viewport {
     return vp;
 }
 
+pub fn sub_viewport_from_key(com: *Compositor, key: ViewportKey, parent_client_id: ClientID) !*Viewport {
+    const rs = com.resources.getPtr(key.client_id) orelse return error.ClientDoesNotExist;
+    const vp = rs.viewports.get(key.viewport_id) orelse return error.ViewportDoesNotExist;
+    const parent_key = vp.parent_key orelse return error.ViewportHasNoParent;
+    if (parent_key.client_id != parent_client_id) {
+        return error.ClientDoesNotOwnViewport;
+    }
+
+    return vp;
+}
+
 pub fn window_from_viewport_key(com: *Compositor, key: ViewportKey) ?Window {
     const rs = com.resources.getPtr(key.client_id).?;
     const vp = rs.viewports.get(key.viewport_id).?;
@@ -851,17 +854,11 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
 }
 
 pub fn sub_viewport_pos_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_pos_set)) !void {
-    const key = blk: {
-        const rs = com.resources.getPtr(args.client_id) orelse return;
-        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
-            return error.SubViewportDoesNotExist;
-    };
+    const vp = try com.sub_viewport_from_key(args.payload.viewport_key, args.client_id);
 
-    std.debug.assert(key.viewport_id.is_server_id());
+    std.debug.assert(vp.id.is_server_id());
 
     const pos = args.payload.pos;
-    const rs = com.resources.getPtr(key.client_id) orelse return error.ClientDoesNotExist;
-    const vp = rs.viewports.get(key.viewport_id) orelse return error.ViewportDoesNotExist;
 
     if (pos.x < 0 or pos.y < 0) {
         return error.InvalidPosition;
@@ -901,17 +898,12 @@ pub fn sub_viewport_pos_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_p
 pub fn sub_viewport_size_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_size_set)) !void {
     try com.server_events.ensure_unused_capacity(1);
 
-    const key = blk: {
-        const rs = com.resources.getPtr(args.client_id) orelse return;
-        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
-            return error.SubViewportDoesNotExist;
-    };
+    const key = args.payload.viewport_key;
+    const vp = try com.sub_viewport_from_key(key, args.client_id);
 
-    std.debug.assert(key.viewport_id.is_server_id());
+    std.debug.assert(vp.id.is_server_id());
 
     const size = args.payload.size;
-    const rs = com.resources.getPtr(key.client_id) orelse return error.ClientDoesNotExist;
-    const vp = rs.viewports.get(key.viewport_id) orelse return error.ViewportDoesNotExist;
     const win = com.window_from_viewport_key(key) orelse return error.ViewportHasNoWindow;
 
     if (size.width <= 0 or size.height <= 0) {
@@ -961,27 +953,21 @@ pub fn sub_viewport_size_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_
 pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_display_state_set)) !void {
     try com.server_events.ensure_unused_capacity(2);
 
-    const svp_viewport_key = blk: {
-        const rs = com.resources.getPtr(args.client_id) orelse return;
-        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
-            return error.SubViewportDoesNotExist;
-    };
+    const key = args.payload.viewport_key;
+    const vp = try com.sub_viewport_from_key(key, args.client_id);
 
-    std.debug.assert(svp_viewport_key.viewport_id.is_server_id());
+    std.debug.assert(vp.id.is_server_id());
 
-    const svp_rs = com.resources.getPtr(svp_viewport_key.client_id) orelse return;
-    const svp = svp_rs.viewports.get(svp_viewport_key.viewport_id) orelse return error.ViewportDoesNotExist;
+    const old = vp.state;
+    vp.state = args.payload.state;
 
-    const old = svp.state;
-    svp.state = args.payload.state;
-
-    if (svp.state == old) return;
+    if (vp.state == old) return;
 
     switch (com.native_tag()) {
         .wayland => |tag| {
-            const nvp = tag.viewport(svp);
+            const nvp = tag.viewport(vp);
 
-            switch (svp.state) {
+            switch (vp.state) {
                 .hidden => {
                     // TODO: If needed, attach a null buffer recursivly for all children
                     nvp.surface.attach(null, 0, 0);
@@ -994,8 +980,8 @@ pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_
             }
         },
         .win32 => |tag| {
-            const nsvp = tag.viewport(svp);
-            const cmd = switch (svp.state) {
+            const nsvp = tag.viewport(vp);
+            const cmd = switch (vp.state) {
                 .hidden => win32_win.SW_HIDE,
                 .shown => win32_win.SW_SHOW,
             };
@@ -1004,12 +990,12 @@ pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_
         },
     }
 
-    const parent_key = svp.parent_key.?;
+    const parent_key = vp.parent_key.?;
     com.server_events.push_assume_capacity(.{
         .sub_viewport_display_state = .{
             .client_id = parent_key.client_id,
             .payload = .{
-                .sub_viewport_id = args.payload.sub_viewport_id,
+                .viewport_key = args.payload.viewport_key,
                 .state = args.payload.state,
             },
         },
@@ -1017,9 +1003,9 @@ pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_
 
     com.server_events.push_assume_capacity(.{
         .viewport_display_state = .{
-            .client_id = svp_viewport_key.client_id,
+            .client_id = key.client_id,
             .payload = .{
-                .viewport_id = svp_viewport_key.viewport_id,
+                .viewport_id = key.viewport_id,
                 .state = args.payload.state,
             },
         },
@@ -1027,13 +1013,11 @@ pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_
 }
 
 pub fn sub_viewport_close(com: *Compositor, args: Event.TypeOf(.sub_viewport_close)) !void {
-    const key = blk: {
-        const rs = com.resources.getPtr(args.client_id) orelse return;
-        break :blk rs.viewport_key_from_sub_viewport_id(args.payload.sub_viewport_id) orelse
-            return error.SubViewportDoesNotExist;
-    };
 
-    try com.viewport_should_close(.{ .viewport_key = key });
+    // validate the viewport exists and is owned by the client
+    _ = try com.sub_viewport_from_key(args.payload.viewport_key, args.client_id);
+
+    try com.viewport_should_close(.{ .viewport_key = args.payload.viewport_key });
 }
 
 pub fn cursor_shape_set(com: *Compositor, args: Event.TypeOf(.cursor_shape_set)) !void {
@@ -1279,8 +1263,6 @@ pub fn mouse_scroll(com: *Compositor, args: Event.TypeOf(.mouse_scroll)) !void {
         },
     });
 }
-
-const ViewportKey = ptypes.ViewportKey;
 
 pub const SubViewportKey = struct {
     client_id: ClientID,
@@ -1642,3 +1624,4 @@ const d3d = @import("win32").graphics.direct3d;
 const dxgi = @import("win32").graphics.dxgi;
 const ServerQueue = @import("server/EventQueue.zig");
 const cwl = @import("wayland").client.wl;
+const ViewportKey = ptypes.ViewportKey;

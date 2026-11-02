@@ -49,6 +49,7 @@ pub const Void = struct {};
 
 pub const SubViewportDisplayStateSet = struct {
     sub_viewport_id: types.SubViewportID,
+    viewport_key: types.ViewportKey,
     state: types.ViewportDisplayState,
 };
 
@@ -72,17 +73,17 @@ pub const SubViewportEmbed = struct {
 };
 
 pub const SubViewportPosSet = struct {
-    sub_viewport_id: types.SubViewportID,
+    viewport_key: types.ViewportKey,
     pos: types.Pos,
 };
 
 pub const SubViewportSizeSet = struct {
-    sub_viewport_id: types.SubViewportID,
+    viewport_key: types.ViewportKey,
     size: types.Size,
 };
 
 pub const SubViewportClose = struct {
-    sub_viewport_id: types.SubViewportID,
+    viewport_key: types.ViewportKey,
 };
 
 pub const BufferCreateCpuWithFd = struct {

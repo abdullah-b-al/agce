@@ -6,7 +6,7 @@ clipping_rect: ptypes.Rect,
 render_size: ptypes.Size,
 state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
-sub_viewports: std.array_hash_map.Auto(ptypes.SubViewportID, ViewportKey),
+sub_viewports: std.ArrayList(ViewportKey),
 format: ptypes.BufferFormat,
 cursor_shape: ptypes.CursorShape,
 
@@ -72,7 +72,7 @@ pub fn create(
 
 pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
     // Sub-viewports should be closed before calling deinit
-    std.debug.assert(vp.sub_viewports.count() == 0);
+    std.debug.assert(vp.sub_viewports.items.len == 0);
     // If the viewport is a sub-viewport we must inform the parent then set to null
     std.debug.assert(vp.parent_key == null);
 
@@ -114,16 +114,6 @@ pub fn should_be_hidden(vp: *Viewport, com: *Compositor) bool {
     }
 
     return false;
-}
-
-pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubViewportID {
-    for (vp.sub_viewports.keys(), vp.sub_viewports.values()) |id, k| {
-        if (std.meta.eql(key, k)) {
-            return id;
-        }
-    }
-
-    return null;
 }
 
 pub const Linux = union(enum) {
