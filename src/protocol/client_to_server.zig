@@ -29,12 +29,12 @@ pub const MessagePayload = union(enum(u32)) {
 
     viewport_create: ViewportCreate,
     viewport_destroy: ViewportDestroy,
+    viewport_pos_set: ViewportPosSet,
+    viewport_size_set: ViewportSizeSet,
+    viewport_display_state_set: ViewportDisplayStateSet,
+    viewport_close: SubViewportClose,
 
     sub_viewport_embed: SubViewportEmbed,
-    sub_viewport_pos_set: SubViewportPosSet,
-    sub_viewport_size_set: SubViewportSizeSet,
-    sub_viewport_display_state_set: SubViewportDisplayStateSet,
-    sub_viewport_close: SubViewportClose,
 
     cursor_shape_set: CursorShape,
 };
@@ -47,8 +47,7 @@ pub const Register = struct {
 
 pub const Void = struct {};
 
-pub const SubViewportDisplayStateSet = struct {
-    sub_viewport_id: types.SubViewportID,
+pub const ViewportDisplayStateSet = struct {
     viewport_key: types.ViewportKey,
     state: types.ViewportDisplayState,
 };
@@ -72,12 +71,12 @@ pub const SubViewportEmbed = struct {
     embeder_viewport_id: types.ViewportID,
 };
 
-pub const SubViewportPosSet = struct {
+pub const ViewportPosSet = struct {
     viewport_key: types.ViewportKey,
     pos: types.Pos,
 };
 
-pub const SubViewportSizeSet = struct {
+pub const ViewportSizeSet = struct {
     viewport_key: types.ViewportKey,
     size: types.Size,
 };

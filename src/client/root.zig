@@ -444,7 +444,7 @@ pub const SubViewportHandle = opaque {
             .shown, .hidden => |key| key,
             .failed, .pending, .closed => return,
         };
-        try svp.client.connection.send_sub_viewport_close(
+        try svp.client.connection.send_viewport_close(
             svp.client.io,
             svp.client.gpa,
             .{ .viewport_key = vp_key },
@@ -481,7 +481,7 @@ pub const SubViewportHandle = opaque {
         };
 
         if (pos.x != svp.pos.x or pos.y != svp.pos.y) {
-            try svp.client.connection.send_sub_viewport_pos_set(
+            try svp.client.connection.send_viewport_pos_set(
                 svp.client.io,
                 svp.client.gpa,
                 .{ .pos = pos, .viewport_key = key },
@@ -500,7 +500,7 @@ pub const SubViewportHandle = opaque {
         };
 
         if (size.width != svp.size.width or size.height != svp.size.height) {
-            try svp.client.connection.send_sub_viewport_size_set(
+            try svp.client.connection.send_viewport_size_set(
                 svp.client.io,
                 svp.client.gpa,
                 .{ .size = size, .viewport_key = vp_key },
@@ -528,14 +528,10 @@ pub const SubViewportHandle = opaque {
             .pending, .failed, .closed => return,
         };
 
-        try svp.client.connection.send_sub_viewport_display_state_set(
+        try svp.client.connection.send_viewport_display_state_set(
             svp.client.io,
             svp.client.gpa,
-            .{
-                .sub_viewport_id = svp.id,
-                .viewport_key = vp_key,
-                .state = s,
-            },
+            .{ .viewport_key = vp_key, .state = s },
         );
 
         svp.state = .from_display_state(s, vp_key);

@@ -269,12 +269,12 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
             com.viewport_destroy(.{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id });
         },
         .viewport_should_close => |args| try com.viewport_should_close(args),
+        .viewport_pos_set => |args| try com.viewport_pos_set(args),
 
         .sub_viewport_embed => |args| try com.sub_viewport_embed(args),
-        .sub_viewport_pos_set => |args| try com.sub_viewport_pos_set(args),
-        .sub_viewport_size_set => |args| try com.sub_viewport_size_set(args),
-        .sub_viewport_display_state_set => |args| try com.sub_viewport_display_state_set(args),
-        .sub_viewport_close => |args| try com.sub_viewport_close(args),
+        .viewport_size_set => |args| try com.viewport_size_set(args),
+        .viewport_display_state_set => |args| try com.viewport_display_state_set(args),
+        .viewport_close => |args| try com.viewport_close(args),
 
         .cursor_shape_set => |args| try com.cursor_shape_set(args),
 
@@ -853,7 +853,9 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
     return error.EmbederClientDoesNotExist;
 }
 
-pub fn sub_viewport_pos_set(com: *Compositor, args: @FieldType(Event, "sub_viewport_pos_set")) !void {
+pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_set")) !void {
+    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
+
     const vp = try com.sub_viewport_from_key(args.payload.viewport_key, args.client_id);
 
     std.debug.assert(vp.id.is_server_id());
@@ -895,7 +897,8 @@ pub fn sub_viewport_pos_set(com: *Compositor, args: @FieldType(Event, "sub_viewp
     }
 }
 
-pub fn sub_viewport_size_set(com: *Compositor, args: @FieldType(Event, "sub_viewport_size_set")) !void {
+pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_size_set")) !void {
+    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
     try com.server_events.ensure_unused_capacity(1);
 
     const key = args.payload.viewport_key;
@@ -950,7 +953,8 @@ pub fn sub_viewport_size_set(com: *Compositor, args: @FieldType(Event, "sub_view
     });
 }
 
-pub fn sub_viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "sub_viewport_display_state_set")) !void {
+pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "viewport_display_state_set")) !void {
+    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
     try com.server_events.ensure_unused_capacity(2);
 
     const key = args.payload.viewport_key;
@@ -1012,7 +1016,8 @@ pub fn sub_viewport_display_state_set(com: *Compositor, args: @FieldType(Event, 
     });
 }
 
-pub fn sub_viewport_close(com: *Compositor, args: @FieldType(Event, "sub_viewport_close")) !void {
+pub fn viewport_close(com: *Compositor, args: @FieldType(Event, "viewport_close")) !void {
+    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
 
     // validate the viewport exists and is owned by the client
     _ = try com.sub_viewport_from_key(args.payload.viewport_key, args.client_id);
@@ -1331,12 +1336,12 @@ pub const Event = union(enum) {
     viewport_create: client_to_server.WithClientID(client_to_server.ViewportCreate),
     viewport_destroy: client_to_server.WithClientID(client_to_server.ViewportDestroy),
     viewport_should_close: ViewportShouldClose,
+    viewport_pos_set: client_to_server.WithClientID(client_to_server.ViewportPosSet),
 
     sub_viewport_embed: client_to_server.WithClientID(client_to_server.SubViewportEmbed),
-    sub_viewport_pos_set: client_to_server.WithClientID(client_to_server.SubViewportPosSet),
-    sub_viewport_size_set: client_to_server.WithClientID(client_to_server.SubViewportSizeSet),
-    sub_viewport_display_state_set: client_to_server.WithClientID(client_to_server.SubViewportDisplayStateSet),
-    sub_viewport_close: client_to_server.WithClientID(client_to_server.SubViewportClose),
+    viewport_size_set: client_to_server.WithClientID(client_to_server.ViewportSizeSet),
+    viewport_display_state_set: client_to_server.WithClientID(client_to_server.ViewportDisplayStateSet),
+    viewport_close: client_to_server.WithClientID(client_to_server.SubViewportClose),
 
     cursor_shape_set: client_to_server.WithClientID(client_to_server.CursorShape),
 

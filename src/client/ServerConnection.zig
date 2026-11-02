@@ -104,23 +104,23 @@ pub fn send_sub_viewport_embed(c: *ServerConnection, io: Io, gpa: std.mem.Alloca
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_pos_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportPosSet) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_pos_set = payload });
+pub fn send_viewport_pos_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportPosSet) !void {
+    const message = try c.stringify(gpa, .{ .viewport_pos_set = payload });
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_size_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportSizeSet) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_size_set = payload });
+pub fn send_viewport_size_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportSizeSet) !void {
+    const message = try c.stringify(gpa, .{ .viewport_size_set = payload });
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_display_state_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportDisplayStateSet) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_display_state_set = payload });
+pub fn send_viewport_display_state_set(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportDisplayStateSet) !void {
+    const message = try c.stringify(gpa, .{ .viewport_display_state_set = payload });
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_close(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportClose) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_close = payload });
+pub fn send_viewport_close(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportClose) !void {
+    const message = try c.stringify(gpa, .{ .viewport_close = payload });
     try c.send(io, gpa, message);
 }
 
