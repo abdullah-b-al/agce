@@ -14,7 +14,7 @@ class_of_viewport: [:0]const u8,
 /// Used in windows to prevent accesing freed data in callbacks
 destroy_started: bool,
 
-resources: std.array_hash_map.Auto(ClientID, ClientResources),
+resources: std.array_hash_map.Auto(ClientUUID, ClientResources),
 windows: std.array_hash_map.Auto(WindowID, Window),
 
 window_next_id: WindowID,
@@ -266,7 +266,7 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
         .viewport_create => |args| try com.viewport_create(args),
         .viewport_destroy => |args| {
             try com.server_events.ensure_unused_capacity(1);
-            com.viewport_destroy(.{ .client_id = args.client_id, .viewport_id = args.payload.viewport_id });
+            com.viewport_destroy(.{ .client_uuid = args.client_uuid, .viewport_id = args.payload.viewport_id });
         },
         .viewport_should_close => |args| try com.viewport_should_close(args),
         .viewport_pos_set => |args| try com.viewport_pos_set(args),
@@ -289,11 +289,11 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
     }
 }
 
-pub fn client_registered(com: *Compositor, client_id: ClientID) !void {
-    try com.resources.putNoClobber(com.gpa, client_id, .init(client_id));
+pub fn client_registered(com: *Compositor, client_uuid: ClientUUID) !void {
+    try com.resources.putNoClobber(com.gpa, client_uuid, .init(client_uuid));
 }
 
-pub fn client_disconnected(com: *Compositor, id: ClientID) void {
+pub fn client_disconnected(com: *Compositor, id: ClientUUID) void {
     const rs = com.resources.getPtr(id) orelse {
         log.warn("Tried to disconnected an nonexistent client {}", .{id});
         return;
@@ -303,7 +303,7 @@ pub fn client_disconnected(com: *Compositor, id: ClientID) void {
     while (i > 0) {
         i -= 1;
         const vp_id = rs.viewports.keys()[i];
-        com.viewport_destroy(.{ .client_id = rs.client_id, .viewport_id = vp_id });
+        com.viewport_destroy(.{ .client_uuid = rs.client_uuid, .viewport_id = vp_id });
     }
 
     rs.deinit(com);
@@ -313,7 +313,7 @@ pub fn client_disconnected(com: *Compositor, id: ClientID) void {
 fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     std.debug.assert(com.server_events.capacity >= 2);
 
-    const rs = com.resources.getPtr(key.client_id) orelse return;
+    const rs = com.resources.getPtr(key.client_uuid) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
 
     if (vp.parent_key) |parent_key| {
@@ -321,7 +321,7 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
 
         com.server_events.push_assume_capacity(.{
             .remote_viewport_closed = .{
-                .client_id = parent_key.client_id,
+                .client_uuid = parent_key.client_uuid,
                 .payload = .{ .viewport_key = key },
             },
         });
@@ -347,14 +347,14 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     _ = rs.viewports.orderedRemove(vp.id);
     vp.destroy(com.gpa);
 
-    log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_id });
+    log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_uuid });
 }
 
 fn viewport_should_close(com: *Compositor, args: @FieldType(Event, "viewport_should_close")) !void {
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .viewport_close = .{
-            .client_id = args.viewport_key.client_id,
+            .client_uuid = args.viewport_key.client_uuid,
             .payload = .{ .viewport_id = args.viewport_key.viewport_id },
         },
     });
@@ -362,7 +362,7 @@ fn viewport_should_close(com: *Compositor, args: @FieldType(Event, "viewport_sho
 
 fn buffer_create_cpu(com: *Compositor, args: @FieldType(Event, "buffer_create_cpu")) !void {
     try com.server_events.ensure_unused_capacity(1);
-    const rs = com.resources.getPtr(args.client_id).?;
+    const rs = com.resources.getPtr(args.client_uuid).?;
 
     const buffer = try com.buffer_create_cpu_inner(
         rs,
@@ -372,7 +372,7 @@ fn buffer_create_cpu(com: *Compositor, args: @FieldType(Event, "buffer_create_cp
 
     com.server_events.push_assume_capacity(.{
         .buffer_created_cpu = .{
-            .client_id = args.client_id,
+            .client_uuid = args.client_uuid,
             .payload = .{
                 .handle = buffer.handle,
                 .viewport_id = args.payload.viewport_id,
@@ -472,7 +472,7 @@ fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create
     );
     errdefer bo.deinit(com.gbm);
 
-    const rs = com.resources.getPtr(args.client_id).?;
+    const rs = com.resources.getPtr(args.client_uuid).?;
     try rs.gbm_bos.ensureUnusedCapacity(com.gpa, 1);
 
     switch (com.linux) {
@@ -502,7 +502,7 @@ fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_
 
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
 
-    const rs = com.resources.getPtr(args.client_id).?;
+    const rs = com.resources.getPtr(args.client_uuid).?;
     try rs.buffers.ensureUnusedCapacity(com.gpa, 1);
 
     var desc: d11.D3D11_TEXTURE2D_DESC = .{
@@ -552,7 +552,7 @@ fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_
 
     com.server_events.push_assume_capacity(.{
         .texture_created_d3d = .{
-            .client_id = args.client_id,
+            .client_uuid = args.client_uuid,
             .payload = .{
                 .viewport_id = args.payload.viewport_id,
                 .buffer_id = buffer_id,
@@ -575,22 +575,22 @@ const BufferQueuePresent = union(enum) {
 fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
     try com.present_queue.ensureUnusedCapacity(com.gpa, 1);
 
-    const client_id, const viewport_id, const render_size, const buffer_id = switch (args) {
+    const client_uuid, const viewport_id, const render_size, const buffer_id = switch (args) {
         inline else => |v| .{
-            v.client_id,             v.payload.viewport_id,
+            v.client_uuid,             v.payload.viewport_id,
             v.payload.viewport_size, v.payload.buffer_id,
         },
     };
 
-    const viewport_key: ViewportKey = .{ .client_id = client_id, .viewport_id = viewport_id };
+    const viewport_key: ViewportKey = .{ .client_uuid = client_uuid, .viewport_id = viewport_id };
     const vp = com.viewport_from_key(viewport_key) orelse {
-        log.err("Viewport does not exist {f} {f}", .{ viewport_key.client_id, viewport_key.viewport_id });
+        log.err("Viewport does not exist {f} {f}", .{ viewport_key.client_uuid, viewport_key.viewport_id });
         return;
     };
 
     const win = com.window_from_viewport_key(viewport_key) orelse return error.ViewportHasNoWindow;
 
-    const rs = com.resources.getPtr(client_id) orelse return;
+    const rs = com.resources.getPtr(client_uuid) orelse return;
 
     vp.render_size = render_size;
     if (vp.parent_key == null) {
@@ -605,9 +605,9 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
     try rs.buffers_commited.ensureUnusedCapacity(com.gpa, 1);
     const buffer = rs.buffers.getPtr(buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(buffer_id)) {
-            log.warn("Buffer is pending {} for {}", .{ buffer_id, client_id });
+            log.warn("Buffer is pending {} for {}", .{ buffer_id, client_uuid });
         } else {
-            log.err("Buffer does not exist {} for {}", .{ buffer_id, client_id });
+            log.err("Buffer does not exist {} for {}", .{ buffer_id, client_uuid });
         }
         return;
     };
@@ -617,7 +617,7 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
     }
 
     com.present_queue.appendAssumeCapacity(.init(
-        client_id,
+        client_uuid,
         viewport_id,
         buffer_id,
         win.id,
@@ -656,7 +656,7 @@ pub fn present(com: *Compositor) !void {
 }
 
 fn buffer_destroy(com: *Compositor, args: @FieldType(Event, "buffer_destroy")) !void {
-    const rs = com.resources.getPtr(args.client_id) orelse return;
+    const rs = com.resources.getPtr(args.client_uuid) orelse return;
     rs.buffer_destroy(com, args.payload.buffer_id);
 }
 
@@ -680,7 +680,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
         .create_with_window => |key| {
             com.server_events.push_assume_capacity(.{
                 .viewport_created = .{
-                    .client_id = key.client_id,
+                    .client_uuid = key.client_uuid,
                     .payload = .{
                         .viewport_id = key.viewport_id,
                         .status = .success,
@@ -691,7 +691,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
         .create_with_remote_viewport => |v| {
             com.server_events.push_assume_capacity(.{
                 .viewport_created = .{
-                    .client_id = v.embeded.client_id,
+                    .client_uuid = v.embeded.client_uuid,
                     .payload = .{
                         .viewport_id = v.embeded.viewport_id,
                         .status = .success,
@@ -701,7 +701,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
 
             com.server_events.push_assume_capacity(.{
                 .remote_viewport_embeded = .{
-                    .client_id = v.embeder.key.client_id,
+                    .client_uuid = v.embeder.key.client_uuid,
                     .payload = .{
                         .remote_viewport_id = v.embeder.key.remote_viewport_id,
                         .status = .success,
@@ -719,13 +719,13 @@ fn viewport_create_with_remote_viewport(
     args: @FieldType(Event, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
     const embeded_key: ViewportKey = .{
-        .client_id = args.client_id,
+        .client_uuid = args.client_uuid,
         .viewport_id = args.payload.viewport_id,
     };
 
     std.debug.assert(embeded_key.viewport_id.is_server_id());
 
-    const embeded = com.resources.getPtr(embeded_key.client_id) orelse return error.ClientDoesNotExist;
+    const embeded = com.resources.getPtr(embeded_key.client_uuid) orelse return error.ClientDoesNotExist;
     std.debug.assert(
         embeded.viewports_pending.orderedRemove(embeded_key.viewport_id),
     );
@@ -748,7 +748,7 @@ fn viewport_create_with_remote_viewport(
         remote_viewport_data.clip_rect,
         args.payload.size,
         args.payload.create_sync_timeline,
-        .{ .client_id = embeder.client_id, .viewport_id = embeder_viewport.id },
+        .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
         args.payload.format,
     );
 
@@ -756,16 +756,16 @@ fn viewport_create_with_remote_viewport(
 
     log.info("{f} of {f} {f} created with {f} {f}", .{
         remote_viewport_data.remote_viewport_id,
-        embeder.client_id,
+        embeder.client_uuid,
         remote_viewport_data.embed_in,
-        embeded_key.client_id,
+        embeded_key.client_uuid,
         embeded_key.viewport_id,
     });
     return .{
         .create_with_remote_viewport = .{
             .embeder = .{
                 .key = .{
-                    .client_id = embeder.client_id,
+                    .client_uuid = embeder.client_uuid,
                     .remote_viewport_id = remote_viewport_data.remote_viewport_id,
                 },
                 .render_size = args.payload.size,
@@ -788,7 +788,7 @@ fn viewport_create_with_window(com: *Compositor, args: @FieldType(Event, "viewpo
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
     const key: ViewportKey = .{
-        .client_id = args.client_id,
+        .client_uuid = args.client_uuid,
         .viewport_id = args.payload.viewport_id,
     };
     const maybe_window_handle = if (com.muxi) |muxi|
@@ -799,7 +799,7 @@ fn viewport_create_with_window(com: *Compositor, args: @FieldType(Event, "viewpo
 
     const window_id = com.window_id_from_handle(window_handle).?;
 
-    const rs = com.resources.getPtr(args.client_id) orelse return error.ClientDoesNotExist;
+    const rs = com.resources.getPtr(args.client_uuid) orelse return error.ClientDoesNotExist;
 
     try rs.viewport_create(
         com,
@@ -813,23 +813,23 @@ fn viewport_create_with_window(com: *Compositor, args: @FieldType(Event, "viewpo
         args.payload.format,
     );
 
-    log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_id });
+    log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_uuid });
 
-    return .{ .client_id = rs.client_id, .viewport_id = args.payload.viewport_id };
+    return .{ .client_uuid = rs.client_uuid, .viewport_id = args.payload.viewport_id };
 }
 
 pub fn viewport_from_key(com: *Compositor, key: ViewportKey) ?*Viewport {
-    const rs = com.resources.getPtr(key.client_id) orelse return null;
+    const rs = com.resources.getPtr(key.client_uuid) orelse return null;
     const vp = rs.viewports.get(key.viewport_id) orelse return null;
 
     return vp;
 }
 
-pub fn remote_viewport_from_key(com: *Compositor, key: ViewportKey, parent_client_id: ClientID) !*Viewport {
-    const rs = com.resources.getPtr(key.client_id) orelse return error.ClientDoesNotExist;
+pub fn remote_viewport_from_key(com: *Compositor, key: ViewportKey, parent_client_uuid: ClientUUID) !*Viewport {
+    const rs = com.resources.getPtr(key.client_uuid) orelse return error.ClientDoesNotExist;
     const vp = rs.viewports.get(key.viewport_id) orelse return error.ViewportDoesNotExist;
     const parent_key = vp.parent_key orelse return error.ViewportHasNoParent;
-    if (parent_key.client_id != parent_client_id) {
+    if (parent_key.client_uuid != parent_client_uuid) {
         return error.ClientDoesNotOwnViewport;
     }
 
@@ -837,14 +837,14 @@ pub fn remote_viewport_from_key(com: *Compositor, key: ViewportKey, parent_clien
 }
 
 pub fn window_from_viewport_key(com: *Compositor, key: ViewportKey) ?Window {
-    const rs = com.resources.getPtr(key.client_id).?;
+    const rs = com.resources.getPtr(key.client_uuid).?;
     const vp = rs.viewports.get(key.viewport_id).?;
     return com.windows.get(vp.window_id);
 }
 
 pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{EmbederClientDoesNotExist}!*ClientResources {
     for (com.resources.values()) |*rs| {
-        if (rs.client_id == to_embed.client_id) continue;
+        if (rs.client_uuid == to_embed.client_uuid) continue;
 
         for (rs.remote_viewports_pending.values()) |remote| {
             if (std.meta.eql(to_embed, remote.to_embed)) {
@@ -857,9 +857,9 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
 }
 
 pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_set")) !void {
-    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
+    std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
 
-    const vp = try com.remote_viewport_from_key(args.payload.viewport_key, args.client_id);
+    const vp = try com.remote_viewport_from_key(args.payload.viewport_key, args.client_uuid);
 
     std.debug.assert(vp.id.is_server_id());
 
@@ -901,11 +901,11 @@ pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_
 }
 
 pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_size_set")) !void {
-    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
+    std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
     try com.server_events.ensure_unused_capacity(1);
 
     const key = args.payload.viewport_key;
-    const vp = try com.remote_viewport_from_key(key, args.client_id);
+    const vp = try com.remote_viewport_from_key(key, args.client_uuid);
 
     std.debug.assert(vp.id.is_server_id());
 
@@ -947,7 +947,7 @@ pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_siz
 
     com.server_events.push_assume_capacity(.{
         .viewport_resize = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = key.viewport_id,
                 .size = vp.clipping_rect.size(),
@@ -957,11 +957,11 @@ pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_siz
 }
 
 pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "viewport_display_state_set")) !void {
-    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
+    std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
     try com.server_events.ensure_unused_capacity(2);
 
     const key = args.payload.viewport_key;
-    const vp = try com.remote_viewport_from_key(key, args.client_id);
+    const vp = try com.remote_viewport_from_key(key, args.client_uuid);
 
     std.debug.assert(vp.id.is_server_id());
 
@@ -1000,7 +1000,7 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "vie
     const parent_key = vp.parent_key.?;
     com.server_events.push_assume_capacity(.{
         .remote_viewport_display_state = .{
-            .client_id = parent_key.client_id,
+            .client_uuid = parent_key.client_uuid,
             .payload = .{
                 .viewport_key = args.payload.viewport_key,
                 .state = args.payload.state,
@@ -1010,7 +1010,7 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "vie
 
     com.server_events.push_assume_capacity(.{
         .viewport_display_state = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = key.viewport_id,
                 .state = args.payload.state,
@@ -1020,17 +1020,17 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "vie
 }
 
 pub fn viewport_close(com: *Compositor, args: @FieldType(Event, "viewport_close")) !void {
-    std.debug.assert(args.payload.viewport_key.client_id != args.client_id);
+    std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
 
     // validate the viewport exists and is owned by the client
-    _ = try com.remote_viewport_from_key(args.payload.viewport_key, args.client_id);
+    _ = try com.remote_viewport_from_key(args.payload.viewport_key, args.client_uuid);
 
     try com.viewport_should_close(.{ .viewport_key = args.payload.viewport_key });
 }
 
 pub fn cursor_shape_set(com: *Compositor, args: @FieldType(Event, "cursor_shape_set")) !void {
     const viewport_key: ViewportKey = .{
-        .client_id = args.client_id,
+        .client_uuid = args.client_uuid,
         .viewport_id = args.payload.viewport_id,
     };
     const vp = com.viewport_from_key(viewport_key) orelse return;
@@ -1042,8 +1042,8 @@ pub fn cursor_shape_set(com: *Compositor, args: @FieldType(Event, "cursor_shape_
 pub fn remote_viewport_embed(com: *Compositor, args: @FieldType(Event, "remote_viewport_embed")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
-    const to_embed = com.resources.getPtr(args.payload.client_id_to_embed) orelse return;
-    const embeder = com.resources.getPtr(args.client_id) orelse return;
+    const to_embed = com.resources.getPtr(args.payload.client_uuid_to_embed) orelse return;
+    const embeder = com.resources.getPtr(args.client_uuid) orelse return;
 
     try embeder.remote_viewports_pending.ensureUnusedCapacity(com.gpa, 1);
     try to_embed.viewports_pending.ensureUnusedCapacity(com.gpa, 1);
@@ -1055,7 +1055,7 @@ pub fn remote_viewport_embed(com: *Compositor, args: @FieldType(Event, "remote_v
         args.payload.remote_viewport_id,
         .{
             .to_embed = .{
-                .client_id = args.payload.client_id_to_embed,
+                .client_uuid = args.payload.client_uuid_to_embed,
                 .viewport_id = viewport_id,
             },
             .clip_rect = args.payload.rect,
@@ -1066,7 +1066,7 @@ pub fn remote_viewport_embed(com: *Compositor, args: @FieldType(Event, "remote_v
 
     com.server_events.push_assume_capacity(.{
         .viewport_create = .{
-            .client_id = args.payload.client_id_to_embed,
+            .client_uuid = args.payload.client_uuid_to_embed,
             .payload = .{
                 .viewport_id = viewport_id,
                 .size = args.payload.rect.size(),
@@ -1110,7 +1110,7 @@ pub fn mouse_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
     // TODO: Notify all viewports of this window that the mouse left
     com.server_events.push_assume_capacity(.{
         .mouse_enter = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{ .viewport_id = key.viewport_id },
         },
     });
@@ -1144,7 +1144,7 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !
 
     com.server_events.push_assume_capacity(.{
         .keyboard_key = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = key.viewport_id,
                 .key = args.key,
@@ -1166,7 +1166,7 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !
             if (Wayland.process_char(args.char)) |char| {
                 com.server_events.push_assume_capacity(.{
                     .keyboard_char = .{
-                        .client_id = key.client_id,
+                        .client_uuid = key.client_uuid,
                         .payload = .{ .viewport_id = key.viewport_id, .char = char },
                     },
                 });
@@ -1211,7 +1211,7 @@ pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !vo
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .mouse_leave = .{
-            .client_id = args.viewport_key.client_id,
+            .client_uuid = args.viewport_key.client_uuid,
             .payload = .{
                 .viewport_id = args.viewport_key.viewport_id,
             },
@@ -1225,7 +1225,7 @@ pub fn mouse_motion(com: *Compositor, args: @FieldType(Event, "mouse_motion")) !
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .mouse_motion = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = key.viewport_id,
                 .x = args.x,
@@ -1245,7 +1245,7 @@ pub fn mouse_button(com: *Compositor, args: @FieldType(Event, "mouse_button")) !
 
     com.server_events.push_assume_capacity(.{
         .mouse_button = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = key.viewport_id,
                 .button = args.button,
@@ -1262,7 +1262,7 @@ pub fn mouse_scroll(com: *Compositor, args: @FieldType(Event, "mouse_scroll")) !
 
     com.server_events.push_assume_capacity(.{
         .mouse_scroll = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = key.viewport_id,
                 .axis = args.axis,
@@ -1273,12 +1273,12 @@ pub fn mouse_scroll(com: *Compositor, args: @FieldType(Event, "mouse_scroll")) !
 }
 
 pub const RemoteViewportKey = struct {
-    client_id: ClientID,
+    client_uuid: ClientUUID,
     remote_viewport_id: ptypes.RemoteViewportID,
 };
 
 pub const BufferKey = struct {
-    client_id: ClientID,
+    client_uuid: ClientUUID,
     buffer_id: BufferID,
 };
 
@@ -1328,25 +1328,25 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
 };
 
 pub const Event = union(enum) {
-    buffer_create_cpu: client_to_server.WithClientID(client_to_server.BufferCreateCpu),
-    buffer_create_gbm_bo: client_to_server.WithClientID(client_to_server.BufferCreateGbmBo),
-    buffer_present: client_to_server.WithClientID(client_to_server.BufferPresent),
-    buffer_present_with_sync: client_to_server.WithClientID(client_to_server.BufferPresentWithSync),
-    buffer_destroy: client_to_server.WithClientID(client_to_server.BufferDestroy),
+    buffer_create_cpu: client_to_server.WithClientUUID(client_to_server.BufferCreateCpu),
+    buffer_create_gbm_bo: client_to_server.WithClientUUID(client_to_server.BufferCreateGbmBo),
+    buffer_present: client_to_server.WithClientUUID(client_to_server.BufferPresent),
+    buffer_present_with_sync: client_to_server.WithClientUUID(client_to_server.BufferPresentWithSync),
+    buffer_destroy: client_to_server.WithClientUUID(client_to_server.BufferDestroy),
 
-    texture_create_d3d: client_to_server.WithClientID(client_to_server.TextureCreateD3D),
+    texture_create_d3d: client_to_server.WithClientUUID(client_to_server.TextureCreateD3D),
 
-    viewport_create: client_to_server.WithClientID(client_to_server.ViewportCreate),
-    viewport_destroy: client_to_server.WithClientID(client_to_server.ViewportDestroy),
+    viewport_create: client_to_server.WithClientUUID(client_to_server.ViewportCreate),
+    viewport_destroy: client_to_server.WithClientUUID(client_to_server.ViewportDestroy),
     viewport_should_close: ViewportShouldClose,
-    viewport_pos_set: client_to_server.WithClientID(client_to_server.ViewportPosSet),
+    viewport_pos_set: client_to_server.WithClientUUID(client_to_server.ViewportPosSet),
 
-    remote_viewport_embed: client_to_server.WithClientID(client_to_server.RemoteViewportEmbed),
-    viewport_size_set: client_to_server.WithClientID(client_to_server.ViewportSizeSet),
-    viewport_display_state_set: client_to_server.WithClientID(client_to_server.ViewportDisplayStateSet),
-    viewport_close: client_to_server.WithClientID(client_to_server.RemoteViewportClose),
+    remote_viewport_embed: client_to_server.WithClientUUID(client_to_server.RemoteViewportEmbed),
+    viewport_size_set: client_to_server.WithClientUUID(client_to_server.ViewportSizeSet),
+    viewport_display_state_set: client_to_server.WithClientUUID(client_to_server.ViewportDisplayStateSet),
+    viewport_close: client_to_server.WithClientUUID(client_to_server.RemoteViewportClose),
 
-    cursor_shape_set: client_to_server.WithClientID(client_to_server.CursorShape),
+    cursor_shape_set: client_to_server.WithClientUUID(client_to_server.CursorShape),
 
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
@@ -1370,7 +1370,7 @@ pub const Event = union(enum) {
     }
 
     pub const ClientRegistered = struct {
-        client_id: ClientID,
+        client_uuid: ClientUUID,
     };
 
     pub const WindowResize = struct {
@@ -1509,7 +1509,7 @@ pub const NativeTag = enum {
 };
 
 pub const BufferPresent = struct {
-    client_id: ClientID,
+    client_uuid: ClientUUID,
     viewport_id: ViewportID,
     buffer_id: BufferID,
     window_id: WindowID,
@@ -1518,7 +1518,7 @@ pub const BufferPresent = struct {
     state: State,
 
     pub fn init(
-        client_id: ClientID,
+        client_uuid: ClientUUID,
         viewport_id: ViewportID,
         buffer_id: BufferID,
         window_id: WindowID,
@@ -1526,7 +1526,7 @@ pub const BufferPresent = struct {
         sync: ?Sync,
     ) BufferPresent {
         return .{
-            .client_id = client_id,
+            .client_uuid = client_uuid,
             .viewport_id = viewport_id,
             .buffer_id = buffer_id,
             .window_id = window_id,
@@ -1604,7 +1604,7 @@ pub const Buffer = @import("Buffer.zig");
 
 const std = @import("std");
 const Io = std.Io;
-const ClientID = ptypes.ClientID;
+const ClientUUID = ptypes.ClientUUID;
 const ptypes = @import("protocol").types;
 const ViewportID = ptypes.ViewportID;
 const os = @import("builtin").os.tag;

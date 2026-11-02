@@ -63,7 +63,7 @@ pub fn push(q: *EventQueue, ptr: *Node, event: Event) void {
 pub fn pop(q: *EventQueue) ?*Node {
     const node = q.list.popFirst() orelse return null;
 
-    const ptr: *Node = @fieldParentPtr("node", node);
+    const ptr: *Node = @alignCast(@fieldParentPtr("node", node));
 
     ptr.node.next = null;
     ptr.node.prev = null;

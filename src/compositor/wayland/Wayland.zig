@@ -120,7 +120,7 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
 
         const win = com.windows.get(item.window_id).?;
 
-        const rs = com.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_uuid).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
@@ -167,7 +167,7 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
                 if (should_be_hidden) {
                     com.server_events.push(node, .{
                         .buffer_released = .{
-                            .client_id = item.client_id,
+                            .client_uuid = item.client_uuid,
                             .payload = .{
                                 .buffer_id = item.buffer_id,
                                 .viewport_id = item.viewport_id,
@@ -399,7 +399,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
             };
 
             if (tag == .enter) {
-                const rs = com.resources.getPtr(key.client_id).?;
+                const rs = com.resources.getPtr(key.client_uuid).?;
                 const viewport = rs.viewports.get(key.viewport_id).?;
                 const wl_vp = &viewport.linux.wayland;
 
@@ -484,7 +484,7 @@ pub fn viewport_from_surface(com: *const Compositor, surface: *cwl.Surface) ?str
         for (rs.viewports.values()) |vp| {
             if (vp.linux.wayland.surface == surface) {
                 return .{
-                    .{ .client_id = rs.client_id, .viewport_id = vp.id },
+                    .{ .client_uuid = rs.client_uuid, .viewport_id = vp.id },
                     &vp.linux.wayland,
                 };
             }
@@ -505,7 +505,7 @@ pub fn frame_listener_set(com: *Compositor, surface: *cwl.Surface, key: Viewport
 
 fn find_real_clip_rect(wl: *Wayland, vp: *const Viewport) ptypes.Rect {
     const parent_key = vp.parent_key orelse return vp.clipping_rect;
-    const rs = wl.resources_get(parent_key.client_id) catch unreachable;
+    const rs = wl.resources_get(parent_key.client_uuid) catch unreachable;
     const p = rs.viewports.getPtr(parent_key.viewport_id).?;
 
     const parent_rect = wl.find_real_clip_rect(p);
@@ -522,7 +522,7 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, com: *Compositor) vo
     const key = wl.frame_callbacks.fetchOrderedRemove(.from_callback(cb)).?.value;
     cb.destroy();
 
-    const rs = com.resources.get(key.client_id) orelse return;
+    const rs = com.resources.get(key.client_uuid) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
     const nvp = &vp.linux.wayland;
     nvp.refresh_cycle += 1;
@@ -531,7 +531,7 @@ fn frame_listener(cb: *cwl.Callback, _: cwl.Callback.Event, com: *Compositor) vo
     com.server_events.ensure_unused_capacity(1) catch return;
     com.server_events.push_assume_capacity(.{
         .frame_render = .{
-            .client_id = key.client_id,
+            .client_uuid = key.client_uuid,
             .payload = .{
                 .viewport_id = vp.id,
                 .refresh_cycle = nvp.refresh_cycle,
@@ -671,7 +671,7 @@ pub fn buffer_create_and_register_gpu_async(
     const buffer_listener = wl.buffer_listener_pool.create(com.gpa) catch unreachable;
     data.* = .{
         .buffer_id = buffer_id,
-        .client_id = rs.client_id,
+        .client_uuid = rs.client_uuid,
         .viewport_id = viewport_id,
         .wl = wl,
         .com = com,
@@ -689,7 +689,7 @@ pub fn buffer_create_and_register_gpu_async(
     params.add(buffer_fd, 0, 0, stride, mod_hi, mod_lo);
     params.create(size.width, size.height, format, .{});
 
-    log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_id });
+    log.debug("GPU Buffer Requsted {f} for {f}", .{ data.buffer_id, data.client_uuid });
 
     return buffer_id;
 }
@@ -854,7 +854,7 @@ pub const RegisterGpuBuffer = struct {
     wl: *Wayland,
     com: *Compositor,
 
-    client_id: ClientID,
+    client_uuid: ClientUUID,
     buffer_id: BufferID,
     viewport_id: ptypes.ViewportID,
 
@@ -881,7 +881,7 @@ pub const RegisterGpuBuffer = struct {
 
         switch (event) {
             .created => |result| {
-                const rs = data.com.resources.getPtr(data.client_id) orelse return;
+                const rs = data.com.resources.getPtr(data.client_uuid) orelse return;
 
                 const buffer = rs.buffers.getPtr(data.buffer_id) orelse {
                     // assume it's been destoryed by client
@@ -908,11 +908,11 @@ pub const RegisterGpuBuffer = struct {
 
                 buffer.native.wayland.gpu.wl_buffer = .{ .ptr = result.buffer };
 
-                log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_id });
+                log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_uuid });
 
                 data.com.server_events.push(data.node, .{
                     .buffer_created_gbm_bo = .{
-                        .client_id = data.client_id,
+                        .client_uuid = data.client_uuid,
                         .payload = .{
                             .viewport_id = data.viewport_id,
                             .buffer_id = data.buffer_id,
@@ -949,13 +949,13 @@ pub const BufferListener = struct {
         switch (event) {
             .release => {
                 const key = data.buffer_key;
-                const rs = data.com.resources.getPtr(key.client_id) orelse return;
+                const rs = data.com.resources.getPtr(key.client_uuid) orelse return;
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
 
                 data.com.server_events.push(entry.value.ptr, .{
                     .buffer_released = .{
-                        .client_id = key.client_id,
+                        .client_uuid = key.client_uuid,
                         .payload = .{
                             .buffer_id = key.buffer_id,
                             .viewport_id = entry.value.viewport_id,
@@ -977,7 +977,7 @@ pub const BufferListener = struct {
         data.* = .{
             .wl = wl,
             .com = com,
-            .buffer_key = .{ .client_id = rs.client_id, .buffer_id = buffer_id },
+            .buffer_key = .{ .client_uuid = rs.client_uuid, .buffer_id = buffer_id },
         };
         wl_buffer.setListener(*BufferListener, BufferListener.callback, data);
 
@@ -993,7 +993,7 @@ const cwl = @import("wayland").client.wl;
 const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
-const ClientID = ptypes.ClientID;
+const ClientUUID = ptypes.ClientUUID;
 const Compositor = @import("../Compositor.zig");
 const WindowID = Compositor.WindowID;
 const log = std.log.scoped(.Wayland);

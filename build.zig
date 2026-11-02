@@ -10,6 +10,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     }).module("known-folders");
 
+    const uuid = b.dependency("uuid", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("uuid");
+
     const zio = b.dependency("zio", .{
         .target = target,
         .optimize = optimize,
@@ -69,7 +74,7 @@ pub fn build(b: *std.Build) !void {
             .imports = &.{
                 .{ .name = "utils", .module = utils },
                 .{ .name = "constants", .module = constants },
-                .{ .name = "zio", .module = zio },
+                .{ .name = "uuid", .module = uuid },
             },
         });
 
@@ -105,6 +110,7 @@ pub fn build(b: *std.Build) !void {
                 .{ .name = "glad", .module = glad.c },
                 .{ .name = "constants", .module = constants },
                 .{ .name = "known-folders", .module = known_folders },
+                .{ .name = "uuid", .module = uuid },
             },
         });
 
@@ -162,6 +168,7 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "constants", .module = constants },
             .{ .name = "zio", .module = zio },
             .{ .name = "known-folders", .module = known_folders },
+            .{ .name = "uuid", .module = uuid },
         },
     });
 

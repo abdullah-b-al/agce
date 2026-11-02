@@ -182,6 +182,7 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
         error.MisbehavingUnknownClient,
         error.ClientSentInvalidClientFullID,
         error.OutOfMemoryDuringRegister,
+        error.ClientUUIDAlreadyExists,
         => |e| {
             switch (message.from) {
                 .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
@@ -228,7 +229,7 @@ pub fn events_handle(server: *Server, com: *Compositor) void {
                         error.ConnectionClosed,
                         => |mark| {
                             event.close_handles();
-                            server.mark_for_closing_known_client_with(v.client_id, mark);
+                            server.mark_for_closing_known_client_with(v.client_uuid, mark);
                         },
                     }
                 },
@@ -259,7 +260,7 @@ pub fn handle_event(
             log.info("Unknown client connected", .{});
         },
         .buffer_created_cpu => |e| {
-            const client = server.clients.known.get(e.client_id) orelse return;
+            const client = server.clients.known.get(e.client_uuid) orelse return;
             client.connection.send_buffer_created_cpu(
                 server.io,
                 server.gpa,
@@ -280,13 +281,13 @@ pub fn handle_event(
                 @panic("OS does not support gbm");
             }
 
-            const client = server.clients.known.get(e.client_id) orelse return;
+            const client = server.clients.known.get(e.client_uuid) orelse return;
             try client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload);
         },
         .texture_created_d3d => |e| {
             if (!constants.os_has_d3d) @panic("OS does not support d3d");
 
-            const client = server.clients.known.get(e.client_id) orelse return;
+            const client = server.clients.known.get(e.client_uuid) orelse return;
             client.connection.send_texture_created_d3d(server.io, server.gpa, e.payload) catch |err|
                 return switch (err) {
                     error.OutOfMemory => error.OutOfMemory,
@@ -300,7 +301,7 @@ pub fn handle_event(
         },
 
         inline else => |e, tag| {
-            const client = server.clients.known.get(e.client_id) orelse return;
+            const client = server.clients.known.get(e.client_uuid) orelse return;
 
             const send = @field(ClientConnection, "send_" ++ @tagName(tag));
             send(&client.connection, server.io, server.gpa, e.payload) catch
@@ -312,12 +313,12 @@ pub fn handle_event(
 fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
     std.debug.assert(message.from == .known);
 
-    const client_id = message.from.known;
+    const client_uuid = message.from.known;
     const msg = message.payload;
 
     switch (msg) {
         .generate_client_full_id => {
-            const client = server.clients.known.get(client_id) orelse return;
+            const client = server.clients.known.get(client_uuid) orelse return;
             try server.generated_full_ids.ensureUnusedCapacity(server.gpa, 1);
 
             const full_id = server.generate_full_id();
@@ -333,7 +334,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
         => |_, tag| log.err("Received invalid message for client {s}", .{@tagName(tag)}),
 
         inline else => |_, tag| {
-            const client = server.clients.known.get(client_id).?;
+            const client = server.clients.known.get(client_uuid).?;
             const ce = try server.compositor_event_from_message(client, tag, msg);
             events.appendAssumeCapacity(ce);
         },
@@ -345,6 +346,7 @@ pub const HandleMessageFromUnknownError = error{
     MisbehavingUnknownClient,
     ClientSentInvalidClientFullID,
     ConnectionClosed,
+    ClientUUIDAlreadyExists,
 };
 
 fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) HandleMessageFromUnknownError!void {
@@ -365,10 +367,10 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
         server.clients.promote_client_to_local(server.gpa, index);
         log.debug("Promoted unknown client to local", .{});
     } else {
-        const id = blk: {
+        const id: ClientUUID = blk: {
             const full_id =
                 register.full_id orelse
-                break :blk server.clients.next_id.increment();
+                break :blk .new(server.io);
 
             if (server.generated_full_ids.contains(full_id)) {
                 _ = server.generated_full_ids.orderedRemove(full_id);
@@ -378,6 +380,10 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
             log.err("{} {}", .{ error.ClientSentInvalidClientFullID, full_id });
             return error.ClientSentInvalidClientFullID;
         };
+
+        if (server.clients.known.contains(id)) {
+            return error.ClientUUIDAlreadyExists;
+        }
 
         server.clients.promote_client_to_known(server.gpa, index, id, register.pid);
         log.debug("Promoted unknown client to {f}", .{id});
@@ -399,7 +405,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
         for (server.clients.known.values()) |other| {
             if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
 
-            other.connection.send_client_registered(server.io, server.gpa, .{ .client_id = client.id }) catch |err|
+            other.connection.send_client_registered(server.io, server.gpa, .{ .client_uuid = client.id }) catch |err|
                 log.err("{} from {f} during broadcast", .{ err, other.id });
         }
     }
@@ -456,21 +462,21 @@ pub fn compositor_event_from_message(
             return @unionInit(
                 CompositorEvent,
                 @tagName(payload_tag),
-                .{ .client_id = client.id, .payload = msg },
+                .{ .client_uuid = client.id, .payload = msg },
             );
         },
     }
 }
 
 pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
-    const client_id = server.clients.next_id.increment();
+    const client_uuid: ClientUUID = .new(server.io);
     var fp: ptypes.ClientFingerprint = @enumFromInt(server.rand.random().int(u32));
 
-    while (server.generated_full_ids.contains(.{ .id = client_id, .fingerprint = fp })) {
+    while (server.generated_full_ids.contains(.{ .id = client_uuid, .fingerprint = fp })) {
         fp = @enumFromInt(server.rand.random().int(u32));
     }
 
-    return .{ .id = client_id, .fingerprint = fp };
+    return .{ .id = client_uuid, .fingerprint = fp };
 }
 
 pub fn close_clients_marked_with_error(server: *Server) void {
@@ -487,7 +493,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
             for (server.clients.known.values()) |c| {
                 if (c.id == client.id or c.connection.closed) continue;
 
-                c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_id = client.id }) catch {};
+                c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_uuid = client.id }) catch {};
             }
         }
     }
@@ -521,7 +527,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
     }
 }
 
-fn mark_for_closing_known_client_with(server: *Server, id: ClientID, err: ClientConnection.CloseError) void {
+fn mark_for_closing_known_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
     const client = server.clients.known.get(id) orelse return;
     client.connection.close_with_error = err;
 }
@@ -580,7 +586,7 @@ pub const RawMessage = struct {
 };
 
 pub const MessageSource = union(enum) {
-    known: ClientID,
+    known: ClientUUID,
     unknown: usize,
     local: usize,
 };
@@ -588,30 +594,30 @@ pub const MessageSource = union(enum) {
 pub const Event = union(enum) {
     unknown_client_connected: zio.net.Stream,
 
-    viewport_create: server_to_client.WithClientID(server_to_client.ViewportCreate),
-    viewport_created: server_to_client.WithClientID(server_to_client.ViewportCreated),
-    viewport_resize: server_to_client.WithClientID(server_to_client.ViewportResize),
-    viewport_close: server_to_client.WithClientID(server_to_client.ViewportClose),
-    viewport_display_state: server_to_client.WithClientID(server_to_client.ViewportDisplayState),
+    viewport_create: server_to_client.WithClientUUID(server_to_client.ViewportCreate),
+    viewport_created: server_to_client.WithClientUUID(server_to_client.ViewportCreated),
+    viewport_resize: server_to_client.WithClientUUID(server_to_client.ViewportResize),
+    viewport_close: server_to_client.WithClientUUID(server_to_client.ViewportClose),
+    viewport_display_state: server_to_client.WithClientUUID(server_to_client.ViewportDisplayState),
 
-    remote_viewport_embeded: server_to_client.WithClientID(server_to_client.RemoteViewportEmbeded),
-    remote_viewport_display_state: server_to_client.WithClientID(server_to_client.RemoteViewportDisplayState),
-    remote_viewport_closed: server_to_client.WithClientID(server_to_client.RemoteViewportClosed),
+    remote_viewport_embeded: server_to_client.WithClientUUID(server_to_client.RemoteViewportEmbeded),
+    remote_viewport_display_state: server_to_client.WithClientUUID(server_to_client.RemoteViewportDisplayState),
+    remote_viewport_closed: server_to_client.WithClientUUID(server_to_client.RemoteViewportClosed),
 
-    frame_render: server_to_client.WithClientID(server_to_client.FrameRender),
+    frame_render: server_to_client.WithClientUUID(server_to_client.FrameRender),
 
-    buffer_released: server_to_client.WithClientID(server_to_client.BufferReleased),
-    buffer_created_cpu: server_to_client.WithClientID(server_to_client.BufferCreatedCpu),
-    buffer_created_gbm_bo: server_to_client.WithClientID(server_to_client.BufferCreatedGbmBo),
-    texture_created_d3d: server_to_client.WithClientID(server_to_client.TextureCreatedD3D),
+    buffer_released: server_to_client.WithClientUUID(server_to_client.BufferReleased),
+    buffer_created_cpu: server_to_client.WithClientUUID(server_to_client.BufferCreatedCpu),
+    buffer_created_gbm_bo: server_to_client.WithClientUUID(server_to_client.BufferCreatedGbmBo),
+    texture_created_d3d: server_to_client.WithClientUUID(server_to_client.TextureCreatedD3D),
 
-    keyboard_key: server_to_client.WithClientID(server_to_client.KeyboardKey),
-    keyboard_char: server_to_client.WithClientID(server_to_client.KeyboardChar),
-    mouse_enter: server_to_client.WithClientID(server_to_client.MouseEnter),
-    mouse_leave: server_to_client.WithClientID(server_to_client.MouseLeave),
-    mouse_motion: server_to_client.WithClientID(server_to_client.MouseMotion),
-    mouse_button: server_to_client.WithClientID(server_to_client.MouseButton),
-    mouse_scroll: server_to_client.WithClientID(server_to_client.MouseScroll),
+    keyboard_key: server_to_client.WithClientUUID(server_to_client.KeyboardKey),
+    keyboard_char: server_to_client.WithClientUUID(server_to_client.KeyboardChar),
+    mouse_enter: server_to_client.WithClientUUID(server_to_client.MouseEnter),
+    mouse_leave: server_to_client.WithClientUUID(server_to_client.MouseLeave),
+    mouse_motion: server_to_client.WithClientUUID(server_to_client.MouseMotion),
+    mouse_button: server_to_client.WithClientUUID(server_to_client.MouseButton),
+    mouse_scroll: server_to_client.WithClientUUID(server_to_client.MouseScroll),
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
@@ -655,7 +661,7 @@ const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;
 const local_client = @import("protocol").local_client;
 const ptypes = @import("protocol").types;
-const ClientID = ptypes.ClientID;
+const ClientUUID = ptypes.ClientUUID;
 const Client = Clients.Client;
 const UnknownClient = Clients.UnknownClient;
 const os = @import("builtin").os.tag;

@@ -127,8 +127,8 @@ fn recv_fd_peek(comptime Fd: type, socket: c_int) !Fd {
 }
 
 pub const MessageHeader = common.MessageHeaderGeneric(MessageTag);
-pub const WithClientID = common.WithClientID;
-pub const WithHandlesClientID = common.WithHandlesClientID;
+pub const WithClientUUID = common.WithClientUUID;
+pub const WithHandlesClientUUID = common.WithHandlesClientUUID;
 
 pub const Message = struct {
     header: MessageHeader,
@@ -232,11 +232,11 @@ pub const RemoteViewportClosed = struct {
 };
 
 pub const ClientRegistered = struct {
-    client_id: types.ClientID,
+    client_uuid: types.ClientUUID,
 };
 
 pub const ClientDisconnected = struct {
-    client_id: types.ClientID,
+    client_uuid: types.ClientUUID,
 };
 
 pub const ViewportCreate = struct {

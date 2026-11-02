@@ -3,7 +3,7 @@ pub fn parse_message_header(data: []const u8) !MessageHeader {
 }
 
 pub const MessageHeader = common.MessageHeaderGeneric(MessageTag);
-pub const WithClientID = common.WithClientID;
+pub const WithClientUUID = common.WithClientUUID;
 
 pub const Message = struct {
     header: MessageHeader,
@@ -65,7 +65,7 @@ pub const ViewportDestroy = struct {
 };
 
 pub const RemoteViewportEmbed = struct {
-    client_id_to_embed: types.ClientID,
+    client_uuid_to_embed: types.ClientUUID,
     remote_viewport_id: types.RemoteViewportID,
     rect: types.Rect,
     embeder_viewport_id: types.ViewportID,

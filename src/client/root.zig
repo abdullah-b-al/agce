@@ -6,7 +6,7 @@ pub const ViewportID = ptypes.ViewportID;
 pub const RemoteViewportID = ptypes.RemoteViewportID;
 pub const BufferID = ptypes.BufferID;
 pub const CursorShape = ptypes.CursorShape;
-pub const ClientID = ptypes.ClientID;
+pub const ClientUUID = ptypes.ClientUUID;
 pub const Rect = ptypes.Rect;
 pub const Size = ptypes.Size;
 pub const Pos = ptypes.Pos;
@@ -163,10 +163,10 @@ pub const ClientHandle = opaque {
         std.debug.assert(process.status() == .connected);
         const client = handle.cast();
         const vp = viewport.cast();
-        const client_id = process.status().connected;
+        const client_uuid = process.status().connected;
 
         return @ptrCast(
-            try client.remote_viewport_embed(vp.id, client_id, rect),
+            try client.remote_viewport_embed(vp.id, client_uuid, rect),
         );
     }
 

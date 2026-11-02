@@ -11,9 +11,9 @@ pub fn init(
     win32: *Win32,
     base: *const Compositor.Viewport,
     parent: ParentOfViewport,
-    client_id: ClientID,
+    client_uuid: ClientUUID,
 ) !Viewport {
-    _ = client_id;
+    _ = client_uuid;
 
     const parent_handle = switch (parent) {
         .window => |handle| handle.cast(.win32),
@@ -85,7 +85,7 @@ const ParentOfViewport = Compositor.ParentOfViewport;
 const ViewportKey = ptypes.ViewportKey;
 const ptypes = @import("protocol").types;
 const Win32 = @import("Win32.zig");
-const ClientID = ptypes.ClientID;
+const ClientUUID = ptypes.ClientUUID;
 const win32_foundation = @import("win32").foundation;
 const win32_win = @import("win32").ui.windows_and_messaging;
 const dxgi = @import("win32").graphics.dxgi;

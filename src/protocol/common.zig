@@ -111,9 +111,9 @@ pub fn MessageHeaderGeneric(comptime MessageTag: type) type {
     };
 }
 
-pub fn WithClientID(comptime T: type) type {
+pub fn WithClientUUID(comptime T: type) type {
     return struct {
-        client_id: types.ClientID,
+        client_uuid: types.ClientUUID,
         payload: T,
     };
 }

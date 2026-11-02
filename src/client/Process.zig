@@ -99,7 +99,7 @@ pub fn client_connected(process: *Process) void {
 }
 
 pub const Status = union(enum) {
-    connected: ptypes.ClientID,
+    connected: ptypes.ClientUUID,
     pending_id,
     pending_connection,
     disconnected,

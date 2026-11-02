@@ -14,7 +14,7 @@ pub fn init(
     wl: *Wayland,
     base: *const Compositor.Viewport,
     parent: ParentOfViewport,
-    client_id: ClientID,
+    client_uuid: ClientUUID,
     create_sync_timeline: bool,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
@@ -45,7 +45,7 @@ pub fn init(
     else
         null;
 
-    try Wayland.frame_listener_set(com, surface, .{ .client_id = client_id, .viewport_id = base.id });
+    try Wayland.frame_listener_set(com, surface, .{ .client_uuid = client_uuid, .viewport_id = base.id });
 
     return .{
         .base = base,
@@ -203,7 +203,7 @@ const xdg = @import("wayland").client.xdg;
 const zwp = @import("wayland").client.zwp;
 const wp = @import("wayland").client.wp;
 const ptypes = @import("protocol").types;
-const ClientID = ptypes.ClientID;
+const ClientUUID = ptypes.ClientUUID;
 const Compositor = @import("../Compositor.zig");
 const ParentOfViewport = Compositor.ParentOfViewport;
 const ViewportKey = ptypes.ViewportKey;

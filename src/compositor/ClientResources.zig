@@ -1,6 +1,6 @@
 const ClientResources = @This();
 
-client_id: ClientID,
+client_uuid: ClientUUID,
 wl_buffers_pending: std.array_hash_map.Auto(BufferID, void),
 
 buffers_commited: std.array_hash_map.Auto(BufferID, BufferCommitted),
@@ -16,9 +16,9 @@ remote_viewports_pending: std.array_hash_map.Auto(RemoteViewportID, RemoteViewpo
 
 gbm_bos: std.array_hash_map.Auto(BufferID, GbmBo),
 
-pub fn init(id: ClientID) ClientResources {
+pub fn init(id: ClientUUID) ClientResources {
     return .{
-        .client_id = id,
+        .client_uuid = id,
         .wl_buffers_pending = .empty,
         .buffers_commited = .empty,
         .buffers = .empty,
@@ -108,7 +108,7 @@ pub fn viewport_create(
     const vp = try Viewport.create(
         com,
         parent,
-        .{ .client_id = rs.client_id, .viewport_id = viewport_id },
+        .{ .client_uuid = rs.client_uuid, .viewport_id = viewport_id },
         window_id,
         rect,
         render_size,
@@ -238,7 +238,7 @@ const Compositor = @import("Compositor.zig");
 const BufferID = ptypes.BufferID;
 const ViewportID = ptypes.ViewportID;
 const RemoteViewportID = ptypes.RemoteViewportID;
-const ClientID = ptypes.ClientID;
+const ClientUUID = ptypes.ClientUUID;
 const Viewport = @import("Viewport.zig");
 const Buffer = @import("Buffer.zig");
 const constants = @import("constants");

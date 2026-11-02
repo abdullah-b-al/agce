@@ -68,7 +68,7 @@ pub const CompositorHandle = opaque {
         try com.server_events.ensure_unused_capacity(1);
         com.server_events.push_assume_capacity(.{
             .viewport_resize = .{
-                .client_id = key.client_id,
+                .client_uuid = key.client_uuid,
                 .payload = .{
                     .viewport_id = key.viewport_id,
                     .size = size,
@@ -124,16 +124,16 @@ pub const CompositorHandle = opaque {
         var i = com.resources.count();
         while (i > 0) {
             i -= 1;
-            const client_id = com.resources.keys()[i];
-            if (!server.clients.known.contains(client_id)) {
-                com.client_disconnected(client_id);
+            const client_uuid = com.resources.keys()[i];
+            if (!server.clients.known.contains(client_uuid)) {
+                com.client_disconnected(client_uuid);
             }
         }
 
         try com.resources.ensureTotalCapacity(com.gpa, server.clients.count());
-        for (server.clients.known.keys()) |client_id| {
-            if (!com.resources.contains(client_id)) {
-                com.client_registered(client_id) catch |err| switch (err) {
+        for (server.clients.known.keys()) |client_uuid| {
+            if (!com.resources.contains(client_uuid)) {
+                com.client_registered(client_uuid) catch |err| switch (err) {
                     error.OutOfMemory => unreachable,
                 };
             }

@@ -2,18 +2,34 @@ pub const MessageFormat = enum(u32) {
     json,
 };
 
-pub const ClientID = enum(u32) {
-    pub const first: ClientID = @enumFromInt(1);
+pub const ClientUUID = enum(uuid.Uuid) {
     _,
 
-    pub fn increment(id: *ClientID) ClientID {
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+    pub fn new(io: std.Io) ClientUUID {
+        return @enumFromInt(uuid.v4.new(io));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ClientID({})", .{@intFromEnum(self)});
+        try writer.print("ClientUUID({s})", .{uuid.urn.serialize(@intFromEnum(self))});
+    }
+
+    pub fn jsonParse(_: std.mem.Allocator, source: *std.json.Scanner, _: std.json.ParseOptions) std.json.ParseError(std.json.Scanner)!ClientUUID {
+        const token = try source.next();
+        const slice = switch (token) {
+            .string => |slice| slice,
+            else => return error.UnexpectedToken,
+        };
+
+        const int = uuid.urn.deserialize(slice) catch |err| switch (err) {
+            error.InvalidHexChar, error.MalformedUrn => return error.InvalidNumber,
+        };
+
+        return @enumFromInt(int);
+    }
+
+    pub fn jsonStringify(self: ClientUUID, stringify: *std.json.Stringify) error{WriteFailed}!void {
+        const slice = uuid.urn.serialize(@intFromEnum(self));
+        try stringify.write(slice);
     }
 };
 
@@ -36,24 +52,23 @@ pub const PID = enum(u32) {
 };
 
 pub const ClientFullID = struct {
-    id: ClientID,
+    id: ClientUUID,
     fingerprint: ClientFingerprint,
 
     const env_string_delimiter = ',';
-    const env_string_fmt = "{}" ++ .{env_string_delimiter} ++ "{}";
+    const env_string_fmt = "{s}" ++ .{env_string_delimiter} ++ "{}";
     pub const env_string_max_len = blk: {
-        const out = std.fmt.comptimePrint(env_string_fmt, .{
-            std.math.maxInt(u32),
+        const out = std.fmt.comptimePrint(",{}", .{
             std.math.maxInt(u32),
         });
-        break :blk out.len;
+        break :blk out.len + @sizeOf(uuid.urn.Urn);
     };
 
     pub fn to_env_string(fid: ClientFullID, buf: []u8) []const u8 {
         std.debug.assert(buf.len >= env_string_max_len);
 
         return std.fmt.bufPrint(buf, env_string_fmt, .{
-            @intFromEnum(fid.id),
+            uuid.urn.serialize(@intFromEnum(fid.id)),
             @intFromEnum(fid.fingerprint),
         }) catch unreachable;
     }
@@ -64,7 +79,7 @@ pub const ClientFullID = struct {
         const fp = iter.next() orelse return null;
 
         return .{
-            .id = @enumFromInt(std.fmt.parseInt(u32, id, 10) catch return null),
+            .id = @enumFromInt(uuid.urn.deserialize(id) catch return null),
             .fingerprint = @enumFromInt(std.fmt.parseInt(u32, fp, 10) catch return null),
         };
     }
@@ -141,7 +156,7 @@ pub const BufferID = enum(u32) {
 };
 
 pub const ViewportKey = struct {
-    client_id: ClientID,
+    client_uuid: ClientUUID,
     viewport_id: ViewportID,
 };
 
@@ -364,3 +379,4 @@ pub const D3DReleaseFenceSharedHandle = WindowsHandle(opaque {});
 
 const std = @import("std");
 const os = @import("builtin").os.tag;
+const uuid = @import("uuid");

@@ -220,7 +220,7 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         .client_registered => |e| {
             const process = blk: for (client.processes.items) |process| {
                 const full_id = process.full_id orelse continue;
-                if (full_id.id == e.client_id) break :blk process;
+                if (full_id.id == e.client_uuid) break :blk process;
             } else null;
 
             if (process) |p| {
@@ -232,7 +232,7 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         },
         .client_disconnected => |e| {
             for (client.processes.items) |p| {
-                if (p.full_id) |c| if (c.id == e.client_id) {
+                if (p.full_id) |c| if (c.id == e.client_uuid) {
                     p.status = .disconnected;
                 };
             }
@@ -506,7 +506,7 @@ pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
 pub fn remote_viewport_embed(
     client: *Client,
     viewport_id: ViewportID,
-    client_id_to_embed: ptypes.ClientID,
+    client_uuid_to_embed: ptypes.ClientUUID,
     rect: ptypes.Rect,
 ) !*RemoteViewport {
     try client.remote_viewports.ensureUnusedCapacity(client.gpa, 1);
@@ -522,7 +522,7 @@ pub fn remote_viewport_embed(
         client.io,
         client.gpa,
         .{
-            .client_id_to_embed = client_id_to_embed,
+            .client_uuid_to_embed = client_uuid_to_embed,
             .embeder_viewport_id = viewport_id,
             .rect = rect,
             .remote_viewport_id = id,

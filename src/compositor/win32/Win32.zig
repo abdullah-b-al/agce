@@ -68,7 +68,7 @@ fn viewport_proc(
     const vp, const vp_key = blk: {
         for (com.resources.values()) |rs| {
             for (rs.viewports.values()) |vp| {
-                const key: ViewportKey = .{ .client_id = rs.client_id, .viewport_id = vp.id };
+                const key: ViewportKey = .{ .client_uuid = rs.client_uuid, .viewport_id = vp.id };
                 if (vp.win32.child_window_handle == hwnd) {
                     break :blk .{ vp, key };
                 }
@@ -209,7 +209,7 @@ pub fn present(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.
         if (item.state == .presented) {
             com.server_events.push_assume_capacity(.{
                 .buffer_released = .{
-                    .client_id = item.client_id,
+                    .client_uuid = item.client_uuid,
                     .payload = .{
                         .viewport_id = item.viewport_id,
                         .buffer_id = item.buffer_id,
@@ -224,7 +224,7 @@ fn present_queue_check_available_to_copy(_: *Win32, com: *Compositor, comptime n
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state != .presented);
 
-        const rs = com.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_uuid).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
         const nb = native_tag.buffer(buffer);
 
@@ -244,7 +244,7 @@ fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime native_
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_copy) continue;
 
-        const rs = com.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_uuid).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const nvp = native_tag.viewport(vp);
@@ -297,7 +297,7 @@ fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime nati
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_present) continue;
 
-        const rs = com.resources.getPtr(item.client_id).?;
+        const rs = com.resources.getPtr(item.client_uuid).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 

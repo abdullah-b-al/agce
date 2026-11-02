@@ -6,6 +6,7 @@ pub const env_agce_socket_path = "AGCE_SOCKET_PATH";
 pub const env_expect_viewport_key = "AGCE_EXPECT_VIEWPORT";
 pub const env_expect_viewport_true = "1";
 pub const env_client_full_id = "AGCE_CLIENT_FULL_ID";
+pub const env_client_uuid = "AGCE_CLIENT_UUID";
 
 pub const os_has_gbm = switch (os) {
     .linux => true,

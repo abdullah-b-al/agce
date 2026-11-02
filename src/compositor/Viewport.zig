@@ -56,14 +56,14 @@ pub fn create(
                     wl,
                     vp,
                     parent,
-                    key.client_id,
+                    key.client_uuid,
                     create_sync_timeline,
                 ),
             };
         },
         .win32 => |tag| {
             const win32 = tag.compositor(com);
-            vp.win32 = try .init(com, win32, vp, parent, key.client_id);
+            vp.win32 = try .init(com, win32, vp, parent, key.client_uuid);
         },
     }
 
@@ -131,7 +131,7 @@ pub const Linux = union(enum) {
 
 const std = @import("std");
 const ptypes = @import("protocol").types;
-const ClientID = @import("server/Clients.zig").ClientID;
+const ClientUUID = @import("server/Clients.zig").ClientUUID;
 const Compositor = @import("Compositor.zig");
 const ViewportKey = ptypes.ViewportKey;
 const WindowID = Compositor.WindowID;

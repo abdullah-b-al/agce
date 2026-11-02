@@ -4,11 +4,9 @@ known_pool: std.heap.MemoryPoolExtra(Client, .{ .growable = false }),
 unknown_pool: std.heap.MemoryPoolExtra(UnknownClient, .{ .growable = false }),
 local_pool: std.heap.MemoryPoolExtra(LocalClient, .{ .growable = false }),
 
-known: std.array_hash_map.Auto(ptypes.ClientID, *Client),
+known: std.array_hash_map.Auto(ptypes.ClientUUID, *Client),
 unknown: std.ArrayList(*UnknownClient),
 local: std.ArrayList(*LocalClient),
-
-next_id: ptypes.ClientID,
 
 pub const init: Clients = .{
     .known_pool = .empty,
@@ -18,8 +16,6 @@ pub const init: Clients = .{
     .known = .empty,
     .unknown = .empty,
     .local = .empty,
-
-    .next_id = .first,
 };
 
 pub fn deinit(clients: *Clients, _: Io, gpa: std.mem.Allocator) void {
@@ -96,9 +92,11 @@ pub fn promote_client_to_known(
     clients: *Clients,
     gpa: std.mem.Allocator,
     index: usize,
-    id: ptypes.ClientID,
+    id: ptypes.ClientUUID,
     pid: ?ptypes.PID,
 ) void {
+    std.debug.assert(!clients.known.contains(id));
+
     const unknown = clients.unknown.items[index];
     std.debug.assert(!unknown.promoted);
 
@@ -186,7 +184,7 @@ pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients) void {
 }
 
 pub const Client = struct {
-    id: ptypes.ClientID,
+    id: ptypes.ClientUUID,
     pid: ?ptypes.PID,
     connection: ClientConnection,
 };
