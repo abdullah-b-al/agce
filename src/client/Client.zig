@@ -7,11 +7,11 @@ connection: ServerConnection,
 registered: bool,
 
 next_viewport_id: ptypes.ViewportID,
-next_sub_viewport_id: ptypes.SubViewportID,
+next_remote_viewport_id: ptypes.RemoteViewportID,
 
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_from_server: std.array_hash_map.Auto(ViewportID, ptypes.Size),
-sub_viewports: std.array_hash_map.Auto(SubViewportID, *SubViewport),
+remote_viewports: std.array_hash_map.Auto(RemoteViewportID, *RemoteViewport),
 
 processes: std.ArrayList(*Process),
 
@@ -75,10 +75,10 @@ pub fn init(
         .registered = false,
         .messages_arena = .init(gpa),
         .next_viewport_id = .first_for_client,
-        .next_sub_viewport_id = .first,
+        .next_remote_viewport_id = .first,
         .viewports = .empty,
         .viewports_from_server = .empty,
-        .sub_viewports = .empty,
+        .remote_viewports = .empty,
         .processes = .empty,
         .gbm = null,
         .gl_context = null,
@@ -108,12 +108,12 @@ pub fn deinit(client: *Client) void {
         client.gpa.destroy(vp);
     }
 
-    for (client.sub_viewports.values()) |svp| {
-        if (!svp.deinited) {
-            svp.deinit();
-            log.err("{f} leaked", .{svp.id});
+    for (client.remote_viewports.values()) |rvp| {
+        if (!rvp.deinited) {
+            rvp.deinit();
+            log.err("{f} leaked", .{rvp.id});
         }
-        client.gpa.destroy(svp);
+        client.gpa.destroy(rvp);
     }
 
     if (constants.os_has_gbm) {
@@ -129,7 +129,7 @@ pub fn deinit(client: *Client) void {
 
     const containers = .{
         &client.viewports,
-        &client.sub_viewports,
+        &client.remote_viewports,
         &client.viewports_from_server,
         &client.processes,
     };
@@ -253,53 +253,53 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             );
         },
 
-        .sub_viewport_embeded => |e| {
-            const svp = client.sub_viewports.get(e.sub_viewport_id) orelse return;
+        .remote_viewport_embeded => |e| {
+            const rvp = client.remote_viewports.get(e.remote_viewport_id) orelse return;
             switch (e.status) {
                 .success => {
-                    if (client.viewports.get(svp.parent)) |vp| {
-                        vp.event_push(.{ .sub_viewport_embeded = svp.id });
+                    if (client.viewports.get(rvp.parent)) |vp| {
+                        vp.event_push(.{ .remote_viewport_embeded = rvp.id });
                     }
-                    svp.state = .{ .shown = e.viewport_key };
+                    rvp.state = .{ .shown = e.viewport_key };
                 },
-                .failure => svp.state = .failed,
+                .failure => rvp.state = .failed,
             }
-            svp.render_size = e.render_size;
+            rvp.render_size = e.render_size;
         },
-        .sub_viewport_display_state => |e| {
-            const svp = blk: for (client.sub_viewports.values()) |svp| {
-                const key = switch (svp.state) {
+        .remote_viewport_display_state => |e| {
+            const rvp = blk: for (client.remote_viewports.values()) |rvp| {
+                const key = switch (rvp.state) {
                     .shown, .hidden => |key| key,
                     .closed, .pending, .failed => continue,
                 };
 
                 if (std.meta.eql(key, e.viewport_key)) {
-                    break :blk svp;
+                    break :blk rvp;
                 }
             } else return;
 
-            const key = switch (svp.state) {
+            const key = switch (rvp.state) {
                 .shown, .hidden => |key| key,
                 .closed, .failed, .pending => return,
             };
-            svp.state = .from_display_state(e.state, key);
+            rvp.state = .from_display_state(e.state, key);
         },
-        .sub_viewport_closed => |e| {
-            const svp = blk: for (client.sub_viewports.values()) |svp| {
-                const key = switch (svp.state) {
+        .remote_viewport_closed => |e| {
+            const rvp = blk: for (client.remote_viewports.values()) |rvp| {
+                const key = switch (rvp.state) {
                     .shown, .hidden => |key| key,
                     .closed, .pending, .failed => continue,
                 };
 
                 if (std.meta.eql(key, e.viewport_key)) {
-                    break :blk svp;
+                    break :blk rvp;
                 }
             } else return;
 
-            svp.state = .closed;
+            rvp.state = .closed;
 
-            if (client.viewports.get(svp.parent)) |vp| {
-                vp.event_push(.{ .sub_viewport_closed = svp.id });
+            if (client.viewports.get(rvp.parent)) |vp| {
+                vp.event_push(.{ .remote_viewport_closed = rvp.id });
             }
         },
         .viewport_resize => |e| {
@@ -503,33 +503,33 @@ pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
     );
 }
 
-pub fn sub_viewport_embed(
+pub fn remote_viewport_embed(
     client: *Client,
     viewport_id: ViewportID,
     client_id_to_embed: ptypes.ClientID,
     rect: ptypes.Rect,
-) !*SubViewport {
-    try client.sub_viewports.ensureUnusedCapacity(client.gpa, 1);
-    const svp = try client.gpa.create(SubViewport);
-    errdefer client.gpa.destroy(svp);
+) !*RemoteViewport {
+    try client.remote_viewports.ensureUnusedCapacity(client.gpa, 1);
+    const rvp = try client.gpa.create(RemoteViewport);
+    errdefer client.gpa.destroy(rvp);
 
-    const id = client.next_sub_viewport_id.increment();
-    svp.* = .init(viewport_id, id, client, rect);
+    const id = client.next_remote_viewport_id.increment();
+    rvp.* = .init(viewport_id, id, client, rect);
 
-    client.sub_viewports.putAssumeCapacityNoClobber(id, svp);
+    client.remote_viewports.putAssumeCapacityNoClobber(id, rvp);
 
-    try client.connection.send_sub_viewport_embed(
+    try client.connection.send_remote_viewport_embed(
         client.io,
         client.gpa,
         .{
             .client_id_to_embed = client_id_to_embed,
             .embeder_viewport_id = viewport_id,
             .rect = rect,
-            .sub_viewport_id = id,
+            .remote_viewport_id = id,
         },
     );
 
-    return svp;
+    return rvp;
 }
 
 pub fn read_thread(
@@ -695,8 +695,8 @@ pub const Event = union(enum) {
     mouse_motion: server_to_client.MouseMotion,
     mouse_button: server_to_client.MouseButton,
     mouse_scroll: server_to_client.MouseScroll,
-    sub_viewport_closed: SubViewportID,
-    sub_viewport_embeded: SubViewportID,
+    remote_viewport_closed: RemoteViewportID,
+    remote_viewport_embeded: RemoteViewportID,
     wake_up,
 };
 
@@ -770,11 +770,11 @@ const opengl = @import("opengl.zig");
 const c_linux = @import("c_linux");
 const glad = @import("glad");
 const ViewportID = ptypes.ViewportID;
-const SubViewportID = ptypes.SubViewportID;
+const RemoteViewportID = ptypes.RemoteViewportID;
 const BufferID = ptypes.BufferID;
 const log = std.log.scoped(.Client);
 const Viewport = @import("Viewport.zig");
-const SubViewport = @import("SubViewport.zig");
+const RemoteViewport = @import("RemoteViewport.zig");
 const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
 const Process = @import("Process.zig");

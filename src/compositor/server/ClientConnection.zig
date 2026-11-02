@@ -120,18 +120,18 @@ pub fn send_viewport_display_state(c: *ClientConnection, io: Io, gpa: std.mem.Al
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_embeded(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.SubViewportEmbeded) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_embeded = payload });
+pub fn send_remote_viewport_embeded(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportEmbeded) !void {
+    const message = try c.stringify(gpa, .{ .remote_viewport_embeded = payload });
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_display_state(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.SubViewportDisplayState) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_display_state = payload });
+pub fn send_remote_viewport_display_state(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportDisplayState) !void {
+    const message = try c.stringify(gpa, .{ .remote_viewport_display_state = payload });
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_closed(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.SubviewportClosed) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_closed = payload });
+pub fn send_remote_viewport_closed(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportClosed) !void {
+    const message = try c.stringify(gpa, .{ .remote_viewport_closed = payload });
     try c.send(io, gpa, message);
 }
 

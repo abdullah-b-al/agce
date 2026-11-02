@@ -146,9 +146,9 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_close: ViewportClose,
     viewport_display_state: ViewportDisplayState,
 
-    sub_viewport_embeded: SubViewportEmbeded,
-    sub_viewport_display_state: SubViewportDisplayState,
-    sub_viewport_closed: SubviewportClosed,
+    remote_viewport_embeded: RemoteViewportEmbeded,
+    remote_viewport_display_state: RemoteViewportDisplayState,
+    remote_viewport_closed: RemoteViewportClosed,
 
     client_registered: ClientRegistered,
     client_disconnected: ClientDisconnected,
@@ -220,14 +220,14 @@ pub const GeneratedClientFullID = struct {
     full_id: types.ClientFullID,
 };
 
-pub const SubViewportEmbeded = struct {
-    sub_viewport_id: types.SubViewportID,
+pub const RemoteViewportEmbeded = struct {
+    remote_viewport_id: types.RemoteViewportID,
     status: types.Status,
     render_size: types.Size,
     viewport_key: types.ViewportKey,
 };
 
-pub const SubviewportClosed = struct {
+pub const RemoteViewportClosed = struct {
     viewport_key: types.ViewportKey,
 };
 
@@ -268,7 +268,7 @@ pub const ViewportDisplayState = struct {
     state: types.ViewportDisplayState,
 };
 
-pub const SubViewportDisplayState = struct {
+pub const RemoteViewportDisplayState = struct {
     viewport_key: types.ViewportKey,
     state: types.ViewportDisplayState,
 };

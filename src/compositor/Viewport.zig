@@ -6,7 +6,7 @@ clipping_rect: ptypes.Rect,
 render_size: ptypes.Size,
 state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
-sub_viewports: std.ArrayList(ViewportKey),
+remote_viewports: std.ArrayList(ViewportKey),
 format: ptypes.BufferFormat,
 cursor_shape: ptypes.CursorShape,
 
@@ -39,7 +39,7 @@ pub fn create(
         .state = .shown,
         .clipping_rect = clipping_rect,
         .render_size = render_size,
-        .sub_viewports = .empty,
+        .remote_viewports = .empty,
         .format = format,
         .cursor_shape = .default,
 
@@ -71,12 +71,12 @@ pub fn create(
 }
 
 pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
-    // Sub-viewports should be closed before calling deinit
-    std.debug.assert(vp.sub_viewports.items.len == 0);
-    // If the viewport is a sub-viewport we must inform the parent then set to null
+    // Remote viewports should be closed before calling deinit
+    std.debug.assert(vp.remote_viewports.items.len == 0);
+    // If the viewport is a remote viewport we must inform the parent then set to null
     std.debug.assert(vp.parent_key == null);
 
-    vp.sub_viewports.deinit(gpa);
+    vp.remote_viewports.deinit(gpa);
 
     switch (vp.native_tag()) {
         .wayland => |tag| {
@@ -132,7 +132,6 @@ const c_linux = @import("c_linux");
 const Wayland = @import("wayland/Wayland.zig");
 const Window = @import("Window.zig");
 const Buffer = @import("ClientResources.zig").Buffer;
-const SubViewport = @import("SubViewport.zig");
 const ParentOfViewport = Compositor.ParentOfViewport;
 const os = @import("builtin").os.tag;
 const Win32 = @import("win32/Win32.zig");

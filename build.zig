@@ -258,8 +258,8 @@ fn build_tests(
     }
 
     const helper_processes = .{
-        "src/tests/sub_viewport_recursive.zig",
-        "src/tests/sub_viewport_filled_rect.zig",
+        "src/tests/remote_viewport_recursive.zig",
+        "src/tests/remote_viewport_filled_rect.zig",
     };
 
     inline for (helper_processes) |path| {

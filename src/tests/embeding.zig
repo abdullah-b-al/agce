@@ -1,4 +1,4 @@
-pub fn embed_sub_viewports(init: std.process.Init) !void {
+pub fn embed_remote_viewports(init: std.process.Init) !void {
     var buf: [constants.socket_max_path]u8 = undefined;
     const testing_path_len = try std.process.executableDirPath(
         init.io,
@@ -6,7 +6,7 @@ pub fn embed_sub_viewports(init: std.process.Init) !void {
     );
     const path = try std.fs.path.join(init.gpa, &.{
         buf[0..testing_path_len],
-        "sub_viewport_recursive",
+        "remote_viewport_recursive",
     });
     defer init.gpa.free(path);
 
@@ -17,7 +17,7 @@ pub fn embed_sub_viewports(init: std.process.Init) !void {
 
     var environ_map = try shared.environ_map_create(@src(), init);
     defer environ_map.deinit();
-    try environ_map.put(@import("sub_viewport_recursive.zig").env_depth_key, "0");
+    try environ_map.put(@import("remote_viewport_recursive.zig").env_depth_key, "0");
 
     var child = try std.process.spawn(init.io, .{
         .argv = &.{path},
@@ -30,7 +30,7 @@ pub fn embed_sub_viewports(init: std.process.Init) !void {
     try server.await(init);
 }
 
-pub fn hide_sub_viewports(init: std.process.Init) !void {
+pub fn hide_remote_viewports(init: std.process.Init) !void {
     var buf: [constants.socket_max_path]u8 = undefined;
     const testing_path_len = try std.process.executableDirPath(
         init.io,
@@ -38,7 +38,7 @@ pub fn hide_sub_viewports(init: std.process.Init) !void {
     );
     const path = try std.fs.path.join(init.gpa, &.{
         buf[0..testing_path_len],
-        "sub_viewport_filled_rect",
+        "remote_viewport_filled_rect",
     });
     defer init.gpa.free(path);
 
@@ -68,13 +68,13 @@ pub fn hide_sub_viewports(init: std.process.Init) !void {
         try handle.poll(std.math.maxInt(u64));
     }
 
-    const svp_width = @divFloor(vp.size().width, 3) * 2;
-    const svp_height = @divFloor(vp.size().height, 3) * 2;
-    const sub_viewport = try handle.sub_viewport_embed(vp, child, .{
+    const rvp_width = @divFloor(vp.size().width, 3) * 2;
+    const rvp_height = @divFloor(vp.size().height, 3) * 2;
+    const remote_viewport = try handle.remote_viewport_embed(vp, child, .{
         .x = 100,
         .y = 100,
-        .width = svp_width,
-        .height = svp_height,
+        .width = rvp_width,
+        .height = rvp_height,
     });
 
     var ts: Io.Timestamp = .now(init.io, .awake);
@@ -97,10 +97,10 @@ pub fn hide_sub_viewports(init: std.process.Init) !void {
         const state: client.ViewportDisplayState =
             if (@mod(until_now, 2) == 0) .shown else .hidden;
 
-        try sub_viewport.display_state_set(state);
+        try remote_viewport.display_state_set(state);
     }
 
-    sub_viewport.destroy();
+    remote_viewport.destroy();
     child.kill();
 
     try server.await(init);

@@ -12,7 +12,7 @@ next_buffer_id: BufferID,
 
 viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_pending: std.array_hash_map.Auto(ViewportID, void),
-sub_viewports_pending: std.array_hash_map.Auto(SubViewportID, SubViewportPending),
+remote_viewports_pending: std.array_hash_map.Auto(RemoteViewportID, RemoteViewportPending),
 
 gbm_bos: std.array_hash_map.Auto(BufferID, GbmBo),
 
@@ -26,7 +26,7 @@ pub fn init(id: ClientID) ClientResources {
         .next_buffer_id = .first,
         .viewports = .empty,
         .viewports_pending = .empty,
-        .sub_viewports_pending = .empty,
+        .remote_viewports_pending = .empty,
         .gbm_bos = .empty,
     };
 }
@@ -50,7 +50,7 @@ pub fn deinit(rs: *ClientResources, com: *Compositor) void {
         &rs.buffers,
         &rs.viewports,
         &rs.viewports_pending,
-        &rs.sub_viewports_pending,
+        &rs.remote_viewports_pending,
         &rs.gbm_bos,
     }) |entry| {
         entry.deinit(com.gpa);
@@ -78,18 +78,18 @@ pub fn buffer_destroy(rs: *ClientResources, com: *Compositor, id: BufferID) void
     _ = rs.buffers.orderedRemove(id);
 }
 
-pub fn sub_viewports_pending_fetch_remove_by_embeded_key(rs: *ClientResources, key: ViewportKey) ?SubViewportPending {
+pub fn remote_viewports_pending_fetch_remove_by_embeded_key(rs: *ClientResources, key: ViewportKey) ?RemoteViewportPending {
     const id = blk: {
-        for (rs.sub_viewports_pending.values()) |sub| {
-            if (std.meta.eql(sub.to_embed, key)) {
-                break :blk sub.sub_viewport_id;
+        for (rs.remote_viewports_pending.values()) |remote| {
+            if (std.meta.eql(remote.to_embed, key)) {
+                break :blk remote.remote_viewport_id;
             }
         }
 
         return null;
     };
 
-    return rs.sub_viewports_pending.fetchOrderedRemove(id).?.value;
+    return rs.remote_viewports_pending.fetchOrderedRemove(id).?.value;
 }
 
 pub fn viewport_create(
@@ -120,9 +120,9 @@ pub fn viewport_create(
     rs.viewports.putAssumeCapacity(viewport_id, vp);
 }
 
-pub fn viewport_key_from_sub_viewport_id(rs: *const ClientResources, id: SubViewportID) ?ViewportKey {
+pub fn viewport_key_from_remote_viewport_id(rs: *const ClientResources, id: RemoteViewportID) ?ViewportKey {
     for (rs.viewports.values()) |vp| {
-        for (vp.sub_viewports.keys(), vp.sub_viewports.values()) |k, v| {
+        for (vp.remote_viewports.keys(), vp.remote_viewports.values()) |k, v| {
             if (k == id) return v;
         }
     }
@@ -130,8 +130,8 @@ pub fn viewport_key_from_sub_viewport_id(rs: *const ClientResources, id: SubView
     return null;
 }
 
-pub const SubViewportPending = struct {
-    sub_viewport_id: SubViewportID,
+pub const RemoteViewportPending = struct {
+    remote_viewport_id: RemoteViewportID,
     clip_rect: ptypes.Rect,
     to_embed: ViewportKey,
     embed_in: ViewportID,
@@ -237,7 +237,7 @@ const BufferKey = @import("Compositor.zig").BufferKey;
 const Compositor = @import("Compositor.zig");
 const BufferID = ptypes.BufferID;
 const ViewportID = ptypes.ViewportID;
-const SubViewportID = ptypes.SubViewportID;
+const RemoteViewportID = ptypes.RemoteViewportID;
 const ClientID = ptypes.ClientID;
 const Viewport = @import("Viewport.zig");
 const Buffer = @import("Buffer.zig");

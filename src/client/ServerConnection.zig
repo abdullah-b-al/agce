@@ -99,8 +99,8 @@ pub fn send_viewport_destroy(c: *ServerConnection, io: Io, gpa: std.mem.Allocato
     try c.send(io, gpa, message);
 }
 
-pub fn send_sub_viewport_embed(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportEmbed) !void {
-    const message = try c.stringify(gpa, .{ .sub_viewport_embed = payload });
+pub fn send_remote_viewport_embed(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.RemoteViewportEmbed) !void {
+    const message = try c.stringify(gpa, .{ .remote_viewport_embed = payload });
     try c.send(io, gpa, message);
 }
 
@@ -119,7 +119,7 @@ pub fn send_viewport_display_state_set(c: *ServerConnection, io: Io, gpa: std.me
     try c.send(io, gpa, message);
 }
 
-pub fn send_viewport_close(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.SubViewportClose) !void {
+pub fn send_viewport_close(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.RemoteViewportClose) !void {
     const message = try c.stringify(gpa, .{ .viewport_close = payload });
     try c.send(io, gpa, message);
 }

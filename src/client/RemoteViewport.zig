@@ -1,9 +1,9 @@
-const SubViewport = @This();
+const RemoteViewport = @This();
 
 client: *Client,
 deinited: bool,
 parent: ViewportID,
-id: SubViewportID,
+id: RemoteViewportID,
 render_size: ptypes.Size,
 pos: ptypes.Pos,
 size: ptypes.Size,
@@ -11,10 +11,10 @@ state: State,
 
 pub fn init(
     parent: ViewportID,
-    id: SubViewportID,
+    id: RemoteViewportID,
     client: *Client,
     rect: ptypes.Rect,
-) SubViewport {
+) RemoteViewport {
     return .{
         .client = client,
         .deinited = false,
@@ -26,9 +26,9 @@ pub fn init(
         .state = .pending,
     };
 }
-pub fn deinit(svp: *SubViewport) void {
-    std.debug.assert(!svp.deinited);
-    svp.deinited = true;
+pub fn deinit(rvp: *RemoteViewport) void {
+    std.debug.assert(!rvp.deinited);
+    rvp.deinited = true;
 }
 
 pub const State = union(enum) {
@@ -61,7 +61,7 @@ const client_to_server = @import("protocol").client_to_server;
 const ptypes = @import("protocol").types;
 const c_linux = @import("c_linux");
 const glad = @import("glad");
-const SubViewportID = ptypes.SubViewportID;
+const RemoteViewportID = ptypes.RemoteViewportID;
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const Client = @import("Client.zig");

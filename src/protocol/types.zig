@@ -108,19 +108,19 @@ pub const ViewportID = enum(u32) {
     }
 };
 
-pub const SubViewportID = enum(u32) {
+pub const RemoteViewportID = enum(u32) {
     pub const first: @This() = @enumFromInt(1);
 
     _,
 
-    pub fn increment(id: *SubViewportID) SubViewportID {
+    pub fn increment(id: *RemoteViewportID) RemoteViewportID {
         const int = @intFromEnum(id.*);
         id.* = @enumFromInt(int + 1);
         return @enumFromInt(int);
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("SubViewportID({})", .{@intFromEnum(self)});
+        try writer.print("RemoteViewportID({})", .{@intFromEnum(self)});
     }
 };
 

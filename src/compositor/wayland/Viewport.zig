@@ -67,8 +67,8 @@ pub fn deinit(vp: *Viewport) void {
     vp.surface.destroy();
 }
 
-pub fn sub_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.SubViewportID {
-    for (vp.sub_viewports.keys(), vp.sub_viewports.values()) |id, k| {
+pub fn remote_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.RemoteViewportID {
+    for (vp.remote_viewports.keys(), vp.remote_viewports.values()) |id, k| {
         if (std.meta.eql(key, k)) {
             return id;
         }

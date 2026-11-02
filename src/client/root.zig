@@ -3,7 +3,7 @@ pub const Renderer = Viewport.Renderer.Tag;
 pub const opengl = @import("opengl.zig");
 
 pub const ViewportID = ptypes.ViewportID;
-pub const SubViewportID = ptypes.SubViewportID;
+pub const RemoteViewportID = ptypes.RemoteViewportID;
 pub const BufferID = ptypes.BufferID;
 pub const CursorShape = ptypes.CursorShape;
 pub const ClientID = ptypes.ClientID;
@@ -159,14 +159,14 @@ pub const ClientHandle = opaque {
         return @ptrCast(process);
     }
 
-    pub fn sub_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, process: *ProcessHandle, rect: Rect) !*SubViewportHandle {
+    pub fn remote_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, process: *ProcessHandle, rect: Rect) !*RemoteViewportHandle {
         std.debug.assert(process.status() == .connected);
         const client = handle.cast();
         const vp = viewport.cast();
         const client_id = process.status().connected;
 
         return @ptrCast(
-            try client.sub_viewport_embed(vp.id, client_id, rect),
+            try client.remote_viewport_embed(vp.id, client_id, rect),
         );
     }
 
@@ -422,119 +422,119 @@ pub const ViewportHandle = opaque {
     };
 };
 
-pub const SubViewportHandle = opaque {
-    fn cast(handle: *SubViewportHandle) *SubViewport {
+pub const RemoteViewportHandle = opaque {
+    fn cast(handle: *RemoteViewportHandle) *RemoteViewport {
         return @ptrCast(@alignCast(handle));
     }
 
-    pub fn destroy(handle: *SubViewportHandle) void {
-        const svp = handle.cast();
+    pub fn destroy(handle: *RemoteViewportHandle) void {
+        const rvp = handle.cast();
 
-        if (svp.deinited) {
-            std.log.err("{f} double free", .{svp.id});
+        if (rvp.deinited) {
+            std.log.err("{f} double free", .{rvp.id});
             return;
         }
 
-        svp.deinit();
+        rvp.deinit();
     }
 
-    pub fn send_close(handle: *SubViewportHandle) !void {
-        const svp = handle.cast();
-        const vp_key = switch (svp.state) {
+    pub fn send_close(handle: *RemoteViewportHandle) !void {
+        const rvp = handle.cast();
+        const vp_key = switch (rvp.state) {
             .shown, .hidden => |key| key,
             .failed, .pending, .closed => return,
         };
-        try svp.client.connection.send_viewport_close(
-            svp.client.io,
-            svp.client.gpa,
+        try rvp.client.connection.send_viewport_close(
+            rvp.client.io,
+            rvp.client.gpa,
             .{ .viewport_key = vp_key },
         );
     }
 
-    pub fn state(handle: *SubViewportHandle) SubViewport.State {
+    pub fn state(handle: *RemoteViewportHandle) RemoteViewport.State {
         return handle.cast().state;
     }
 
-    pub fn render_size(handle: *SubViewportHandle) ptypes.Size {
+    pub fn render_size(handle: *RemoteViewportHandle) ptypes.Size {
         return handle.cast().render_size;
     }
 
-    pub fn pos_get(handle: *SubViewportHandle) Pos {
+    pub fn pos_get(handle: *RemoteViewportHandle) Pos {
         return handle.cast().pos;
     }
 
-    pub fn size_get(handle: *SubViewportHandle) Size {
+    pub fn size_get(handle: *RemoteViewportHandle) Size {
         return handle.cast().size;
     }
 
-    pub fn rect_get(handle: *SubViewportHandle) Rect {
-        const svp = handle.cast();
-        return .init(svp.pos, svp.size);
+    pub fn rect_get(handle: *RemoteViewportHandle) Rect {
+        const rvp = handle.cast();
+        return .init(rvp.pos, rvp.size);
     }
 
-    pub fn pos_set(handle: *SubViewportHandle, pos: Pos) !void {
-        const svp = handle.cast();
+    pub fn pos_set(handle: *RemoteViewportHandle, pos: Pos) !void {
+        const rvp = handle.cast();
 
-        const key = switch (svp.state) {
+        const key = switch (rvp.state) {
             .shown, .hidden => |key| key,
             .pending, .failed, .closed => return,
         };
 
-        if (pos.x != svp.pos.x or pos.y != svp.pos.y) {
-            try svp.client.connection.send_viewport_pos_set(
-                svp.client.io,
-                svp.client.gpa,
+        if (pos.x != rvp.pos.x or pos.y != rvp.pos.y) {
+            try rvp.client.connection.send_viewport_pos_set(
+                rvp.client.io,
+                rvp.client.gpa,
                 .{ .pos = pos, .viewport_key = key },
             );
         }
 
-        svp.pos = pos;
+        rvp.pos = pos;
     }
 
-    pub fn size_set(handle: *SubViewportHandle, size: Size) !void {
-        const svp = handle.cast();
+    pub fn size_set(handle: *RemoteViewportHandle, size: Size) !void {
+        const rvp = handle.cast();
 
-        const vp_key = switch (svp.state) {
+        const vp_key = switch (rvp.state) {
             .shown, .hidden => |key| key,
             .pending, .failed, .closed => return,
         };
 
-        if (size.width != svp.size.width or size.height != svp.size.height) {
-            try svp.client.connection.send_viewport_size_set(
-                svp.client.io,
-                svp.client.gpa,
+        if (size.width != rvp.size.width or size.height != rvp.size.height) {
+            try rvp.client.connection.send_viewport_size_set(
+                rvp.client.io,
+                rvp.client.gpa,
                 .{ .size = size, .viewport_key = vp_key },
             );
         }
 
-        svp.size = size;
+        rvp.size = size;
     }
 
-    pub fn rect_set(handle: *SubViewportHandle, rect: Rect) !void {
+    pub fn rect_set(handle: *RemoteViewportHandle, rect: Rect) !void {
         try handle.pos_set(.from_rect(rect));
         try handle.size_set(.from_rect(rect));
     }
 
-    pub fn display_state_get(handle: *SubViewportHandle) ptypes.ViewportDisplayState {
+    pub fn display_state_get(handle: *RemoteViewportHandle) ptypes.ViewportDisplayState {
         return handle.cast().state.to_display_state();
     }
 
-    pub fn display_state_set(handle: *SubViewportHandle, s: ptypes.ViewportDisplayState) !void {
-        const svp = handle.cast();
+    pub fn display_state_set(handle: *RemoteViewportHandle, s: ptypes.ViewportDisplayState) !void {
+        const rvp = handle.cast();
 
-        const vp_key = switch (svp.state) {
+        const vp_key = switch (rvp.state) {
             .shown => |key| if (s != .shown) key else return,
             .hidden => |key| if (s != .hidden) key else return,
             .pending, .failed, .closed => return,
         };
 
-        try svp.client.connection.send_viewport_display_state_set(
-            svp.client.io,
-            svp.client.gpa,
+        try rvp.client.connection.send_viewport_display_state_set(
+            rvp.client.io,
+            rvp.client.gpa,
             .{ .viewport_key = vp_key, .state = s },
         );
 
-        svp.state = .from_display_state(s, vp_key);
+        rvp.state = .from_display_state(s, vp_key);
     }
 };
 
@@ -580,7 +580,7 @@ const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
 const RendererD11 = Viewport.RendererD11;
 const Viewport = @import("Viewport.zig");
-const SubViewport = @import("SubViewport.zig");
+const RemoteViewport = @import("RemoteViewport.zig");
 const Process = @import("Process.zig");
 const constants = @import("constants");
 const log = std.log.scoped(.agce);

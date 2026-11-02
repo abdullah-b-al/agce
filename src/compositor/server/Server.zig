@@ -442,7 +442,7 @@ pub fn compositor_event_from_message(
         .buffer_destroy,
         .viewport_create,
         .cursor_shape_set,
-        .sub_viewport_embed,
+        .remote_viewport_embed,
         .viewport_pos_set,
         .viewport_size_set,
         .viewport_display_state_set,
@@ -594,9 +594,9 @@ pub const Event = union(enum) {
     viewport_close: server_to_client.WithClientID(server_to_client.ViewportClose),
     viewport_display_state: server_to_client.WithClientID(server_to_client.ViewportDisplayState),
 
-    sub_viewport_embeded: server_to_client.WithClientID(server_to_client.SubViewportEmbeded),
-    sub_viewport_display_state: server_to_client.WithClientID(server_to_client.SubViewportDisplayState),
-    sub_viewport_closed: server_to_client.WithClientID(server_to_client.SubviewportClosed),
+    remote_viewport_embeded: server_to_client.WithClientID(server_to_client.RemoteViewportEmbeded),
+    remote_viewport_display_state: server_to_client.WithClientID(server_to_client.RemoteViewportDisplayState),
+    remote_viewport_closed: server_to_client.WithClientID(server_to_client.RemoteViewportClosed),
 
     frame_render: server_to_client.WithClientID(server_to_client.FrameRender),
 

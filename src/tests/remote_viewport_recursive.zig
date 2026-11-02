@@ -44,15 +44,15 @@ pub fn main(init: std.process.Init) !void {
 
     std.log.debug("viewport created for depth {}", .{depth});
 
-    var sub_viewport: ?*agce.SubViewportHandle = null;
+    var remote_viewport: ?*agce.RemoteViewportHandle = null;
     var maybe_child: ?*agce.ProcessHandle = null;
-    defer if (sub_viewport) |svp| svp.destroy();
+    defer if (remote_viewport) |rvp| rvp.destroy();
     defer if (maybe_child) |c| {
         _ = c.wait() catch {};
     };
 
-    const svp_width = @divFloor(viewport.size().width, 3) * 2;
-    const svp_height = @divFloor(viewport.size().height, 3) * 2;
+    const rvp_width = @divFloor(viewport.size().width, 3) * 2;
+    const rvp_height = @divFloor(viewport.size().height, 3) * 2;
     if (depth < max_depth) {
         var args_iter = try init.minimal.args.iterateAllocator(init.gpa);
         defer args_iter.deinit();
@@ -78,19 +78,19 @@ pub fn main(init: std.process.Init) !void {
             try handle.poll(std.math.maxInt(u64));
         }
 
-        sub_viewport = try handle.sub_viewport_embed(viewport, child, .{
+        remote_viewport = try handle.remote_viewport_embed(viewport, child, .{
             .x = 100,
             .y = 100,
-            .width = svp_width,
-            .height = svp_height,
+            .width = rvp_width,
+            .height = rvp_height,
         });
     }
 
-    std.log.debug("subviewport of depth {} {?}", .{ depth, sub_viewport });
+    std.log.debug("remote_viewport of depth {} {?}", .{ depth, remote_viewport });
 
     var rand: std.Random.DefaultPrng = .init(depth);
 
-    var rect: MovingRect = .init(0, 0, svp_width, svp_height);
+    var rect: MovingRect = .init(0, 0, rvp_width, rvp_height);
 
     const color = rand.random().int(u32) | 0xFF000000;
     std.log.debug("depth {} color {}", .{ depth, color });
@@ -101,7 +101,7 @@ pub fn main(init: std.process.Init) !void {
 
         while (viewport.event_pop()) |event| {
             switch (event) {
-                .sub_viewport_closed => {
+                .remote_viewport_closed => {
                     if (!start_count_down) {
                         start_count_down = true;
                         ts = .now(init.io, .awake);
@@ -122,8 +122,8 @@ pub fn main(init: std.process.Init) !void {
 
         rect.move(size.width, size.height, rand.random());
 
-        if (sub_viewport) |svp| {
-            try svp.rect_set(.{
+        if (remote_viewport) |rvp| {
+            try rvp.rect_set(.{
                 .x = @intCast(@max(0, rect.x)),
                 .y = @intCast(@max(0, rect.y)),
                 .width = @intCast(rect.w),
