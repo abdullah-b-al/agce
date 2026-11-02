@@ -53,7 +53,7 @@ pub fn read_and_parse_data_json_linux(
         },
 
         inline else => |tag| {
-            const T = utils.TypeOfField(MessagePayload, @tagName(tag));
+            const T = @FieldType(MessagePayload, @tagName(tag));
             const parsed = try common.message_receive_and_parse_json(
                 MessageHeader,
                 T,

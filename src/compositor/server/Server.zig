@@ -562,7 +562,7 @@ pub const RawMessage = struct {
             inline else => |tag| {
                 switch (raw.header.format) {
                     .json => {
-                        const T = utils.TypeOfField(client_to_server.MessagePayload, @tagName(tag));
+                        const T = @FieldType(client_to_server.MessagePayload, @tagName(tag));
                         const p = std.json.parseFromSliceLeaky(T, arena, raw.raw, .{
                             .allocate = .alloc_if_needed,
                         }) catch |err| {

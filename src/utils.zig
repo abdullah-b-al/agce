@@ -59,28 +59,6 @@ pub fn format_struct(value: anytype, writer: *Io.Writer) Io.Writer.Error!void {
     try writer.print(" }}", .{});
 }
 
-pub fn TypeOfField(comptime U: type, comptime name: []const u8) type {
-    switch (@typeInfo(U)) {
-        .@"union" => |info| {
-            inline for (info.fields) |f| {
-                if (std.mem.eql(u8, name, f.name)) {
-                    return f.type;
-                }
-            }
-        },
-        .@"struct" => |info| {
-            inline for (info.fields) |f| {
-                if (std.mem.eql(u8, name, f.name)) {
-                    return f.type;
-                }
-            }
-        },
-        else => @compileError("Unsupported primitive"),
-    }
-
-    unreachable;
-}
-
 pub fn new_dimensions(width: i32, height: i32) struct { i32, i32 } {
     return .{
         dimension_multiple_of(width, 640),

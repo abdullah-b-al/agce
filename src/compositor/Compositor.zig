@@ -347,7 +347,7 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_id });
 }
 
-fn viewport_should_close(com: *Compositor, args: Event.TypeOf(.viewport_should_close)) !void {
+fn viewport_should_close(com: *Compositor, args: @FieldType(Event, "viewport_should_close")) !void {
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .viewport_close = .{
@@ -357,7 +357,7 @@ fn viewport_should_close(com: *Compositor, args: Event.TypeOf(.viewport_should_c
     });
 }
 
-fn buffer_create_cpu(com: *Compositor, args: Event.TypeOf(.buffer_create_cpu)) !void {
+fn buffer_create_cpu(com: *Compositor, args: @FieldType(Event, "buffer_create_cpu")) !void {
     try com.server_events.ensure_unused_capacity(1);
     const rs = com.resources.getPtr(args.client_id).?;
 
@@ -453,7 +453,7 @@ fn buffer_create_cpu_inner(com: *Compositor, rs: *ClientResources, size: ptypes.
     }
 }
 
-fn buffer_create_gbm_bo(com: *Compositor, args: Event.TypeOf(.buffer_create_gbm_bo)) !void {
+fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create_gbm_bo")) !void {
     if (!constants.os_has_gbm) {
         return error.MessageUnsupportedByOS;
     }
@@ -488,7 +488,7 @@ fn buffer_create_gbm_bo(com: *Compositor, args: Event.TypeOf(.buffer_create_gbm_
     }
 }
 
-fn texture_create_d3d(com: *Compositor, args: Event.TypeOf(.texture_create_d3d)) !void {
+fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_d3d")) !void {
     std.debug.assert(args.payload.version == .d3d11);
     try com.server_events.ensure_unused_capacity(1);
 
@@ -565,8 +565,8 @@ fn texture_create_d3d(com: *Compositor, args: Event.TypeOf(.texture_create_d3d))
 }
 
 const BufferQueuePresent = union(enum) {
-    no_sync: Event.TypeOf(.buffer_present),
-    sync: Event.TypeOf(.buffer_present_with_sync),
+    no_sync: @FieldType(Event, "buffer_present"),
+    sync: @FieldType(Event, "buffer_present_with_sync"),
 };
 
 fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
@@ -652,12 +652,12 @@ pub fn present(com: *Compositor) !void {
     }
 }
 
-fn buffer_destroy(com: *Compositor, args: Event.TypeOf(.buffer_destroy)) !void {
+fn buffer_destroy(com: *Compositor, args: @FieldType(Event, "buffer_destroy")) !void {
     const rs = com.resources.getPtr(args.client_id) orelse return;
     rs.buffer_destroy(com, args.payload.buffer_id);
 }
 
-pub fn viewport_create(com: *Compositor, args: Event.TypeOf(.viewport_create)) !void {
+pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_create")) !void {
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) {
         return error.InvalidSize;
     }
@@ -713,7 +713,7 @@ pub fn viewport_create(com: *Compositor, args: Event.TypeOf(.viewport_create)) !
 
 fn viewport_create_with_sub_viewport(
     com: *Compositor,
-    args: Event.TypeOf(.viewport_create),
+    args: @FieldType(Event, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
     const embeded_key: ViewportKey = .{
         .client_id = args.client_id,
@@ -781,7 +781,7 @@ pub fn window_id_from_handle(com: *Compositor, handle: *WindowHandle) ?WindowID 
     return null;
 }
 
-fn viewport_create_with_window(com: *Compositor, args: Event.TypeOf(.viewport_create)) !ViewportKey {
+fn viewport_create_with_window(com: *Compositor, args: @FieldType(Event, "viewport_create")) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
     const key: ViewportKey = .{
@@ -853,7 +853,7 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
     return error.EmbederClientDoesNotExist;
 }
 
-pub fn sub_viewport_pos_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_pos_set)) !void {
+pub fn sub_viewport_pos_set(com: *Compositor, args: @FieldType(Event, "sub_viewport_pos_set")) !void {
     const vp = try com.sub_viewport_from_key(args.payload.viewport_key, args.client_id);
 
     std.debug.assert(vp.id.is_server_id());
@@ -895,7 +895,7 @@ pub fn sub_viewport_pos_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_p
     }
 }
 
-pub fn sub_viewport_size_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_size_set)) !void {
+pub fn sub_viewport_size_set(com: *Compositor, args: @FieldType(Event, "sub_viewport_size_set")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const key = args.payload.viewport_key;
@@ -950,7 +950,7 @@ pub fn sub_viewport_size_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_
     });
 }
 
-pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_viewport_display_state_set)) !void {
+pub fn sub_viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "sub_viewport_display_state_set")) !void {
     try com.server_events.ensure_unused_capacity(2);
 
     const key = args.payload.viewport_key;
@@ -1012,7 +1012,7 @@ pub fn sub_viewport_display_state_set(com: *Compositor, args: Event.TypeOf(.sub_
     });
 }
 
-pub fn sub_viewport_close(com: *Compositor, args: Event.TypeOf(.sub_viewport_close)) !void {
+pub fn sub_viewport_close(com: *Compositor, args: @FieldType(Event, "sub_viewport_close")) !void {
 
     // validate the viewport exists and is owned by the client
     _ = try com.sub_viewport_from_key(args.payload.viewport_key, args.client_id);
@@ -1020,7 +1020,7 @@ pub fn sub_viewport_close(com: *Compositor, args: Event.TypeOf(.sub_viewport_clo
     try com.viewport_should_close(.{ .viewport_key = args.payload.viewport_key });
 }
 
-pub fn cursor_shape_set(com: *Compositor, args: Event.TypeOf(.cursor_shape_set)) !void {
+pub fn cursor_shape_set(com: *Compositor, args: @FieldType(Event, "cursor_shape_set")) !void {
     const viewport_key: ViewportKey = .{
         .client_id = args.client_id,
         .viewport_id = args.payload.viewport_id,
@@ -1031,7 +1031,7 @@ pub fn cursor_shape_set(com: *Compositor, args: Event.TypeOf(.cursor_shape_set))
     com.cursor_shape_set_from_viewport(vp, viewport_key);
 }
 
-pub fn sub_viewport_embed(com: *Compositor, args: Event.TypeOf(.sub_viewport_embed)) !void {
+pub fn sub_viewport_embed(com: *Compositor, args: @FieldType(Event, "sub_viewport_embed")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const to_embed = com.resources.getPtr(args.payload.client_id_to_embed) orelse return;
@@ -1129,7 +1129,7 @@ pub fn keyboard_focus_set(com: *Compositor, key: ViewportKey) void {
     }
 }
 
-pub fn keyboard_key(com: *Compositor, args: Event.TypeOf(.keyboard_key)) !void {
+pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !void {
     try com.server_events.ensure_unused_capacity(2);
 
     const key = com.input_focus_keyboard orelse return;
@@ -1186,20 +1186,20 @@ pub fn keyboard_key(com: *Compositor, args: Event.TypeOf(.keyboard_key)) !void {
     }
 }
 
-pub fn keyboard_enter(com: *Compositor, args: Event.TypeOf(.keyboard_enter)) !void {
+pub fn keyboard_enter(com: *Compositor, args: @FieldType(Event, "keyboard_enter")) !void {
     com.keyboard_focus_set(args.viewport_key);
 }
 
-pub fn keyboard_leave(com: *Compositor, _: Event.TypeOf(.keyboard_leave)) !void {
+pub fn keyboard_leave(com: *Compositor, _: @FieldType(Event, "keyboard_leave")) !void {
     com.input_focus_keyboard = null;
 }
 
-pub fn mouse_enter(com: *Compositor, args: Event.TypeOf(.mouse_enter)) !void {
+pub fn mouse_enter(com: *Compositor, args: @FieldType(Event, "mouse_enter")) !void {
     try com.server_events.ensure_unused_capacity(1);
     com.mouse_focus_set_and_push_event(args.viewport_key);
 }
 
-pub fn mouse_leave(com: *Compositor, args: Event.TypeOf(.mouse_leave)) !void {
+pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !void {
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .mouse_leave = .{
@@ -1211,7 +1211,7 @@ pub fn mouse_leave(com: *Compositor, args: Event.TypeOf(.mouse_leave)) !void {
     });
 }
 
-pub fn mouse_motion(com: *Compositor, args: Event.TypeOf(.mouse_motion)) !void {
+pub fn mouse_motion(com: *Compositor, args: @FieldType(Event, "mouse_motion")) !void {
     const key = com.input_focus_mouse orelse return;
 
     try com.server_events.ensure_unused_capacity(1);
@@ -1227,7 +1227,7 @@ pub fn mouse_motion(com: *Compositor, args: Event.TypeOf(.mouse_motion)) !void {
     });
 }
 
-pub fn mouse_button(com: *Compositor, args: Event.TypeOf(.mouse_button)) !void {
+pub fn mouse_button(com: *Compositor, args: @FieldType(Event, "mouse_button")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const key = com.input_focus_mouse orelse return;
@@ -1247,7 +1247,7 @@ pub fn mouse_button(com: *Compositor, args: Event.TypeOf(.mouse_button)) !void {
     });
 }
 
-pub fn mouse_scroll(com: *Compositor, args: Event.TypeOf(.mouse_scroll)) !void {
+pub fn mouse_scroll(com: *Compositor, args: @FieldType(Event, "mouse_scroll")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const key = com.input_focus_mouse orelse return;
@@ -1369,10 +1369,6 @@ pub const Event = union(enum) {
         id: WindowID,
         size: ptypes.Size,
     };
-
-    pub fn TypeOf(comptime tag: std.meta.Tag(Event)) type {
-        return utils.TypeOfField(Event, @tagName(tag));
-    }
 
     pub const KeyboardChar = struct {
         char: u32,

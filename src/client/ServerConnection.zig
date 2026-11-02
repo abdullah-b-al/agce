@@ -22,7 +22,7 @@ pub fn receive_with_reader(_: Io, arena: std.mem.Allocator, reader: *Io.Reader) 
             switch (header.format) {
                 .json => {
                     @setEvalBranchQuota(2000);
-                    const T = utils.TypeOfField(server_to_client.MessagePayload, @tagName(tag));
+                    const T = @FieldType(server_to_client.MessagePayload, @tagName(tag));
                     const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
                         .allocate = .alloc_if_needed,
                     });
@@ -171,70 +171,6 @@ pub fn receive_linux(io: Io, arena: std.mem.Allocator, stream: net.Stream) !serv
     const message_buf = try arena.alloc(u8, header.payload_len + @sizeOf(server_to_client.MessageHeader));
     const message = try server_to_client.read_and_parse_data_json_linux(io, arena, stream, header, message_buf);
     return message;
-}
-
-pub fn receive_windows(
-    io: Io,
-    arena: std.mem.Allocator,
-    stream: net.Stream,
-) !server_to_client.MessagePayload {
-    var buf: [4096]u8 = undefined;
-    var reader = stream.reader(io, &buf);
-
-    const header_bytes = reader.interface.take(@sizeOf(server_to_client.MessageHeader)) catch |err|
-        return switch (err) {
-            error.EndOfStream => |e| e,
-            error.ReadFailed => switch (reader.err.?) {
-                error.Timeout => unreachable,
-
-                error.Canceled,
-                error.SystemResources,
-                error.ConnectionResetByPeer,
-                error.SocketUnconnected,
-                error.AccessDenied,
-                error.Unexpected,
-                error.NetworkDown,
-                => |e| e,
-            },
-        };
-
-    const header = try server_to_client.parse_message_header(header_bytes);
-    const err_data = if (header.payload_len > buf.len)
-        reader.interface.readAlloc(arena, header.payload_len)
-    else
-        reader.interface.take(header.payload_len);
-
-    const data = err_data catch |err| return switch (err) {
-        error.EndOfStream => error.HeaderWithoutPayload,
-        error.OutOfMemory => |e| e,
-        error.ReadFailed => switch (reader.err.?) {
-            error.Timeout => unreachable,
-
-            error.Canceled,
-            error.SystemResources,
-            error.ConnectionResetByPeer,
-            error.SocketUnconnected,
-            error.AccessDenied,
-            error.Unexpected,
-            error.NetworkDown,
-            => |e| e,
-        },
-    };
-
-    switch (header.message_tag) {
-        inline else => |tag| {
-            switch (header.format) {
-                .json => {
-                    const T = utils.TypeOfField(server_to_client.MessagePayload, @tagName(tag));
-                    const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
-                        .allocate = .alloc_if_needed,
-                    });
-
-                    return @unionInit(server_to_client.MessagePayload, @tagName(tag), parsed);
-                },
-            }
-        },
-    }
 }
 
 const std = @import("std");
