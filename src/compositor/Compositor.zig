@@ -316,22 +316,25 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     const rs = com.resources.getPtr(key.client_id) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
 
-    if (vp.parent_key) |parent| {
+    if (vp.parent_key) |parent_key| {
+        const parent = com.viewport_from_key(parent_key).?;
+
         com.server_events.push_assume_capacity(.{
             .remote_viewport_closed = .{
-                .client_id = parent.client_id,
+                .client_id = parent_key.client_id,
                 .payload = .{ .viewport_key = key },
             },
         });
 
         if (std.meta.eql(com.input_focus_keyboard, key)) {
-            com.keyboard_focus_set(parent);
+            com.keyboard_focus_set(parent_key);
         }
 
         if (std.meta.eql(com.input_focus_mouse, key)) {
-            com.mouse_focus_set_and_push_event(parent);
+            com.mouse_focus_set_and_push_event(parent_key);
         }
 
+        parent.remote_viewport_remove(key);
         vp.parent_key = null;
     }
 

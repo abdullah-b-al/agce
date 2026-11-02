@@ -92,6 +92,15 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
     gpa.destroy(vp);
 }
 
+pub fn remote_viewport_remove(vp: *Viewport, key: ViewportKey) void {
+    for (vp.remote_viewports.items, 0..) |rk, i| {
+        if (std.meta.eql(rk, key)) {
+            _ = vp.remote_viewports.orderedRemove(i);
+            return;
+        }
+    }
+}
+
 pub fn native_tag(vp: *Viewport) Compositor.NativeTag {
     return switch (os) {
         .linux => switch (vp.linux) {
