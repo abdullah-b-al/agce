@@ -20,16 +20,21 @@ pub const ClientUUID = enum(uuid.Uuid) {
             else => return error.UnexpectedToken,
         };
 
-        const int = uuid.urn.deserialize(slice) catch |err| switch (err) {
+        return deserialize(slice) catch |err| switch (err) {
             error.InvalidHexChar, error.MalformedUrn => return error.InvalidNumber,
         };
-
-        return @enumFromInt(int);
     }
 
     pub fn jsonStringify(self: ClientUUID, stringify: *std.json.Stringify) error{WriteFailed}!void {
-        const slice = uuid.urn.serialize(@intFromEnum(self));
-        try stringify.write(slice);
+        try stringify.write(self.serialize());
+    }
+
+    pub fn serialize(id: ClientUUID) uuid.urn.Urn {
+        return uuid.urn.serialize(@intFromEnum(id));
+    }
+
+    pub fn deserialize(slice: []const u8) !ClientUUID {
+        return @enumFromInt(try uuid.urn.deserialize(slice));
     }
 };
 
@@ -48,47 +53,6 @@ pub const PID = enum(u32) {
         const int = @intFromEnum(id.*);
         id.* = @enumFromInt(int + 1);
         return @enumFromInt(int);
-    }
-};
-
-pub const ClientFullID = struct {
-    id: ClientUUID,
-    fingerprint: ClientFingerprint,
-
-    const env_string_delimiter = ',';
-    const env_string_fmt = "{s}" ++ .{env_string_delimiter} ++ "{}";
-    pub const env_string_max_len = blk: {
-        const out = std.fmt.comptimePrint(",{}", .{
-            std.math.maxInt(u32),
-        });
-        break :blk out.len + @sizeOf(uuid.urn.Urn);
-    };
-
-    pub fn to_env_string(fid: ClientFullID, buf: []u8) []const u8 {
-        std.debug.assert(buf.len >= env_string_max_len);
-
-        return std.fmt.bufPrint(buf, env_string_fmt, .{
-            uuid.urn.serialize(@intFromEnum(fid.id)),
-            @intFromEnum(fid.fingerprint),
-        }) catch unreachable;
-    }
-
-    pub fn from_env_string(string: []const u8) ?ClientFullID {
-        var iter = std.mem.splitScalar(u8, string, env_string_delimiter);
-        const id = iter.next() orelse return null;
-        const fp = iter.next() orelse return null;
-
-        return .{
-            .id = @enumFromInt(uuid.urn.deserialize(id) catch return null),
-            .fingerprint = @enumFromInt(std.fmt.parseInt(u32, fp, 10) catch return null),
-        };
-    }
-
-    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ClientFullID({},{})", .{
-            @intFromEnum(self.id),
-            @intFromEnum(self.fingerprint),
-        });
     }
 };
 

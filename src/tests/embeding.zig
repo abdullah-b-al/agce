@@ -60,9 +60,6 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
     const vp = try handle.viewport_create(.cpu, .{ .width = 720, .height = 720 }, false);
 
     const child = try handle.process_create(&.{path});
-    while (child.status() != .can_spawn) {
-        try handle.poll(std.math.maxInt(u64));
-    }
     try child.spawn(.{ .stdout = .inherit, .stderr = .inherit });
     while (child.status() != .connected) {
         try handle.poll(std.math.maxInt(u64));

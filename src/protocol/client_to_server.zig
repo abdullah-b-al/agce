@@ -16,8 +16,6 @@ pub const MessagePayload = union(enum(u32)) {
 
     wake_up: Void,
 
-    generate_client_full_id: Void,
-
     buffer_create_cpu: BufferCreateCpu,
     buffer_create_gbm_bo: BufferCreateGbmBo,
     texture_create_d3d: TextureCreateD3D,
@@ -40,7 +38,7 @@ pub const MessagePayload = union(enum(u32)) {
 };
 
 pub const Register = struct {
-    full_id: ?types.ClientFullID,
+    uuid: ?types.ClientUUID,
     pid: ?types.PID,
     is_local: bool,
 };

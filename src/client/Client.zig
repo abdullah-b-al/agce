@@ -208,19 +208,9 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         .registered => {
             client.registered = true;
         },
-        .generated_client_full_id => |result| {
-            const process = blk: for (client.processes.items) |process| {
-                if (process.full_id == null) break :blk process;
-            } else null;
-
-            if (process) |p| {
-                p.received_id(result.full_id);
-            } else unreachable;
-        },
         .client_registered => |e| {
             const process = blk: for (client.processes.items) |process| {
-                const full_id = process.full_id orelse continue;
-                if (full_id.id == e.client_uuid) break :blk process;
+                if (process.uuid == e.client_uuid) break :blk process;
             } else null;
 
             if (process) |p| {
@@ -232,9 +222,9 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         },
         .client_disconnected => |e| {
             for (client.processes.items) |p| {
-                if (p.full_id) |c| if (c.id == e.client_uuid) {
+                if (p.uuid == e.client_uuid) {
                     p.status = .disconnected;
-                };
+                }
             }
 
             for (client.viewports.values()) |vp| {
@@ -715,11 +705,11 @@ pub const CreateStatus = enum {
 
 const Env = struct {
     expect_viewport: bool,
-    client_full_id: ?ptypes.ClientFullID,
+    client_uuid: ?ptypes.ClientUUID,
 
     pub fn extract(map: *std.process.Environ.Map) Env {
         defer {
-            _ = map.swapRemove(constants.env_client_full_id);
+            _ = map.swapRemove(constants.env_client_uuid);
             _ = map.swapRemove(constants.env_expect_viewport_key);
         }
 
@@ -729,8 +719,12 @@ const Env = struct {
             else
                 false,
 
-            .client_full_id = if (map.get(constants.env_client_full_id)) |value|
-                .from_env_string(value)
+            .client_uuid = if (map.get(constants.env_client_uuid)) |value|
+                ptypes.ClientUUID.deserialize(value) catch |err| blk: {
+                    log.err("ClientUUID parse failed {}", .{err});
+
+                    break :blk null;
+                }
             else
                 null,
         };

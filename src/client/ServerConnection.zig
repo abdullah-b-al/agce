@@ -38,22 +38,17 @@ pub fn send_register(
     c: *ServerConnection,
     io: Io,
     gpa: std.mem.Allocator,
-    full_id: ?ptypes.ClientFullID,
+    uuid: ?ptypes.ClientUUID,
     pid: ?ptypes.PID,
 ) !void {
     const message = try c.stringify(gpa, .{
         .register = .{
-            .full_id = full_id,
+            .uuid = uuid,
             .pid = pid,
             .is_local = false,
         },
     });
 
-    try c.send(io, gpa, message);
-}
-
-pub fn send_generate_client_full_id(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.Void) !void {
-    const message = try c.stringify(gpa, .{ .generate_client_full_id = payload });
     try c.send(io, gpa, message);
 }
 

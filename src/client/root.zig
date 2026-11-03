@@ -36,7 +36,7 @@ pub fn init(
     try client.connection.send_register(
         io,
         gpa,
-        client.env.client_full_id,
+        client.env.client_uuid,
         pid,
     );
 
@@ -150,12 +150,6 @@ pub const ClientHandle = opaque {
 
         try client.processes.append(client.gpa, process);
 
-        try client.connection.send_generate_client_full_id(
-            client.io,
-            client.gpa,
-            .{},
-        );
-
         return @ptrCast(process);
     }
 
@@ -163,10 +157,9 @@ pub const ClientHandle = opaque {
         std.debug.assert(process.status() == .connected);
         const client = handle.cast();
         const vp = viewport.cast();
-        const client_uuid = process.status().connected;
 
         return @ptrCast(
-            try client.remote_viewport_embed(vp.id, client_uuid, rect),
+            try client.remote_viewport_embed(vp.id, process.cast().uuid, rect),
         );
     }
 

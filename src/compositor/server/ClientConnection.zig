@@ -90,11 +90,6 @@ pub fn send_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, pay
     try c.send(io, gpa, message);
 }
 
-pub fn send_generated_client_full_id(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.GeneratedClientFullID) !void {
-    const message = try c.stringify(gpa, .{ .generated_client_full_id = payload });
-    try c.send(io, gpa, message);
-}
-
 pub fn send_viewport_create(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ViewportCreate) !void {
     const message = try c.stringify(gpa, .{ .viewport_create = payload });
     try c.send(io, gpa, message);

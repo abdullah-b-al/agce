@@ -6,7 +6,7 @@ deinited: bool,
 argv: []const []const u8,
 environ: std.process.Environ.Map,
 
-full_id: ?ptypes.ClientFullID,
+uuid: ptypes.ClientUUID,
 child: ?std.process.Child,
 err: ?std.process.SpawnError,
 status: Status,
@@ -35,11 +35,11 @@ pub fn create(
         .arena = process.arena,
         .deinited = false,
         .argv = argv,
-        .full_id = null,
+        .uuid = .new(io),
         .child = null,
         .environ = environ,
         .err = null,
-        .status = .pending_id,
+        .status = .pending,
     };
 
     return process;
@@ -62,17 +62,13 @@ pub fn spawn(
     options: SpawnOptions,
 ) !void {
     std.debug.assert(process.child == null);
-    std.debug.assert(process.full_id != null);
-    std.debug.assert(process.status == .can_spawn);
+    std.debug.assert(process.status == .pending);
 
-    const full_id = process.full_id.?;
-    var buf: [ptypes.ClientFullID.env_string_max_len]u8 = undefined;
-    const string = full_id.to_env_string(&buf);
-
-    std.debug.assert(!process.environ.contains(constants.env_client_full_id));
+    std.debug.assert(!process.environ.contains(constants.env_client_uuid));
     std.debug.assert(!process.environ.contains(constants.env_expect_viewport_key));
 
-    try process.environ.put(constants.env_client_full_id, string);
+    const string = process.uuid.serialize();
+    try process.environ.put(constants.env_client_uuid, &string);
     try process.environ.put(constants.env_expect_viewport_key, constants.env_expect_viewport_true);
 
     process.child = try std.process.spawn(process.io, .{
@@ -82,28 +78,17 @@ pub fn spawn(
         .stderr = options.stderr,
         .stdin = options.stdin,
     });
-
-    process.status = .pending_connection;
-}
-
-pub fn received_id(process: *Process, full_id: ptypes.ClientFullID) void {
-    std.debug.assert(process.status == .pending_id);
-    process.full_id = full_id;
-    process.status = .can_spawn;
 }
 
 pub fn client_connected(process: *Process) void {
-    std.debug.assert(process.status == .pending_connection);
-    std.debug.assert(process.full_id != null);
-    process.status = .{ .connected = process.full_id.?.id };
+    std.debug.assert(process.status == .pending);
+    process.status = .connected;
 }
 
-pub const Status = union(enum) {
-    connected: ptypes.ClientUUID,
-    pending_id,
-    pending_connection,
+pub const Status = enum {
+    connected,
+    pending,
     disconnected,
-    can_spawn,
 };
 
 pub const SpawnOptions = struct {

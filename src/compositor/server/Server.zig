@@ -7,7 +7,6 @@ rand: std.Random.DefaultPrng,
 unix_path: []const u8,
 server: zio.net.Server,
 clients: Clients,
-generated_full_ids: std.array_hash_map.Auto(ptypes.ClientFullID, void),
 
 win32_event_handle: Win32EventHandle,
 
@@ -87,7 +86,6 @@ pub fn create(
         .io = io,
         .gpa = gpa,
         .rand = rand,
-        .generated_full_ids = .empty,
 
         .unix_path = unix_path,
         .server = net_server,
@@ -100,7 +98,6 @@ pub fn create(
 
 pub fn destroy(server: *Server) void {
     server.clients.deinit(server.io, server.gpa);
-    server.generated_full_ids.deinit(server.gpa);
 
     server.win32_event_handle.close();
     server.server.shutdown(.both) catch {};
@@ -201,7 +198,6 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
         },
 
         error.UnsupportedMessageOnOs,
-        error.OutOfMemory,
         => |e| {
             log.err("{} when handling client message", .{e});
         },
@@ -317,18 +313,6 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
     const msg = message.payload;
 
     switch (msg) {
-        .generate_client_full_id => {
-            const client = server.clients.known.get(client_uuid) orelse return;
-            try server.generated_full_ids.ensureUnusedCapacity(server.gpa, 1);
-
-            const full_id = server.generate_full_id();
-            server.generated_full_ids.putAssumeCapacityNoClobber(full_id, {});
-            log.debug("Generated {f}", .{full_id});
-
-            client.connection.send_generated_client_full_id(server.io, server.gpa, .{ .full_id = full_id }) catch
-                return error.ConnectionClosed;
-        },
-
         .register,
         .wake_up,
         => |_, tag| log.err("Received invalid message for client {s}", .{@tagName(tag)}),
@@ -363,24 +347,11 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     };
 
     if (register.is_local) {
-        std.debug.assert(register.full_id == null);
+        std.debug.assert(register.uuid == null);
         server.clients.promote_client_to_local(server.gpa, index);
         log.debug("Promoted unknown client to local", .{});
     } else {
-        const id: ClientUUID = blk: {
-            const full_id =
-                register.full_id orelse
-                break :blk .new(server.io);
-
-            if (server.generated_full_ids.contains(full_id)) {
-                _ = server.generated_full_ids.orderedRemove(full_id);
-                break :blk full_id.id;
-            }
-
-            log.err("{} {}", .{ error.ClientSentInvalidClientFullID, full_id });
-            return error.ClientSentInvalidClientFullID;
-        };
-
+        const id: ClientUUID = register.uuid orelse .new(server.io);
         if (server.clients.known.contains(id)) {
             return error.ClientUUIDAlreadyExists;
         }
@@ -440,7 +411,6 @@ pub fn compositor_event_from_message(
     switch (payload_tag) {
         .register,
         .wake_up,
-        .generate_client_full_id,
         => @compileError(@tagName(payload_tag) ++ " Cannot be turned into a CompositorEvent. This is meant for the Server"),
 
         inline .buffer_present,
@@ -466,17 +436,6 @@ pub fn compositor_event_from_message(
             );
         },
     }
-}
-
-pub fn generate_full_id(server: *Server) ptypes.ClientFullID {
-    const client_uuid: ClientUUID = .new(server.io);
-    var fp: ptypes.ClientFingerprint = @enumFromInt(server.rand.random().int(u32));
-
-    while (server.generated_full_ids.contains(.{ .id = client_uuid, .fingerprint = fp })) {
-        fp = @enumFromInt(server.rand.random().int(u32));
-    }
-
-    return .{ .id = client_uuid, .fingerprint = fp };
 }
 
 pub fn close_clients_marked_with_error(server: *Server) void {

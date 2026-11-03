@@ -138,7 +138,6 @@ pub const Message = struct {
 pub const MessageTag = std.meta.Tag(MessagePayload);
 pub const MessagePayload = union(enum(u32)) {
     registered: Void,
-    generated_client_full_id: GeneratedClientFullID,
 
     viewport_create: ViewportCreate,
     viewport_created: ViewportCreated,
@@ -214,10 +213,6 @@ pub const TextureCreatedD3D = struct {
 pub const ViewportResize = struct {
     viewport_id: types.ViewportID,
     size: types.Size,
-};
-
-pub const GeneratedClientFullID = struct {
-    full_id: types.ClientFullID,
 };
 
 pub const RemoteViewportEmbeded = struct {

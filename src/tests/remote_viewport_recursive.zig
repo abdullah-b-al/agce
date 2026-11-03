@@ -62,11 +62,6 @@ pub fn main(init: std.process.Init) !void {
         var child = try handle.process_create(&.{self_path});
         maybe_child = child;
 
-        std.log.debug("depth {} can_spawn poll", .{depth});
-        while (child.status() != .can_spawn) {
-            try handle.poll(std.math.maxInt(u64));
-        }
-
         std.log.debug("depth {} spawn", .{depth});
         try child.spawn(.{
             .stdout = .inherit,
