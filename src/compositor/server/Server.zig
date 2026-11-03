@@ -144,7 +144,7 @@ pub fn process_incoming_messages(server: *Server, arena: std.mem.Allocator, poll
             const connection: *ClientConnection = switch (source) {
                 .known => |id| &server.clients.known.get(id).?.connection,
                 .unknown => |index| &server.clients.unknown.items[index].connection,
-                .local => |index| &server.clients.local.items[index].connection,
+                .local => |id| &server.clients.local.get(id).?.connection,
             };
 
             connection.receive_raw_all(server.io, arena, &messages_raw, source) catch |err|
@@ -206,9 +206,9 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
         error.ConnectionClosed,
         => |e| {
             switch (message.from) {
-                .known => |id| server.mark_for_closing_known_client_with(id, e),
                 .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                .local => |index| server.mark_for_closing_local_client_with(index, e),
+                .known => |id| server.mark_for_closing_known_client_with(id, e),
+                .local => |id| server.mark_for_closing_local_client_with(id, e),
             }
         },
 
@@ -363,9 +363,9 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     };
 
     if (register.is_local) {
-        std.debug.assert(register.uuid == null);
-        server.clients.promote_client_to_local(server.gpa, index);
-        log.debug("Promoted unknown client to local", .{});
+        std.debug.assert(register.uuid != null);
+        server.clients.promote_client_to_local(server.gpa, index, register.uuid.?);
+        log.debug("Promoted unknown client to local {f}", .{register.uuid.?});
     } else {
         const id: ClientUUID = register.uuid orelse .new(server.io);
         if (server.clients.known.contains(id)) {
@@ -476,7 +476,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
         }
     }
 
-    for (server.clients.local.items) |client| {
+    for (server.clients.local.values()) |client| {
         if (client.connection.close_with_error) |err| {
             client.connection.close();
             log.err("Closing client local with {}", .{err});
@@ -515,8 +515,8 @@ fn mark_for_closing_unknown_client_with(server: *Server, index: usize, err: Clie
     client.connection.close_with_error = err;
 }
 
-fn mark_for_closing_local_client_with(server: *Server, index: usize, err: ClientConnection.CloseError) void {
-    const client = server.clients.local.items[index];
+fn mark_for_closing_local_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
+    const client = server.clients.local.get(id) orelse return;
     client.connection.close_with_error = err;
 }
 
@@ -564,9 +564,9 @@ pub const RawMessage = struct {
 };
 
 pub const MessageSource = union(enum) {
-    known: ClientUUID,
     unknown: usize,
-    local: usize,
+    known: ClientUUID,
+    local: ClientUUID,
 };
 
 pub const Event = union(enum) {

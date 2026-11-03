@@ -5,7 +5,7 @@ stream: zio.net.Stream,
 
 pub fn send_register_local(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void {
     const payload: client_to_server.Register = .{
-        .uuid = null,
+        .uuid = .new(io),
         .pid = null,
         .is_local = true,
     };

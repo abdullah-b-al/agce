@@ -6,7 +6,7 @@ local_pool: std.heap.MemoryPoolExtra(LocalClient, .{ .growable = false }),
 
 known: std.array_hash_map.Auto(ptypes.ClientUUID, *Client),
 unknown: std.ArrayList(*UnknownClient),
-local: std.ArrayList(*LocalClient),
+local: std.array_hash_map.Auto(ptypes.ClientUUID, *LocalClient),
 
 pub const init: Clients = .{
     .known_pool = .empty,
@@ -22,7 +22,7 @@ pub fn deinit(clients: *Clients, _: Io, gpa: std.mem.Allocator) void {
     inline for (.{
         clients.known.values(),
         clients.unknown.items,
-        clients.local.items,
+        clients.local.values(),
     }) |slice| {
         for (slice) |client| {
             client.connection.close();
@@ -49,7 +49,7 @@ pub fn deinit(clients: *Clients, _: Io, gpa: std.mem.Allocator) void {
 pub fn count(clients: *const Clients) usize {
     return clients.known.count() +
         clients.unknown.items.len +
-        clients.local.items.len;
+        clients.local.count();
 }
 
 pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
@@ -68,6 +68,10 @@ pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
             try pool.addCapacity(gpa, 1);
         }
     }
+}
+
+pub fn contains(clients: *Clients, uuid: ptypes.ClientUUID) bool {
+    return clients.known.contains(uuid) or clients.local.contains(uuid);
 }
 
 pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
@@ -122,12 +126,14 @@ pub fn promote_client_to_local(
     clients: *Clients,
     gpa: std.mem.Allocator,
     index: usize,
+    id: ptypes.ClientUUID,
 ) void {
     const unknown = clients.unknown.items[index];
     std.debug.assert(!unknown.promoted);
 
     const client = clients.local_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
+        .id = id,
         .connection = .{
             .format = unknown.connection.format,
             .stream = unknown.connection.stream,
@@ -138,7 +144,8 @@ pub fn promote_client_to_local(
         },
     };
 
-    clients.local.appendAssumeCapacity(client);
+    // TODO: Validate that the id does not exist
+    clients.local.putAssumeCapacityNoClobber(id, client);
     unknown.promoted = true;
 }
 
@@ -158,14 +165,14 @@ pub fn remove_closed_clients_known_or_local(clients: *Clients) void {
     }
 
     {
-        var i = clients.local.items.len;
+        var i = clients.local.count();
         while (i > 0) {
             i -= 1;
-            const client = clients.local.items[i];
+            const client = clients.local.values()[i];
             if (client.connection.closed) {
                 log.debug("Removed local client", .{});
                 clients.local_pool.destroy(@alignCast(client));
-                _ = clients.local.orderedRemove(i);
+                _ = clients.local.orderedRemove(client.id);
             }
         }
     }
@@ -190,6 +197,7 @@ pub const Client = struct {
 };
 
 pub const LocalClient = struct {
+    id: ptypes.ClientUUID,
     connection: ClientConnection,
 };
 

@@ -133,17 +133,22 @@ pub const CompositorHandle = opaque {
         while (i > 0) {
             i -= 1;
             const client_uuid = com.resources.keys()[i];
-            if (!server.clients.known.contains(client_uuid)) {
+            if (!server.clients.contains(client_uuid)) {
                 com.client_disconnected(client_uuid);
             }
         }
 
         try com.resources.ensureTotalCapacity(com.gpa, server.clients.count());
-        for (server.clients.known.keys()) |client_uuid| {
-            if (!com.resources.contains(client_uuid)) {
-                com.client_registered(client_uuid) catch |err| switch (err) {
-                    error.OutOfMemory => unreachable,
-                };
+        inline for (.{
+            server.clients.known.keys(),
+            server.clients.local.keys(),
+        }) |keys| {
+            for (keys) |uuid| {
+                if (!com.resources.contains(uuid)) {
+                    com.client_registered(uuid) catch |err| switch (err) {
+                        error.OutOfMemory => unreachable,
+                    };
+                }
             }
         }
     }
@@ -242,7 +247,7 @@ pub const CompositorHandle = opaque {
         }
 
         const local_i = i;
-        for (server.clients.local.items) |c| {
+        for (server.clients.local.values()) |c| {
             fds[i].fd = c.connection.stream.socket.handle;
             i += 1;
         }
@@ -276,10 +281,10 @@ pub const CompositorHandle = opaque {
             }
         }
 
-        for (server.clients.local.items, 0..) |_, ci| {
+        for (server.clients.local.values(), 0..) |client, ci| {
             const fd = fds[local_i + ci];
             if ((fd.revents & events) != 0) {
-                clients.appendAssumeCapacity(.{ .local = ci });
+                clients.appendAssumeCapacity(.{ .local = client.id });
             }
         }
 
@@ -322,7 +327,7 @@ pub const CompositorHandle = opaque {
         }
 
         const local_i = i;
-        for (server.clients.local.items) |c| {
+        for (server.clients.local.values()) |c| {
             events[i] = c.connection.win32_event_handle.handle;
             i += 1;
         }
@@ -379,10 +384,10 @@ pub const CompositorHandle = opaque {
                     }
                 }
 
-                for (server.clients.local.items, 0..) |_, ci| {
+                for (server.clients.local.values(), 0..) |client, ci| {
                     const event = events[local_i + ci];
                     if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
-                        clients.appendAssumeCapacity(.{ .local = ci });
+                        clients.appendAssumeCapacity(.{ .local = client.id });
                         std.debug.assert(
                             win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
                         );
