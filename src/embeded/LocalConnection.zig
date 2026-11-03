@@ -18,6 +18,11 @@ pub fn send_wake_up(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void {
     try c.send(io, gpa, message);
 }
 
+pub fn send_queue_pop(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void {
+    const message = try c.stringify(gpa, .{ .queue_pop = .{} });
+    try c.send(io, gpa, message);
+}
+
 fn stringify(c: *LocalConnection, gpa: std.mem.Allocator, payload: client_to_server.MessagePayload) !client_to_server.Message {
     std.debug.assert(c.format == .json);
 

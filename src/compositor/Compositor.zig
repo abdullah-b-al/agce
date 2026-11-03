@@ -17,10 +17,9 @@ destroy_started: bool,
 resources: std.array_hash_map.Auto(ClientUUID, ClientResources),
 windows: std.array_hash_map.Auto(WindowID, Window),
 
-window_next_id: WindowID,
-
 server_events: ServerQueue,
 deferred_events: std.ArrayList(Event),
+
 present_queue: std.ArrayList(BufferPresent),
 
 gbm: Gbm,
@@ -131,7 +130,6 @@ fn create_undefined_native(args: CreateArgs) !*Compositor {
         .windows = .empty,
         .gbm = gbm,
 
-        .window_next_id = .first,
         .destroy_started = false,
 
         .server_events = .init(args.gpa),
@@ -265,16 +263,18 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
 
         .viewport_create => |args| try com.viewport_create(args),
         .viewport_destroy => |args| {
-            try com.server_events.ensure_unused_capacity(1);
+            try com.server_events.ensure_unused_capacity(2);
             com.viewport_destroy(.{ .client_uuid = args.client_uuid, .viewport_id = args.payload.viewport_id });
         },
         .viewport_should_close => |args| try com.viewport_should_close(args),
         .viewport_pos_set => |args| try com.viewport_pos_set(args),
-
-        .remote_viewport_embed => |args| try com.remote_viewport_embed(args),
         .viewport_size_set => |args| try com.viewport_size_set(args),
         .viewport_display_state_set => |args| try com.viewport_display_state_set(args),
         .viewport_close => |args| try com.viewport_close(args),
+
+        .remote_viewport_embed => |args| try com.remote_viewport_embed(args),
+
+        .window_register => |win| try com.window_register(win),
 
         .cursor_shape_set => |args| try com.cursor_shape_set(args),
 
@@ -577,7 +577,7 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
 
     const client_uuid, const viewport_id, const render_size, const buffer_id = switch (args) {
         inline else => |v| .{
-            v.client_uuid,             v.payload.viewport_id,
+            v.client_uuid,           v.payload.viewport_id,
             v.payload.viewport_size, v.payload.buffer_id,
         },
     };
@@ -671,7 +671,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
         if (args.payload.viewport_id.is_server_id()) {
             break :blk try com.viewport_create_with_remote_viewport(args);
         } else {
-            const key = try com.viewport_create_with_window(args);
+            const key = try com.viewport_create_with_mux_window(args);
             break :blk .{ .create_with_window = key };
         }
     };
@@ -784,7 +784,7 @@ pub fn window_id_from_handle(com: *Compositor, handle: *WindowHandle) ?WindowID 
     return null;
 }
 
-fn viewport_create_with_window(com: *Compositor, args: @FieldType(Event, "viewport_create")) !ViewportKey {
+fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "viewport_create")) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
     const key: ViewportKey = .{
@@ -1341,6 +1341,8 @@ pub const Event = union(enum) {
     viewport_should_close: ViewportShouldClose,
     viewport_pos_set: client_to_server.WithClientUUID(client_to_server.ViewportPosSet),
 
+    window_register: Window,
+
     remote_viewport_embed: client_to_server.WithClientUUID(client_to_server.RemoteViewportEmbed),
     viewport_size_set: client_to_server.WithClientUUID(client_to_server.ViewportSizeSet),
     viewport_display_state_set: client_to_server.WithClientUUID(client_to_server.ViewportDisplayStateSet),
@@ -1371,11 +1373,6 @@ pub const Event = union(enum) {
 
     pub const ClientRegistered = struct {
         client_uuid: ClientUUID,
-    };
-
-    pub const WindowResize = struct {
-        id: WindowID,
-        size: ptypes.Size,
     };
 
     pub const KeyboardChar = struct {

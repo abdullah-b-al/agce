@@ -15,6 +15,7 @@ pub const MessagePayload = union(enum(u32)) {
     register: Register,
 
     wake_up: Void,
+    queue_pop: Void,
 
     buffer_create_cpu: BufferCreateCpu,
     buffer_create_gbm_bo: BufferCreateGbmBo,

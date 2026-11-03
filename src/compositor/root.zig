@@ -35,6 +35,14 @@ pub const CompositorHandle = opaque {
         h.cast().destroy();
     }
 
+    pub fn socket_path(h: *CompositorHandle) []const u8 {
+        return h.cast().server.unix_path;
+    }
+
+    pub fn io_queue(h: *CompositorHandle) *Io.Queue(Compositor.Event) {
+        return h.cast().server.io_queue;
+    }
+
     pub fn resources(h: *CompositorHandle) []const ClientResources {
         return h.cast().resources.values();
     }

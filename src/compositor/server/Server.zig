@@ -8,6 +8,9 @@ unix_path: []const u8,
 server: zio.net.Server,
 clients: Clients,
 
+io_queue_buffer: []Compositor.Event,
+io_queue: *Io.Queue(Compositor.Event),
+
 win32_event_handle: Win32EventHandle,
 
 pub fn create(
@@ -18,6 +21,14 @@ pub fn create(
 ) !*Server {
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
+
+    const io_queue_buffer = try gpa.alloc(Compositor.Event, 128);
+    errdefer gpa.free(io_queue_buffer);
+
+    const io_queue = try gpa.create(Io.Queue(Compositor.Event));
+    errdefer gpa.destroy(io_queue);
+
+    io_queue.* = .init(io_queue_buffer);
 
     var rand: std.Random.DefaultPrng = .init(
         @bitCast(Io.Timestamp.now(io, .real).toMilliseconds()),
@@ -90,6 +101,8 @@ pub fn create(
         .unix_path = unix_path,
         .server = net_server,
         .clients = .init,
+        .io_queue_buffer = io_queue_buffer,
+        .io_queue = io_queue,
 
         .win32_event_handle = win32_event_handle,
     };
@@ -115,6 +128,8 @@ pub fn destroy(server: *Server) void {
     };
 
     server.gpa.free(server.unix_path);
+    server.gpa.free(server.io_queue_buffer);
+    server.gpa.destroy(server.io_queue);
     server.gpa.destroy(server);
 }
 
@@ -172,7 +187,7 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
     const @"error" = switch (message.from) {
         .known => server.handle_message_from_known(message, events),
         .unknown => server.handle_message_from_unknown(message),
-        .local => server.handle_message_from_local(message),
+        .local => server.handle_message_from_local(message, events),
     };
 
     @"error" catch |err| switch (err) {
@@ -315,6 +330,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
     switch (msg) {
         .register,
         .wake_up,
+        .queue_pop,
         => |_, tag| log.err("Received invalid message for client {s}", .{@tagName(tag)}),
 
         inline else => |_, tag| {
@@ -382,21 +398,23 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     }
 }
 
-fn handle_message_from_local(server: *Server, message: ReceivedMessage) !void {
+fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
     std.debug.assert(message.from == .local);
 
     const index = message.from.local;
     const msg = message.payload;
 
-    _ = server;
     _ = index;
     switch (msg) {
         .wake_up => {
             log.debug("Received wake_up", .{});
         },
+        .queue_pop => {
+            const event = server.io_queue.getOne(server.io) catch return;
+            events.appendAssumeCapacity(event);
+        },
         else => {
             log.err("Received invalid message for local client", .{});
-            return;
         },
     }
 }
@@ -411,6 +429,7 @@ pub fn compositor_event_from_message(
     switch (payload_tag) {
         .register,
         .wake_up,
+        .queue_pop,
         => @compileError(@tagName(payload_tag) ++ " Cannot be turned into a CompositorEvent. This is meant for the Server"),
 
         inline .buffer_present,
