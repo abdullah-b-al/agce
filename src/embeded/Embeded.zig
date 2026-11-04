@@ -2,6 +2,8 @@ const Embeded = @This();
 gpa: std.mem.Allocator,
 rt: *zio.Runtime,
 
+windows: std.array_hash_map.Auto(WindowID, Window),
+
 com: *compositor.CompositorHandle,
 tick_thread_handle: zio.JoinHandle(void),
 tick_thread_exit: *Io.Event,
@@ -40,6 +42,7 @@ pub fn create(
                 .vtable = &.{
                     .window_handle_for_viewport = mux_interface.window_handle_for_viewport,
                     .window_id_from_handle = mux_interface.window_id_from_handle,
+                    .window_handle_from_id = mux_interface.window_handle_from_id,
                     .window_size = mux_interface.window_size,
                 },
             },
@@ -65,6 +68,7 @@ pub fn create(
         .gpa = gpa,
         .com = com,
         .rt = rt,
+        .windows = .empty,
         .tick_thread_handle = thread_handle,
         .connection = connection,
         .tick_thread_exit = exit_event,
@@ -85,6 +89,7 @@ pub fn destroy(em: *Embeded) void {
     em.connection.stream.close();
     em.rt.deinit();
 
+    em.windows.deinit(em.gpa);
     em.gpa.destroy(em.tick_thread_exit);
     em.gpa.destroy(em);
 }
@@ -106,6 +111,11 @@ pub const Native = enum {
     wayland_display,
 };
 
+pub const Window = struct {
+    handle: *Compositor.WindowHandle,
+    size: ptypes.Size,
+};
+
 const mux_interface = struct {
     fn window_handle_for_viewport(_: *anyopaque, _: ptypes.ViewportKey, _: ptypes.Size) ?*Compositor.WindowHandle {
         @panic("TODO");
@@ -115,8 +125,16 @@ const mux_interface = struct {
         @panic("TODO");
     }
 
-    fn window_size(_: *anyopaque, _: WindowID) ?ptypes.Size {
-        @panic("TODO");
+    fn window_handle_from_id(ptr: *anyopaque, id: WindowID) ?*Compositor.WindowHandle {
+        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        const win = em.windows.get(id) orelse return null;
+        return win.handle;
+    }
+
+    fn window_size(ptr: *anyopaque, id: WindowID) ?ptypes.Size {
+        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        const win = em.windows.get(id) orelse return null;
+        return win.size;
     }
 };
 

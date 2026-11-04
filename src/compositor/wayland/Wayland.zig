@@ -692,6 +692,38 @@ pub fn buffer_create_and_register_gpu_async(
     return buffer_id;
 }
 
+pub fn should_flush(_: *Wayland, event: Compositor.Event) bool {
+    return switch (event) {
+        .cursor_shape_set,
+        .buffer_present,
+        .buffer_present_with_sync,
+        .viewport_pos_set,
+        .remote_viewport_embed,
+        .remote_viewport_embed_with_window,
+        .viewport_size_set,
+        .viewport_display_state_set,
+        .viewport_close,
+        => true,
+
+        .viewport_destroy,
+        .viewport_should_close,
+        .viewport_create,
+        .keyboard_key,
+        .keyboard_enter,
+        .keyboard_leave,
+        .mouse_enter,
+        .mouse_leave,
+        .mouse_motion,
+        .mouse_button,
+        .mouse_scroll,
+        .buffer_create_cpu,
+        .buffer_create_gbm_bo,
+        .texture_create_d3d,
+        .buffer_destroy,
+        => false,
+    };
+}
+
 pub fn from_protocol_cursor_shape(shape: ptypes.CursorShape) ?wp.CursorShapeDeviceV1.Shape {
     return switch (shape) {
         .default => .default,

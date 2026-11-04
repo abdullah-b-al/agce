@@ -229,6 +229,22 @@ pub fn dispatch(com: *Compositor) void {
     }
 }
 
+pub fn flush(com: *Compositor, events: []const Compositor.Event) void {
+    switch (com.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.compositor(com);
+            const should_flush = blk: for (events) |event| {
+                if (wl.should_flush(event)) break :blk true;
+            } else false;
+
+            if (should_flush) {
+                _ = wl.display.flush();
+            }
+        },
+        else => {},
+    }
+}
+
 pub fn events_handle(com: *Compositor, events: []const Event) void {
     for (events) |e| {
         com.event_handle(e) catch |err| {
@@ -704,10 +720,7 @@ fn viewport_create_with_remote_viewport(
     com: *Compositor,
     args: @FieldType(Event, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
-    const embeded_key: ViewportKey = .{
-        .client_uuid = args.client_uuid,
-        .viewport_id = args.payload.viewport_id,
-    };
+    const embeded_key = args.client_uuid.viewport_key(args.payload.viewport_id);
 
     std.debug.assert(embeded_key.viewport_id.is_server_id());
 
@@ -741,30 +754,46 @@ fn viewport_create_with_remote_viewport(
             );
 
             embeder_viewport.remote_viewports.appendAssumeCapacity(embeded_key);
-
-            log.info("{f} of {f} {f} created with {f} {f}", .{
-                remote_viewport_data.remote_viewport_id,
-                embeder.client_uuid,
-                remote_viewport_data.embed_in,
-                embeded_key.client_uuid,
-                embeded_key.viewport_id,
-            });
-            return .{
-                .create_with_remote_viewport = .{
-                    .embeder = .{
-                        .key = .{
-                            .client_uuid = embeder.client_uuid,
-                            .remote_viewport_id = remote_viewport_data.remote_viewport_id,
-                        },
-                        .render_size = args.payload.size,
-                    },
-
-                    .embeded = embeded_key,
-                },
-            };
         },
-        .window => @panic("TODO"),
+        .window => |id| {
+            const window_handle = com.muxi.window_handle_from_id(id) orelse
+                return error.WindowDoesNotExist;
+
+            try embeded.viewport_create(
+                com,
+                .{ .window = window_handle },
+                embeded_key.viewport_id,
+                id,
+                remote_viewport_data.clip_rect,
+                args.payload.size,
+                args.payload.create_sync_timeline,
+                null,
+                args.payload.format,
+            );
+        },
     }
+
+    log.info("{f} of {f} {f} created with {f} {f}", .{
+        remote_viewport_data.remote_viewport_id,
+        embeder.client_uuid,
+        remote_viewport_data.embed_in,
+        embeded_key.client_uuid,
+        embeded_key.viewport_id,
+    });
+
+    return .{
+        .create_with_remote_viewport = .{
+            .embeder = .{
+                .key = .{
+                    .client_uuid = embeder.client_uuid,
+                    .remote_viewport_id = remote_viewport_data.remote_viewport_id,
+                },
+                .render_size = args.payload.size,
+            },
+
+            .embeded = embeded_key,
+        },
+    };
 }
 
 fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "viewport_create")) !ViewportKey {
@@ -1588,6 +1617,7 @@ pub const MuxInterface = struct {
     pub const VTable = struct {
         window_handle_for_viewport: *const fn (*anyopaque, ViewportKey, ptypes.Size) ?*WindowHandle,
         window_id_from_handle: *const fn (*anyopaque, *WindowHandle) ?WindowID,
+        window_handle_from_id: *const fn (*anyopaque, WindowID) ?*WindowHandle,
         window_size: *const fn (*anyopaque, WindowID) ?ptypes.Size,
     };
 
@@ -1597,6 +1627,10 @@ pub const MuxInterface = struct {
 
     pub fn window_id_from_handle(self: MuxInterface, handle: *WindowHandle) ?WindowID {
         return self.vtable.window_id_from_handle(self.ptr, handle);
+    }
+
+    pub fn window_handle_from_id(self: MuxInterface, id: WindowID) ?*WindowHandle {
+        return self.vtable.window_handle_from_id(self.ptr, id);
     }
 
     pub fn window_size(self: MuxInterface, id: WindowID) ?ptypes.Size {

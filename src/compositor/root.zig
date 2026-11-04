@@ -138,6 +138,8 @@ pub const CompositorHandle = opaque {
                 }
             }
         }
+
+        com.flush(compositor_events);
     }
 
     const Poll = struct {

@@ -219,6 +219,12 @@ fn window_id_from_handle(ptr: *anyopaque, handle: *Compositor.WindowHandle) ?Win
     return null;
 }
 
+fn window_handle_from_id(ptr: *anyopaque, id: WindowID) ?*Compositor.WindowHandle {
+    const mux: *Mux = @ptrCast(@alignCast(ptr));
+    const win = mux.windows.get(id) orelse return null;
+    return win.handle(mux);
+}
+
 fn window_size(ptr: *anyopaque, id: WindowID) ?ptypes.Size {
     const mux: *Mux = @ptrCast(@alignCast(ptr));
     const win = mux.windows.get(id) orelse return null;
@@ -376,6 +382,7 @@ const Linux = union(enum) {
 const vtable: Compositor.MuxInterface.VTable = .{
     .window_handle_for_viewport = window_handle_for_viewport,
     .window_id_from_handle = window_id_from_handle,
+    .window_handle_from_id = window_handle_from_id,
     .window_size = window_size,
 };
 
