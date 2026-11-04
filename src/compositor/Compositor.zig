@@ -272,7 +272,8 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
         .viewport_display_state_set => |args| try com.viewport_display_state_set(args),
         .viewport_close => |args| try com.viewport_close(args),
 
-        .remote_viewport_embed => |args| try com.remote_viewport_embed(args),
+        .remote_viewport_embed => |args| try com.remote_viewport_embed_with_viewport(args),
+        .remote_viewport_embed_with_window => |args| try com.remote_viewport_embed_with_window(args),
 
         .window_register => |win| try com.window_register(win),
 
@@ -735,45 +736,50 @@ fn viewport_create_with_remote_viewport(
         embeder.remote_viewports_pending_fetch_remove_by_embeded_key(embeded_key) orelse
         return error.RemoteViewportDoesNotExist;
 
-    const embeder_viewport = embeder.viewports.get(remote_viewport_data.embed_in) orelse
-        return error.ViewportDoesNotExist;
+    switch (remote_viewport_data.embed_in) {
+        .viewport => |id| {
+            const embeder_viewport = embeder.viewports.get(id) orelse
+                return error.ViewportDoesNotExist;
 
-    try embeder_viewport.remote_viewports.ensureUnusedCapacity(com.gpa, 1);
+            try embeder_viewport.remote_viewports.ensureUnusedCapacity(com.gpa, 1);
 
-    try embeded.viewport_create(
-        com,
-        .{ .viewport = embeder_viewport },
-        embeded_key.viewport_id,
-        embeder_viewport.window_id,
-        remote_viewport_data.clip_rect,
-        args.payload.size,
-        args.payload.create_sync_timeline,
-        .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
-        args.payload.format,
-    );
+            try embeded.viewport_create(
+                com,
+                .{ .viewport = embeder_viewport },
+                embeded_key.viewport_id,
+                embeder_viewport.window_id,
+                remote_viewport_data.clip_rect,
+                args.payload.size,
+                args.payload.create_sync_timeline,
+                .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
+                args.payload.format,
+            );
 
-    embeder_viewport.remote_viewports.appendAssumeCapacity(embeded_key);
+            embeder_viewport.remote_viewports.appendAssumeCapacity(embeded_key);
 
-    log.info("{f} of {f} {f} created with {f} {f}", .{
-        remote_viewport_data.remote_viewport_id,
-        embeder.client_uuid,
-        remote_viewport_data.embed_in,
-        embeded_key.client_uuid,
-        embeded_key.viewport_id,
-    });
-    return .{
-        .create_with_remote_viewport = .{
-            .embeder = .{
-                .key = .{
-                    .client_uuid = embeder.client_uuid,
-                    .remote_viewport_id = remote_viewport_data.remote_viewport_id,
+            log.info("{f} of {f} {f} created with {f} {f}", .{
+                remote_viewport_data.remote_viewport_id,
+                embeder.client_uuid,
+                remote_viewport_data.embed_in,
+                embeded_key.client_uuid,
+                embeded_key.viewport_id,
+            });
+            return .{
+                .create_with_remote_viewport = .{
+                    .embeder = .{
+                        .key = .{
+                            .client_uuid = embeder.client_uuid,
+                            .remote_viewport_id = remote_viewport_data.remote_viewport_id,
+                        },
+                        .render_size = args.payload.size,
+                    },
+
+                    .embeded = embeded_key,
                 },
-                .render_size = args.payload.size,
-            },
-
-            .embeded = embeded_key,
+            };
         },
-    };
+        .window => @panic("TODO"),
+    }
 }
 
 pub fn window_id_from_handle(com: *Compositor, handle: *WindowHandle) ?WindowID {
@@ -1039,11 +1045,41 @@ pub fn cursor_shape_set(com: *Compositor, args: @FieldType(Event, "cursor_shape_
     com.cursor_shape_set_from_viewport(vp, viewport_key);
 }
 
-pub fn remote_viewport_embed(com: *Compositor, args: @FieldType(Event, "remote_viewport_embed")) !void {
+pub fn remote_viewport_embed_with_viewport(com: *Compositor, args: @FieldType(Event, "remote_viewport_embed")) !void {
+    try com.remote_viewport_embed(
+        args.client_uuid,
+        args.payload.remote_viewport_id,
+        args.payload.rect,
+        .{ .viewport = args.payload.embeder_viewport_id },
+        args.payload.client_uuid_to_embed,
+    );
+}
+
+pub fn remote_viewport_embed_with_window(
+    com: *Compositor,
+    args: @FieldType(Event, "remote_viewport_embed_with_window"),
+) !void {
+    try com.remote_viewport_embed(
+        args.client_uuid,
+        args.payload.remote_viewport_id,
+        args.payload.rect,
+        .{ .window = args.payload.window_id },
+        args.payload.client_uuid_to_embed,
+    );
+}
+
+pub fn remote_viewport_embed(
+    com: *Compositor,
+    request_from: ClientUUID,
+    remote_viewport_id: ptypes.RemoteViewportID,
+    rect: ptypes.Rect,
+    parent: ClientResources.RemoteViewportPending.EmbedIn,
+    request_to: ClientUUID,
+) !void {
     try com.server_events.ensure_unused_capacity(1);
 
-    const to_embed = com.resources.getPtr(args.payload.client_uuid_to_embed) orelse return;
-    const embeder = com.resources.getPtr(args.client_uuid) orelse return;
+    const to_embed = com.resources.getPtr(request_to) orelse return;
+    const embeder = com.resources.getPtr(request_from) orelse return;
 
     try embeder.remote_viewports_pending.ensureUnusedCapacity(com.gpa, 1);
     try to_embed.viewports_pending.ensureUnusedCapacity(com.gpa, 1);
@@ -1052,29 +1088,22 @@ pub fn remote_viewport_embed(com: *Compositor, args: @FieldType(Event, "remote_v
     to_embed.viewports_pending.putAssumeCapacityNoClobber(viewport_id, {});
 
     embeder.remote_viewports_pending.putAssumeCapacityNoClobber(
-        args.payload.remote_viewport_id,
+        remote_viewport_id,
         .{
-            .to_embed = .{
-                .client_uuid = args.payload.client_uuid_to_embed,
-                .viewport_id = viewport_id,
-            },
-            .clip_rect = args.payload.rect,
-            .embed_in = args.payload.embeder_viewport_id,
-            .remote_viewport_id = args.payload.remote_viewport_id,
+            .to_embed = request_to.viewport_key(viewport_id),
+            .clip_rect = rect,
+            .embed_in = parent,
+            .remote_viewport_id = remote_viewport_id,
         },
     );
 
     com.server_events.push_assume_capacity(.{
         .viewport_create = .{
-            .client_uuid = args.payload.client_uuid_to_embed,
-            .payload = .{
-                .viewport_id = viewport_id,
-                .size = args.payload.rect.size(),
-            },
+            .client_uuid = request_to,
+            .payload = .{ .viewport_id = viewport_id, .size = rect.size() },
         },
     });
 }
-
 pub fn cursor_shape_set_from_viewport(com: *Compositor, vp: *Viewport, viewport_key: ViewportKey) void {
     if (!std.meta.eql(com.input_focus_mouse, viewport_key)) return;
 
@@ -1344,6 +1373,7 @@ pub const Event = union(enum) {
     window_register: WindowRegister,
 
     remote_viewport_embed: client_to_server.WithClientUUID(client_to_server.RemoteViewportEmbed),
+    remote_viewport_embed_with_window: client_to_server.WithClientUUID(RemoteViewportEmbedWithWindow),
     viewport_size_set: client_to_server.WithClientUUID(client_to_server.ViewportSizeSet),
     viewport_display_state_set: client_to_server.WithClientUUID(client_to_server.ViewportDisplayStateSet),
     viewport_close: client_to_server.WithClientUUID(client_to_server.RemoteViewportClose),
@@ -1373,6 +1403,13 @@ pub const Event = union(enum) {
 
     pub const ClientRegistered = struct {
         client_uuid: ClientUUID,
+    };
+
+    pub const RemoteViewportEmbedWithWindow = struct {
+        client_uuid_to_embed: ptypes.ClientUUID,
+        remote_viewport_id: ptypes.RemoteViewportID,
+        rect: ptypes.Rect,
+        window_id: WindowID,
     };
 
     pub const KeyboardChar = struct {

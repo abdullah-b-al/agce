@@ -25,6 +25,10 @@ pub const ClientUUID = enum(uuid.Uuid) {
         };
     }
 
+    pub fn viewport_key(cuuid: ClientUUID, vp_id: ViewportID) ViewportKey {
+        return .{ .client_uuid = cuuid, .viewport_id = vp_id };
+    }
+
     pub fn jsonStringify(self: ClientUUID, stringify: *std.json.Stringify) error{WriteFailed}!void {
         try stringify.write(self.serialize());
     }
@@ -35,14 +39,6 @@ pub const ClientUUID = enum(uuid.Uuid) {
 
     pub fn deserialize(slice: []const u8) !ClientUUID {
         return @enumFromInt(try uuid.urn.deserialize(slice));
-    }
-};
-
-pub const ClientFingerprint = enum(u32) {
-    _,
-
-    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ClientFingerprint({})", .{@intFromEnum(self)});
     }
 };
 

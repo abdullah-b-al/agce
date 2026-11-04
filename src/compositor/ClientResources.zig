@@ -134,7 +134,18 @@ pub const RemoteViewportPending = struct {
     remote_viewport_id: RemoteViewportID,
     clip_rect: ptypes.Rect,
     to_embed: ViewportKey,
-    embed_in: ViewportID,
+    embed_in: EmbedIn,
+
+    pub const EmbedIn = union(enum) {
+        viewport: ViewportID,
+        window: WindowID,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (self) {
+                inline else => |v| try writer.print("{f}", .{v}),
+            }
+        }
+    };
 };
 
 pub const GbmBo = if (!constants.os_has_gbm) void else struct {
