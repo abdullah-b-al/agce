@@ -365,7 +365,14 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     if (register.is_local) {
         std.debug.assert(register.uuid != null);
         server.clients.promote_client_to_local(server.gpa, index, register.uuid.?);
-        log.debug("Promoted unknown client to local {f}", .{register.uuid.?});
+        const client = server.clients.local.get(register.uuid.?).?;
+
+        client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemoryDuringRegister,
+            else => return error.ConnectionClosed,
+        };
+
+        log.debug("Promoted unknown client to local {f}", .{client.id});
     } else {
         const id: ClientUUID = register.uuid orelse .new(server.io);
         if (server.clients.known.contains(id)) {
@@ -389,11 +396,16 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
         errdefer comptime unreachable;
 
         // broadcast the new client
-        for (server.clients.known.values()) |other| {
-            if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
+        inline for (.{
+            server.clients.known.values(),
+            server.clients.local.values(),
+        }) |clients| {
+            for (clients) |other| {
+                if (@intFromEnum(other.id) == @intFromEnum(client.id)) continue;
 
-            other.connection.send_client_registered(server.io, server.gpa, .{ .client_uuid = client.id }) catch |err|
-                log.err("{} from {f} during broadcast", .{ err, other.id });
+                other.connection.send_client_registered(server.io, server.gpa, .{ .client_uuid = client.id }) catch |err|
+                    log.err("{} from {f} during broadcast", .{ err, other.id });
+            }
         }
     }
 }

@@ -12,6 +12,10 @@ pub fn connected(remote: *RemoteClient) void {
     remote.status = .connected;
 }
 
+pub fn disconnected(remote: *RemoteClient) void {
+    remote.status = .disconnected;
+}
+
 pub const Status = enum {
     connected,
     pending,

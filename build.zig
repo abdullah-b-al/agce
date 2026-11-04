@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) !void {
     const zio = b.dependency("zio", .{
         .target = target,
         .optimize = optimize,
+        .scheduling = .pinned,
     }).module("zio");
 
     const win32 = b.dependency("win32", .{});
