@@ -63,7 +63,6 @@ pub const TestServer = struct {
 
         while (!exit.isSet()) {
             const poll_result = com.poll(
-                .mux,
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => continue,

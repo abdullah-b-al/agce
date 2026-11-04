@@ -91,7 +91,7 @@ pub fn destroy(em: *Embeded) void {
 
 fn tick_thread(com: *compositor.CompositorHandle, exit: *Io.Event) void {
     while (!exit.isSet()) {
-        const poll_result = com.poll(.embeded, .none) catch |err| {
+        const poll_result = com.poll(.none) catch |err| {
             log.err("poll() {}", .{err});
             continue;
         };
