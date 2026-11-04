@@ -205,14 +205,24 @@ fn window_handle_for_viewport(ptr: *anyopaque, key: ptypes.ViewportKey, size: pt
         .win32 => {},
     }
 
-    // TODO: Do not register windows here
-    mux.compositor.window_register(.{
-        .handle = win.handle(mux),
-        .id = win.id,
-        .size = win.get_size(),
-    }) catch return null;
-
     return win.handle(mux);
+}
+
+fn window_id_from_handle(ptr: *anyopaque, handle: *Compositor.WindowHandle) ?WindowID {
+    const mux: *Mux = @ptrCast(@alignCast(ptr));
+    for (mux.windows.values()) |win| {
+        if (win.handle(mux) == handle) {
+            return win.id;
+        }
+    }
+
+    return null;
+}
+
+fn window_size(ptr: *anyopaque, id: WindowID) ?ptypes.Size {
+    const mux: *Mux = @ptrCast(@alignCast(ptr));
+    const win = mux.windows.get(id) orelse return null;
+    return win.get_size();
 }
 
 pub fn windows_destroy_if_closed(mux: *Mux) void {
@@ -365,6 +375,8 @@ const Linux = union(enum) {
 
 const vtable: Compositor.MuxInterface.VTable = .{
     .window_handle_for_viewport = window_handle_for_viewport,
+    .window_id_from_handle = window_id_from_handle,
+    .window_size = window_size,
 };
 
 const std = @import("std");

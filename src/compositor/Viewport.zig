@@ -139,7 +139,6 @@ const ViewportID = ptypes.ViewportID;
 const log = std.log.scoped(.Wayland);
 const c_linux = @import("c_linux");
 const Wayland = @import("wayland/Wayland.zig");
-const Window = @import("Window.zig");
 const Buffer = @import("ClientResources.zig").Buffer;
 const ParentOfViewport = Compositor.ParentOfViewport;
 const os = @import("builtin").os.tag;

@@ -35,7 +35,14 @@ pub fn create(
             .gpa = gpa,
             .environ_map = environ_map,
             .class = class,
-            .muxi = null,
+            .muxi = .{
+                .ptr = em,
+                .vtable = &.{
+                    .window_handle_for_viewport = mux_interface.window_handle_for_viewport,
+                    .window_id_from_handle = mux_interface.window_id_from_handle,
+                    .window_size = mux_interface.window_size,
+                },
+            },
             .socket_owner = .{ .embeded = class },
         }),
     };
@@ -45,9 +52,14 @@ pub fn create(
     errdefer exit_event.set(io);
 
     const stream = try com.connect_local();
-    var connection: LocalConnection = .{ .stream = stream, .format = .json };
+    var connection: LocalConnection = .{
+        .uuid = .new(io),
+        .stream = stream,
+        .format = .json,
+    };
     try connection.send_register_local(io, gpa);
     // TODO: Wait on registered result
+    try io.sleep(.fromMilliseconds(16), .awake);
 
     em.* = .{
         .gpa = gpa,
@@ -94,9 +106,26 @@ pub const Native = enum {
     wayland_display,
 };
 
+const mux_interface = struct {
+    fn window_handle_for_viewport(_: *anyopaque, _: ptypes.ViewportKey, _: ptypes.Size) ?*Compositor.WindowHandle {
+        @panic("TODO");
+    }
+
+    fn window_id_from_handle(_: *anyopaque, _: *Compositor.WindowHandle) ?WindowID {
+        @panic("TODO");
+    }
+
+    fn window_size(_: *anyopaque, _: WindowID) ?ptypes.Size {
+        @panic("TODO");
+    }
+};
+
 const std = @import("std");
 const Io = std.Io;
 const compositor = @import("compositor");
+const Compositor = compositor.Compositor;
+const ptypes = @import("protocol").types;
+const WindowID = Compositor.WindowID;
 const zio = @import("zio");
 const LocalConnection = @import("LocalConnection.zig");
 const log = std.log.scoped(.agce_embeded);

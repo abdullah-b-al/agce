@@ -5,7 +5,7 @@ gpa: std.mem.Allocator,
 tick_arena: std.heap.ArenaAllocator,
 
 server: *Server,
-muxi: ?MuxInterface,
+muxi: MuxInterface,
 
 class_of_window: [:0]const u8,
 /// Used in windows
@@ -15,7 +15,6 @@ class_of_viewport: [:0]const u8,
 destroy_started: bool,
 
 resources: std.array_hash_map.Auto(ClientUUID, ClientResources),
-windows: std.array_hash_map.Auto(WindowID, Window),
 
 server_events: ServerQueue,
 deferred_events: std.ArrayList(Event),
@@ -37,6 +36,9 @@ pub fn create(
     class: []const u8,
     suffix: Server.UnixSocketOwner,
 ) !*Compositor {
+    if (true) {
+        @panic("Temporarely disabled. Used by tests which should move to using Mux");
+    }
     return blk: switch (os) {
         .linux => {
             const display = try cwl.Display.connect(null);
@@ -88,7 +90,7 @@ pub const CreateArgs = struct {
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
     class: []const u8,
-    muxi: ?MuxInterface,
+    muxi: MuxInterface,
     socket_owner: Server.UnixSocketOwner,
 };
 fn create_undefined_native(args: CreateArgs) !*Compositor {
@@ -127,7 +129,6 @@ fn create_undefined_native(args: CreateArgs) !*Compositor {
         .class_of_window = class_window_dupe,
         .class_of_viewport = class_viewport,
         .resources = .empty,
-        .windows = .empty,
         .gbm = gbm,
 
         .destroy_started = false,
@@ -168,7 +169,6 @@ pub fn destroy(com: *Compositor) void {
 
     inline for (.{
         &com.resources,
-        &com.windows,
         &com.deferred_events,
         &com.present_queue,
     }) |entry| {
@@ -182,18 +182,6 @@ pub fn destroy(com: *Compositor) void {
 
     com.tick_arena.deinit();
     com.gpa.destroy(com);
-}
-
-pub fn window_register(com: *Compositor, win: WindowRegister) error{OutOfMemory}!void {
-    try com.windows.ensureUnusedCapacity(com.gpa, 1);
-    com.windows.putAssumeCapacityNoClobber(win.id, .init(win));
-}
-
-pub fn window_update_size(com: *Compositor, id: WindowID, size: ptypes.Size) error{WindowNotRegistered}!void {
-    const win = com.windows.getPtr(id) orelse return error.WindowNotRegistered;
-    std.debug.assert(size.width > 0);
-    std.debug.assert(size.height > 0);
-    win.size = size;
 }
 
 pub fn window_focused_by_keyboard(com: *Compositor, viewport_key: ViewportKey) void {
@@ -274,8 +262,6 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
 
         .remote_viewport_embed => |args| try com.remote_viewport_embed_with_viewport(args),
         .remote_viewport_embed_with_window => |args| try com.remote_viewport_embed_with_window(args),
-
-        .window_register => |win| try com.window_register(win),
 
         .cursor_shape_set => |args| try com.cursor_shape_set(args),
 
@@ -589,9 +575,8 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
         return;
     };
 
-    const win = com.window_from_viewport_key(viewport_key) orelse return error.ViewportHasNoWindow;
-
     const rs = com.resources.getPtr(client_uuid) orelse return;
+    const window_size = com.muxi.window_size(vp.window_id) orelse return;
 
     vp.render_size = render_size;
     if (vp.parent_key == null) {
@@ -621,7 +606,7 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
         client_uuid,
         viewport_id,
         buffer_id,
-        win.id,
+        window_size,
         render_size,
 
         switch (args) {
@@ -782,14 +767,6 @@ fn viewport_create_with_remote_viewport(
     }
 }
 
-pub fn window_id_from_handle(com: *Compositor, handle: *WindowHandle) ?WindowID {
-    for (com.windows.values()) |win| {
-        if (win.handle == handle) return win.id;
-    }
-
-    return null;
-}
-
 fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "viewport_create")) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
@@ -797,13 +774,8 @@ fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "vi
         .client_uuid = args.client_uuid,
         .viewport_id = args.payload.viewport_id,
     };
-    const maybe_window_handle = if (com.muxi) |muxi|
-        muxi.window_handle_for_viewport(key, args.payload.size)
-    else
-        null;
-    const window_handle = maybe_window_handle orelse return error.FailedToGetWindow;
-
-    const window_id = com.window_id_from_handle(window_handle).?;
+    const window_handle = com.muxi.window_handle_for_viewport(key, args.payload.size) orelse return error.FailedToGetWindowHandle;
+    const window_id = com.muxi.window_id_from_handle(window_handle) orelse return error.FailedToGetWindowID;
 
     const rs = com.resources.getPtr(args.client_uuid) orelse return error.ClientDoesNotExist;
 
@@ -840,12 +812,6 @@ pub fn remote_viewport_from_key(com: *Compositor, key: ViewportKey, parent_clien
     }
 
     return vp;
-}
-
-pub fn window_from_viewport_key(com: *Compositor, key: ViewportKey) ?Window {
-    const rs = com.resources.getPtr(key.client_uuid).?;
-    const vp = rs.viewports.get(key.viewport_id).?;
-    return com.windows.get(vp.window_id);
 }
 
 pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{EmbederClientDoesNotExist}!*ClientResources {
@@ -916,7 +882,7 @@ pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_siz
     std.debug.assert(vp.id.is_server_id());
 
     const size = args.payload.size;
-    const win = com.window_from_viewport_key(key) orelse return error.ViewportHasNoWindow;
+    const window_size = com.muxi.window_size(vp.window_id) orelse return error.ViewportHasNoWindow;
 
     if (size.width <= 0 or size.height <= 0) {
         return error.InvalidSize;
@@ -928,7 +894,7 @@ pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_siz
     switch (com.native_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
-            const min_size = nvp.min_source_size(win);
+            const min_size = nvp.min_source_size(window_size);
             nvp.viewport.setSource(
                 .fromInt(0),
                 .fromInt(0),
@@ -1357,28 +1323,26 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
 };
 
 pub const Event = union(enum) {
-    buffer_create_cpu: client_to_server.WithClientUUID(client_to_server.BufferCreateCpu),
-    buffer_create_gbm_bo: client_to_server.WithClientUUID(client_to_server.BufferCreateGbmBo),
-    buffer_present: client_to_server.WithClientUUID(client_to_server.BufferPresent),
-    buffer_present_with_sync: client_to_server.WithClientUUID(client_to_server.BufferPresentWithSync),
-    buffer_destroy: client_to_server.WithClientUUID(client_to_server.BufferDestroy),
+    buffer_create_cpu: WithClientUUID(client_to_server.BufferCreateCpu),
+    buffer_create_gbm_bo: WithClientUUID(client_to_server.BufferCreateGbmBo),
+    buffer_present: WithClientUUID(client_to_server.BufferPresent),
+    buffer_present_with_sync: WithClientUUID(client_to_server.BufferPresentWithSync),
+    buffer_destroy: WithClientUUID(client_to_server.BufferDestroy),
 
-    texture_create_d3d: client_to_server.WithClientUUID(client_to_server.TextureCreateD3D),
+    texture_create_d3d: WithClientUUID(client_to_server.TextureCreateD3D),
 
-    viewport_create: client_to_server.WithClientUUID(client_to_server.ViewportCreate),
-    viewport_destroy: client_to_server.WithClientUUID(client_to_server.ViewportDestroy),
+    viewport_create: WithClientUUID(client_to_server.ViewportCreate),
+    viewport_destroy: WithClientUUID(client_to_server.ViewportDestroy),
     viewport_should_close: ViewportShouldClose,
-    viewport_pos_set: client_to_server.WithClientUUID(client_to_server.ViewportPosSet),
+    viewport_pos_set: WithClientUUID(client_to_server.ViewportPosSet),
 
-    window_register: WindowRegister,
+    remote_viewport_embed: WithClientUUID(client_to_server.RemoteViewportEmbed),
+    remote_viewport_embed_with_window: WithClientUUID(RemoteViewportEmbedWithWindow),
+    viewport_size_set: WithClientUUID(client_to_server.ViewportSizeSet),
+    viewport_display_state_set: WithClientUUID(client_to_server.ViewportDisplayStateSet),
+    viewport_close: WithClientUUID(client_to_server.RemoteViewportClose),
 
-    remote_viewport_embed: client_to_server.WithClientUUID(client_to_server.RemoteViewportEmbed),
-    remote_viewport_embed_with_window: client_to_server.WithClientUUID(RemoteViewportEmbedWithWindow),
-    viewport_size_set: client_to_server.WithClientUUID(client_to_server.ViewportSizeSet),
-    viewport_display_state_set: client_to_server.WithClientUUID(client_to_server.ViewportDisplayStateSet),
-    viewport_close: client_to_server.WithClientUUID(client_to_server.RemoteViewportClose),
-
-    cursor_shape_set: client_to_server.WithClientUUID(client_to_server.CursorShape),
+    cursor_shape_set: WithClientUUID(client_to_server.CursorShape),
 
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
@@ -1389,6 +1353,8 @@ pub const Event = union(enum) {
     mouse_motion: MouseMotion,
     mouse_button: MouseButton,
     mouse_scroll: MouseScroll,
+
+    const WithClientUUID = client_to_server.WithClientUUID;
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self) {
@@ -1546,8 +1512,8 @@ pub const BufferPresent = struct {
     client_uuid: ClientUUID,
     viewport_id: ViewportID,
     buffer_id: BufferID,
-    window_id: WindowID,
     render_size: ptypes.Size,
+    window_size: ptypes.Size,
     sync: ?Sync,
     state: State,
 
@@ -1555,7 +1521,7 @@ pub const BufferPresent = struct {
         client_uuid: ClientUUID,
         viewport_id: ViewportID,
         buffer_id: BufferID,
-        window_id: WindowID,
+        window_size: ptypes.Size,
         render_size: ptypes.Size,
         sync: ?Sync,
     ) BufferPresent {
@@ -1563,7 +1529,7 @@ pub const BufferPresent = struct {
             .client_uuid = client_uuid,
             .viewport_id = viewport_id,
             .buffer_id = buffer_id,
-            .window_id = window_id,
+            .window_size = window_size,
             .render_size = render_size,
             .sync = sync,
 
@@ -1615,22 +1581,26 @@ pub const WindowHandle = opaque {
     }
 };
 
-pub const WindowRegister = struct {
-    id: WindowID,
-    handle: *Compositor.WindowHandle,
-    size: ptypes.Size,
-};
-
 pub const MuxInterface = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
         window_handle_for_viewport: *const fn (*anyopaque, ViewportKey, ptypes.Size) ?*WindowHandle,
+        window_id_from_handle: *const fn (*anyopaque, *WindowHandle) ?WindowID,
+        window_size: *const fn (*anyopaque, WindowID) ?ptypes.Size,
     };
 
     pub fn window_handle_for_viewport(self: MuxInterface, key: ViewportKey, size: ptypes.Size) ?*WindowHandle {
         return self.vtable.window_handle_for_viewport(self.ptr, key, size);
+    }
+
+    pub fn window_id_from_handle(self: MuxInterface, handle: *WindowHandle) ?WindowID {
+        return self.vtable.window_id_from_handle(self.ptr, handle);
+    }
+
+    pub fn window_size(self: MuxInterface, id: WindowID) ?ptypes.Size {
+        return self.vtable.window_size(self.ptr, id);
     }
 };
 
@@ -1639,7 +1609,6 @@ pub const Linux = union(enum) { wayland: *Wayland };
 pub const Wayland = @import("wayland/Wayland.zig");
 pub const Win32 = @import("win32/Win32.zig");
 pub const Viewport = @import("Viewport.zig");
-pub const Window = @import("Window.zig");
 pub const Buffer = @import("Buffer.zig");
 
 const std = @import("std");

@@ -118,8 +118,6 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state == .new);
 
-        const win = com.windows.get(item.window_id).?;
-
         const rs = com.resources.getPtr(item.client_uuid).?;
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
@@ -135,7 +133,7 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
             nvp.surface.damage(0, 0, b.width(), b.height());
             nvp.surface.attach(b.wl_buffer(), 0, 0);
 
-            const size = nvp.min_source_size_with_buffer(win, b);
+            const size = nvp.min_source_size_with_buffer(item.window_size, b);
             nvp.viewport.setSource(
                 .fromInt(0),
                 .fromInt(0),

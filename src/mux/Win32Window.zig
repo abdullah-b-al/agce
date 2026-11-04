@@ -77,6 +77,7 @@ pub fn window_proc(
         // Window has been removed. Pass through msg
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     };
+    _ = win;
 
     switch (msg) {
         win32_win.WM_SIZE => {
@@ -84,11 +85,10 @@ pub fn window_proc(
             const high: isize = (lparam >> 16) & 0xFFFF;
             const w: i16 = @truncate(low);
             const h: i16 = @truncate(high);
+            _ = w;
+            _ = h;
 
-            mux.compositor.window_update_size(win.id, .{ .width = w, .height = h }) catch |err| switch (err) {
-                error.WindowNotRegistered => unreachable,
-            };
-            return 0;
+            return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
 
         else => {},

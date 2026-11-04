@@ -180,10 +180,6 @@ pub fn listener_xdg_toplevel(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
             win.linux.wayland.resize(mux, size) catch return;
             win.linux.wayland.surface.commit();
 
-            mux.compositor.window_update_size(win.id, size) catch |err| switch (err) {
-                error.WindowNotRegistered => unreachable,
-            };
-
             mux.compositor.viewport_resize(win.viewport_key, size) catch return;
         },
 

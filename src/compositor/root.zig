@@ -51,14 +51,6 @@ pub const CompositorHandle = opaque {
         return h.cast().native_tag();
     }
 
-    pub fn window_register(h: *CompositorHandle, win: Compositor.WindowRegister) error{OutOfMemory}!void {
-        return h.cast().window_register(win);
-    }
-
-    pub fn window_update_size(h: *CompositorHandle, id: Compositor.WindowID, size: ptypes.Size) error{WindowNotRegistered}!void {
-        try h.cast().window_update_size(id, size);
-    }
-
     pub fn window_focused_by_keyboard(h: *CompositorHandle, key: ptypes.ViewportKey) void {
         h.cast().window_focused_by_keyboard(key);
     }

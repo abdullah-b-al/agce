@@ -77,17 +77,17 @@ pub fn remote_viewport_id_from_key(vp: *Viewport, key: ViewportKey) ?ptypes.Remo
     return null;
 }
 
-pub fn min_source_size(vp: *const Viewport, win: Compositor.Window) ptypes.Size {
+pub fn min_source_size(vp: *const Viewport, window_size: ptypes.Size) ptypes.Size {
     const width = @min(
         vp.base.render_size.width,
         vp.base.clipping_rect.width,
-        win.size.width,
+        window_size.width,
     );
 
     const height = @min(
         vp.base.render_size.height,
         vp.base.clipping_rect.height,
-        win.size.height,
+        window_size.height,
     );
 
     return .{
@@ -96,8 +96,8 @@ pub fn min_source_size(vp: *const Viewport, win: Compositor.Window) ptypes.Size 
     };
 }
 
-pub fn min_source_size_with_buffer(vp: *const Viewport, win: Compositor.Window, buffer: *Buffer) ptypes.Size {
-    const size = vp.min_source_size(win);
+pub fn min_source_size_with_buffer(vp: *const Viewport, window_size: ptypes.Size, buffer: *Buffer) ptypes.Size {
+    const size = vp.min_source_size(window_size);
     return .{
         .width = @max(
             1,
