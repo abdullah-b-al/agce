@@ -51,7 +51,7 @@ pub const CompositorHandle = opaque {
         return h.cast().native_tag();
     }
 
-    pub fn window_register(h: *CompositorHandle, win: Compositor.Window) error{OutOfMemory}!void {
+    pub fn window_register(h: *CompositorHandle, win: Compositor.WindowRegister) error{OutOfMemory}!void {
         return h.cast().window_register(win);
     }
 

@@ -184,9 +184,9 @@ pub fn destroy(com: *Compositor) void {
     com.gpa.destroy(com);
 }
 
-pub fn window_register(com: *Compositor, win: Window) error{OutOfMemory}!void {
+pub fn window_register(com: *Compositor, win: WindowRegister) error{OutOfMemory}!void {
     try com.windows.ensureUnusedCapacity(com.gpa, 1);
-    com.windows.putAssumeCapacityNoClobber(win.id, win);
+    com.windows.putAssumeCapacityNoClobber(win.id, .init(win));
 }
 
 pub fn window_update_size(com: *Compositor, id: WindowID, size: ptypes.Size) error{WindowNotRegistered}!void {
@@ -1341,7 +1341,7 @@ pub const Event = union(enum) {
     viewport_should_close: ViewportShouldClose,
     viewport_pos_set: client_to_server.WithClientUUID(client_to_server.ViewportPosSet),
 
-    window_register: Window,
+    window_register: WindowRegister,
 
     remote_viewport_embed: client_to_server.WithClientUUID(client_to_server.RemoteViewportEmbed),
     viewport_size_set: client_to_server.WithClientUUID(client_to_server.ViewportSizeSet),
@@ -1576,6 +1576,12 @@ pub const WindowHandle = opaque {
             .win32 => win32_foundation.HWND,
         };
     }
+};
+
+pub const WindowRegister = struct {
+    id: WindowID,
+    handle: *Compositor.WindowHandle,
+    size: ptypes.Size,
 };
 
 pub const MuxInterface = struct {
