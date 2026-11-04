@@ -45,9 +45,9 @@ pub fn main(init: std.process.Init) !void {
     std.log.debug("viewport created for depth {}", .{depth});
 
     var remote_viewport: ?*agce.RemoteViewportHandle = null;
-    var maybe_child: ?*agce.ProcessHandle = null;
+    var maybe_child: ?agce.Process = null;
     defer if (remote_viewport) |rvp| rvp.destroy();
-    defer if (maybe_child) |c| {
+    defer if (maybe_child) |*c| {
         _ = c.wait() catch {};
     };
 
@@ -59,21 +59,24 @@ pub fn main(init: std.process.Init) !void {
         const self_path = args_iter.next().?;
 
         std.log.debug("depth {} process_create", .{depth});
-        var child = try handle.process_create(&.{self_path});
+
+        const remote = try handle.remote_client_create();
+        var child = try handle.process_init(&.{self_path});
+
         maybe_child = child;
 
         std.log.debug("depth {} spawn", .{depth});
-        try child.spawn(.{
+        try child.spawn(remote, .{
             .stdout = .inherit,
             .stderr = .inherit,
         });
 
         std.log.debug("depth {} connected poll", .{depth});
-        while (child.status() != .connected) {
+        while (remote.status != .connected) {
             try handle.poll(std.math.maxInt(u64));
         }
 
-        remote_viewport = try handle.remote_viewport_embed(viewport, child, .{
+        remote_viewport = try handle.remote_viewport_embed(viewport, remote, .{
             .x = 100,
             .y = 100,
             .width = rvp_width,
@@ -176,3 +179,4 @@ const Io = std.Io;
 
 const agce = @import("client");
 const shared = @import("shared.zig");
+const constants = @import("constants");

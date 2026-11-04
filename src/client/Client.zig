@@ -13,7 +13,7 @@ viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_from_server: std.array_hash_map.Auto(ViewportID, ptypes.Size),
 remote_viewports: std.array_hash_map.Auto(RemoteViewportID, *RemoteViewport),
 
-processes: std.ArrayList(*Process),
+remote_clients: std.ArrayList(*RemoteClient),
 
 messages_arena: std.heap.ArenaAllocator,
 
@@ -79,7 +79,7 @@ pub fn init(
         .viewports = .empty,
         .viewports_from_server = .empty,
         .remote_viewports = .empty,
-        .processes = .empty,
+        .remote_clients = .empty,
         .gbm = null,
         .gl_context = null,
         .d11_device = null,
@@ -92,11 +92,7 @@ pub fn init(
 pub fn deinit(client: *Client) void {
     client.read_future.cancel(client.io);
 
-    for (client.processes.items) |p| {
-        if (!p.deinited) {
-            p.deinit();
-            log.err("Process {*} leaked", .{p});
-        }
+    for (client.remote_clients.items) |p| {
         client.gpa.destroy(p);
     }
 
@@ -131,7 +127,7 @@ pub fn deinit(client: *Client) void {
         &client.viewports,
         &client.remote_viewports,
         &client.viewports_from_server,
-        &client.processes,
+        &client.remote_clients,
     };
 
     inline for (containers) |container| {
@@ -209,21 +205,22 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             client.registered = true;
         },
         .client_registered => |e| {
-            const process = blk: for (client.processes.items) |process| {
-                if (process.uuid == e.client_uuid) break :blk process;
+            const remote: ?*RemoteClient = blk: for (client.remote_clients.items) |remote| {
+                if (remote.uuid == e.client_uuid) break :blk remote;
             } else null;
 
-            if (process) |p| {
-                p.client_connected();
+            if (remote) |r| {
+                r.connected();
+
                 for (client.viewports.values()) |vp| {
                     vp.event_push(.wake_up);
                 }
             }
         },
         .client_disconnected => |e| {
-            for (client.processes.items) |p| {
-                if (p.uuid == e.client_uuid) {
-                    p.status = .disconnected;
+            for (client.remote_clients.items) |remote| {
+                if (remote.uuid == e.client_uuid) {
+                    remote.status = .disconnected;
                 }
             }
 
@@ -771,7 +768,8 @@ const Viewport = @import("Viewport.zig");
 const RemoteViewport = @import("RemoteViewport.zig");
 const RendererGL = Viewport.RendererGL;
 const RendererCpu = Viewport.RendererCpu;
-const Process = @import("Process.zig");
+const Process = @import("remote_client").Process;
+const RemoteClient = @import("remote_client").RemoteClient;
 const ServerConnection = @import("ServerConnection.zig");
 const os = @import("builtin").os.tag;
 const d11 = @import("win32").graphics.direct3d11;

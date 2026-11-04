@@ -16,6 +16,9 @@ pub const Key = @import("protocol").input.Key;
 pub const KeyState = @import("protocol").input.KeyState;
 pub const MouseButton = @import("protocol").input.MouseButton;
 
+pub const RemoteClient = @import("remote_client").RemoteClient;
+pub const Process = @import("remote_client").Process;
+
 pub fn init(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -139,27 +142,39 @@ pub const ClientHandle = opaque {
         return @ptrCast(vp);
     }
 
-    pub fn process_create(handle: *ClientHandle, argv: []const []const u8) !*ProcessHandle {
+    pub fn remote_client_create(handle: *ClientHandle) !*RemoteClient {
         const client = handle.cast();
 
-        const process: *Process = try .create(client.io, client.gpa, argv, &client.environ_map);
-        errdefer {
-            process.deinit();
-            client.gpa.destroy(process);
-        }
+        try client.remote_clients.ensureUnusedCapacity(client.gpa, 1);
+        const remote = try client.gpa.create(RemoteClient);
 
-        try client.processes.append(client.gpa, process);
+        remote.* = .init(client.io);
+        client.remote_clients.appendAssumeCapacity(remote);
 
-        return @ptrCast(process);
+        return remote;
     }
 
-    pub fn remote_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, process: *ProcessHandle, rect: Rect) !*RemoteViewportHandle {
-        std.debug.assert(process.status() == .connected);
+    pub fn process_init(
+        handle: *ClientHandle,
+        argv: []const []const u8,
+    ) !Process {
+        const client = handle.cast();
+        return .init(
+            client.io,
+            client.gpa,
+            argv,
+            &client.environ_map,
+            client.environ_map.get(constants.env_agce_socket_path),
+        );
+    }
+
+    pub fn remote_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, remote: *RemoteClient, rect: Rect) !*RemoteViewportHandle {
+        std.debug.assert(remote.status == .connected);
         const client = handle.cast();
         const vp = viewport.cast();
 
         return @ptrCast(
-            try client.remote_viewport_embed(vp.id, process.cast().uuid, rect),
+            try client.remote_viewport_embed(vp.id, remote.uuid, rect),
         );
     }
 
@@ -531,38 +546,6 @@ pub const RemoteViewportHandle = opaque {
     }
 };
 
-pub const ProcessHandle = opaque {
-    fn cast(handle: *ProcessHandle) *Process {
-        return @ptrCast(@alignCast(handle));
-    }
-
-    pub fn status(handle: *ProcessHandle) Process.Status {
-        return handle.cast().status;
-    }
-
-    pub fn spawn(handle: *ProcessHandle, options: Process.SpawnOptions) !void {
-        return handle.cast().spawn(options);
-    }
-
-    pub fn kill(handle: *ProcessHandle) void {
-        const process = handle.cast();
-        if (!process.deinited) {
-            process.deinit();
-        }
-    }
-
-    pub fn wait(handle: *ProcessHandle) std.process.Child.WaitError!std.process.Child.Term {
-        const process = handle.cast();
-        std.debug.assert(process.child != null);
-        const result = process.child.?.wait(process.io);
-
-        process.child = null;
-        process.deinit();
-
-        return result;
-    }
-};
-
 const std = @import("std");
 const Io = std.Io;
 const ptypes = @import("protocol").types;
@@ -574,7 +557,6 @@ const RendererCpu = Viewport.RendererCpu;
 const RendererD11 = Viewport.RendererD11;
 const Viewport = @import("Viewport.zig");
 const RemoteViewport = @import("RemoteViewport.zig");
-const Process = @import("Process.zig");
 const constants = @import("constants");
 const log = std.log.scoped(.agce);
 const win32 = @import("win32");

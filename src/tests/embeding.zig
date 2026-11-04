@@ -59,15 +59,17 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
 
     const vp = try handle.viewport_create(.cpu, .{ .width = 720, .height = 720 }, false);
 
-    const child = try handle.process_create(&.{path});
-    try child.spawn(.{ .stdout = .inherit, .stderr = .inherit });
-    while (child.status() != .connected) {
+    const remote = try handle.remote_client_create();
+    var child = try handle.process_init(&.{path});
+
+    try child.spawn(remote, .{ .stdout = .inherit, .stderr = .inherit });
+    while (remote.status != .connected) {
         try handle.poll(std.math.maxInt(u64));
     }
 
     const rvp_width = @divFloor(vp.size().width, 3) * 2;
     const rvp_height = @divFloor(vp.size().height, 3) * 2;
-    const remote_viewport = try handle.remote_viewport_embed(vp, child, .{
+    const remote_viewport = try handle.remote_viewport_embed(vp, remote, .{
         .x = 100,
         .y = 100,
         .width = rvp_width,

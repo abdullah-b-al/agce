@@ -83,6 +83,16 @@ pub fn build(b: *std.Build) !void {
         break :blk module;
     };
 
+    const remote_client = b.createModule(.{
+        .root_source_file = b.path("src/remote_client/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "protocol", .module = protocol },
+            .{ .name = "constants", .module = constants },
+        },
+    });
+
     const d3d = blk: {
         if (target.result.os.tag != .windows) break :blk null;
 
@@ -111,6 +121,7 @@ pub fn build(b: *std.Build) !void {
                 .{ .name = "constants", .module = constants },
                 .{ .name = "known-folders", .module = known_folders },
                 .{ .name = "uuid", .module = uuid },
+                .{ .name = "remote_client", .module = remote_client },
             },
         });
 
@@ -195,6 +206,7 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "constants", .module = constants },
             .{ .name = "zio", .module = zio },
             .{ .name = "compositor", .module = compositor },
+            .{ .name = "remote_client", .module = remote_client },
         },
     });
 
@@ -276,6 +288,7 @@ fn build_tests(
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "client", .module = client },
+                .{ .name = "constants", .module = constants },
             },
         });
 

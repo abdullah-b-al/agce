@@ -1,4 +1,5 @@
 const Embeded = @This();
+
 gpa: std.mem.Allocator,
 rt: *zio.Runtime,
 
@@ -7,6 +8,8 @@ windows: std.array_hash_map.Auto(WindowID, Window),
 com: *compositor.CompositorHandle,
 tick_thread_handle: zio.JoinHandle(void),
 tick_thread_exit: *Io.Event,
+
+remote_clients: std.ArrayList(*RemoteClient),
 
 connection: LocalConnection,
 
@@ -69,8 +72,10 @@ pub fn create(
         .com = com,
         .rt = rt,
         .windows = .empty,
-        .tick_thread_handle = thread_handle,
+        .remote_clients = .empty,
         .connection = connection,
+
+        .tick_thread_handle = thread_handle,
         .tick_thread_exit = exit_event,
     };
 
@@ -89,9 +94,23 @@ pub fn destroy(em: *Embeded) void {
     em.connection.stream.close();
     em.rt.deinit();
 
+    for (em.remote_clients.items) |ptr| em.gpa.destroy(ptr);
+
+    em.remote_clients.deinit(em.gpa);
     em.windows.deinit(em.gpa);
+
     em.gpa.destroy(em.tick_thread_exit);
     em.gpa.destroy(em);
+}
+
+pub fn remote_client_create(em: *Embeded) !*RemoteClient {
+    try em.remote_clients.ensureUnusedCapacity(em.gpa, 1);
+    const remote = try em.gpa.create(RemoteClient);
+
+    remote.* = .init(em.rt.io());
+    em.remote_clients.appendAssumeCapacity(remote);
+
+    return remote;
 }
 
 fn tick_thread(com: *compositor.CompositorHandle, exit: *Io.Event) void {
@@ -147,3 +166,5 @@ const WindowID = Compositor.WindowID;
 const zio = @import("zio");
 const LocalConnection = @import("LocalConnection.zig");
 const log = std.log.scoped(.agce_embeded);
+const RemoteClient = @import("remote_client").RemoteClient;
+const Process = @import("remote_client").Process;
