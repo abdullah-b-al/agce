@@ -134,16 +134,6 @@ pub fn remote_client_destroy(em: *Embeded, remote: *RemoteClient) void {
     }
 }
 
-pub fn process_init(
-    em: *Embeded,
-    io: Io,
-    gpa: std.mem.Allocator,
-    argv: []const []const u8,
-    environ_map: *const std.process.Environ.Map,
-) !Process {
-    return try .init(io, gpa, argv, environ_map, em.com.socket_path());
-}
-
 pub fn window_add(em: *Embeded, new: *anyopaque, size: ptypes.Size) !void {
     for (em.windows.values()) |win| {
         const this: *anyopaque = @ptrCast(win.handle);
@@ -158,8 +148,8 @@ pub fn window_add(em: *Embeded, new: *anyopaque, size: ptypes.Size) !void {
     );
 }
 
-pub fn remote_viewport_embed(em: *Embeded, remote: *RemoteClient, handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
-    const window_id = em.window_id_from_handle(@ptrCast(handle)) orelse return error.WindowDoesNotExist;
+pub fn remote_viewport_embed(em: *Embeded, remote: *RemoteClient, window_handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
+    const window_id = em.window_id_from_handle(@ptrCast(window_handle)) orelse return error.WindowDoesNotExist;
 
     try em.remote_viewports.ensureUnusedCapacity(em.gpa, 1);
 
