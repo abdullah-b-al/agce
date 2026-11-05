@@ -82,7 +82,7 @@ pub const CompositorHandle = opaque {
         });
     }
 
-    pub fn tick(h: *CompositorHandle, poll_result: Poll) !void {
+    pub fn tick(h: *CompositorHandle, poll_result: polling.Poll) !void {
         const com = h.cast();
 
         defer _ = com.tick_arena.reset(.{ .retain_with_limit = 1024 * 1024 });
@@ -142,252 +142,16 @@ pub const CompositorHandle = opaque {
         com.flush(compositor_events);
     }
 
-    const Poll = struct {
-        dispatch: bool,
-        accept: bool,
-        clients: []Server.MessageSource,
-    };
-
     pub fn poll(
         h: *CompositorHandle,
         timeout: Io.Timeout,
-    ) error{ OutOfMemory, PollFailed, Timeout }!Poll {
+    ) error{ OutOfMemory, PollFailed, Timeout }!polling.Poll {
         std.debug.assert(timeout != .deadline);
         const com = h.cast();
         const server = com.server;
         const arena = com.tick_arena.allocator();
 
-        return switch (os) {
-            .linux => try poll_linux(arena, com, server, timeout),
-            .windows => try poll_windows(arena, com, server, timeout),
-            else => comptime unreachable,
-        };
-    }
-
-    fn poll_linux(
-        arena: std.mem.Allocator,
-        com: *Compositor,
-        server: *const Server,
-        timeout: Io.Timeout,
-    ) !Poll {
-        std.debug.assert(timeout != .deadline);
-
-        const Pollfd, const POLL = .{ std.os.linux.pollfd, std.os.linux.POLL };
-
-        const fds_len = server.clients.count() + 2;
-        const fds = try arena.alloc(Pollfd, fds_len);
-        var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
-
-        const events = POLL.IN | POLL.HUP;
-
-        for (fds) |*fd| {
-            fd.* = .{
-                .fd = -1,
-                .events = events,
-                .revents = 0,
-            };
-        }
-
-        var i: usize = 0;
-
-        const display_i = i;
-        switch (com.native_tag()) {
-            .wayland => |tag| {
-                const wl = tag.compositor(com);
-                const display_fd = wl.display.getFd();
-                fds[i].fd = display_fd;
-                i += 1;
-            },
-            else => unreachable,
-        }
-
-        const server_socket_i = i;
-        {
-            fds[i].fd = server.server.socket.handle;
-            i += 1;
-        }
-
-        const known_i = i;
-        for (server.clients.known.values()) |c| {
-            fds[i].fd = c.connection.stream.socket.handle;
-            i += 1;
-        }
-
-        const unknown_i = i;
-        for (server.clients.unknown.items) |c| {
-            fds[i].fd = c.connection.stream.socket.handle;
-            i += 1;
-        }
-
-        const local_i = i;
-        for (server.clients.local.values()) |c| {
-            fds[i].fd = c.connection.stream.socket.handle;
-            i += 1;
-        }
-
-        std.debug.assert(i == fds.len);
-
-        const ms: i32 = switch (timeout) {
-            .none => std.math.maxInt(i32),
-            .duration => |d| @truncate(d.raw.toMilliseconds()),
-            .deadline => unreachable,
-        };
-        const poll_result: isize = @bitCast(std.os.linux.poll(fds.ptr, fds.len, ms));
-
-        if (poll_result == 0) return error.Timeout;
-
-        if (poll_result < 0) {
-            return error.PollFailed;
-        }
-
-        for (server.clients.known.values(), 0..) |client, ci| {
-            const fd = fds[known_i + ci];
-            if ((fd.revents & events) != 0) {
-                clients.appendAssumeCapacity(.{ .known = client.id });
-            }
-        }
-
-        for (server.clients.unknown.items, 0..) |_, ci| {
-            const fd = fds[unknown_i + ci];
-            if ((fd.revents & events) != 0) {
-                clients.appendAssumeCapacity(.{ .unknown = ci });
-            }
-        }
-
-        for (server.clients.local.values(), 0..) |client, ci| {
-            const fd = fds[local_i + ci];
-            if ((fd.revents & events) != 0) {
-                clients.appendAssumeCapacity(.{ .local = client.id });
-            }
-        }
-
-        const compositor = (fds[display_i].revents & POLL.IN) != 0;
-        const accept = (fds[server_socket_i].revents & POLL.IN) != 0;
-        return .{
-            .dispatch = compositor,
-            .accept = accept,
-            .clients = clients.items,
-        };
-    }
-
-    fn poll_windows(
-        arena: std.mem.Allocator,
-        _: *Compositor,
-        server: *const Server,
-        timeout: Io.Timeout,
-    ) !Poll {
-        const events_len = server.clients.count() + 1;
-        const events = try arena.alloc(*anyopaque, events_len);
-        var clients: std.ArrayList(Server.MessageSource) = try .initCapacity(arena, server.clients.count());
-        var i: usize = 0;
-
-        const server_socket_i = i;
-        {
-            events[i] = server.win32_event_handle.handle;
-            i += 1;
-        }
-
-        const known_i = i;
-        for (server.clients.known.values()) |c| {
-            events[i] = c.connection.win32_event_handle.handle;
-            i += 1;
-        }
-
-        const unknown_i = i;
-        for (server.clients.unknown.items) |c| {
-            events[i] = c.connection.win32_event_handle.handle;
-            i += 1;
-        }
-
-        const local_i = i;
-        for (server.clients.local.values()) |c| {
-            events[i] = c.connection.win32_event_handle.handle;
-            i += 1;
-        }
-
-        std.debug.assert(i == events.len);
-
-        const to: u32 = switch (timeout) {
-            .deadline => unreachable,
-            .duration => |d| @intCast(d.raw.toMilliseconds()),
-            .none => win32_programming.INFINITE,
-        };
-
-        const result = win32_win.MsgWaitForMultipleObjectsEx(
-            @intCast(events.len),
-            events.ptr,
-            to,
-            win32_win.QS_ALLINPUT,
-            win32_win.MWMO_INPUTAVAILABLE,
-        );
-
-        const WAIT_OBJECT_0: u32 = @intFromEnum(win32_foundation.WAIT_OBJECT_0);
-        const signaled: enum { socket, window } =
-            if (result >= WAIT_OBJECT_0 and result < WAIT_OBJECT_0 + events.len)
-                .socket
-            else if (result == WAIT_OBJECT_0 + events.len)
-                .window
-            else if (result == @intFromEnum(win32_foundation.WAIT_TIMEOUT))
-                return error.Timeout
-            else if (result == @intFromEnum(win32_foundation.WAIT_FAILED)) {
-                const err = win32_foundation.GetLastError();
-                log.err("Wait failed {}", .{err});
-                return error.PollFailed;
-            } else @panic("Unknown value");
-
-        switch (signaled) {
-            .socket => {
-                for (server.clients.known.values(), 0..) |client, ci| {
-                    const event = events[known_i + ci];
-                    if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
-                        clients.appendAssumeCapacity(.{ .known = client.id });
-                        std.debug.assert(
-                            win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
-                        );
-                    }
-                }
-
-                for (server.clients.unknown.items, 0..) |_, ci| {
-                    const event = events[unknown_i + ci];
-                    if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
-                        clients.appendAssumeCapacity(.{ .unknown = ci });
-                        std.debug.assert(
-                            win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
-                        );
-                    }
-                }
-
-                for (server.clients.local.values(), 0..) |client, ci| {
-                    const event = events[local_i + ci];
-                    if (@intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0) {
-                        clients.appendAssumeCapacity(.{ .local = client.id });
-                        std.debug.assert(
-                            win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
-                        );
-                    }
-                }
-
-                const accept = blk: {
-                    const event = events[server_socket_i];
-                    const accept = @intFromEnum(win32_threading.WaitForSingleObject(event, 0)) == WAIT_OBJECT_0;
-                    if (accept) {
-                        std.debug.assert(
-                            win_sock.WSAResetEvent(event) == @intFromEnum(std.os.windows.BOOL.TRUE),
-                        );
-                    }
-                    break :blk accept;
-                };
-
-                return .{
-                    .clients = clients.items,
-                    .accept = accept,
-                    .dispatch = false,
-                };
-            },
-            .window => {
-                return .{ .clients = &.{}, .accept = false, .dispatch = true };
-            },
-        }
+        return try polling.poll(arena, com, server, timeout);
     }
 };
 
@@ -402,3 +166,5 @@ const win32_threading = @import("win32").system.threading;
 const win_sock = @import("win32").networking.win_sock;
 const os = @import("builtin").os.tag;
 const ptypes = @import("protocol").types;
+const ClientConnection = @import("server/ClientConnection.zig");
+const polling = @import("polling.zig");
