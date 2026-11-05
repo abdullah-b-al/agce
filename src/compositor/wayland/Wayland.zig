@@ -376,25 +376,29 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
     const wl = com.linux.wayland;
     const ws_event: Event = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
-            const surface = e.surface orelse {
+            const surface = e.surface orelse return;
+
+            if (viewport_key_from_surface(com, surface)) |key| {
+                if (tag == .enter) {
+                    const rs = com.resources.getPtr(key.client_uuid).?;
+                    const viewport = rs.viewports.get(key.viewport_id).?;
+                    const wl_vp = &viewport.linux.wayland;
+
+                    wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
+                }
+
+                break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
+                    .viewport_key = key,
+                });
+            } else {
+                // Assume this is a surface that does not belong to us
+                if (tag == .enter) {
+                    const key = com.input_focus_mouse orelse return;
+                    break :blk .{ .mouse_leave = .{ .viewport_key = key } };
+                }
+
                 return;
-            };
-
-            const key, _ = viewport_from_surface(com, surface) orelse {
-                return;
-            };
-
-            if (tag == .enter) {
-                const rs = com.resources.getPtr(key.client_uuid).?;
-                const viewport = rs.viewports.get(key.viewport_id).?;
-                const wl_vp = &viewport.linux.wayland;
-
-                wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
             }
-
-            break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
-                .viewport_key = key,
-            });
         },
         .motion => |e| .{
             .mouse_motion = .{
@@ -458,8 +462,8 @@ pub fn window_id_from_toplevel(com: *const Compositor, tl: *xdg.Toplevel) Window
     unreachable;
 }
 
-pub fn viewport_key_from_surface(wl: *const Wayland, surface: *cwl.Surface) ?ViewportKey {
-    const key, _ = wl.viewport_from_surface(surface) orelse return null;
+pub fn viewport_key_from_surface(com: *const Compositor, surface: *cwl.Surface) ?ViewportKey {
+    const key, _ = viewport_from_surface(com, surface) orelse return null;
 
     return key;
 }
