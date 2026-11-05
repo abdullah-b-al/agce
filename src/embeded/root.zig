@@ -34,6 +34,14 @@ pub const EmbededHandle = opaque {
         try h.cast().window_add(new, size);
     }
 
+    pub fn window_update_size(h: *EmbededHandle, window_handle: *anyopaque, size: Size) void {
+        const win = h.cast().window_from_handle(@ptrCast(window_handle)) orelse {
+            log.err("Window does not exist {*}", .{window_handle});
+            return;
+        };
+        win.size = size;
+    }
+
     pub fn remote_client_create(h: *EmbededHandle) !*RemoteClient {
         return try h.cast().remote_client_create();
     }
@@ -187,3 +195,4 @@ const compositor = @import("compositor");
 const zio = @import("zio");
 const LocalConnection = @import("LocalConnection.zig");
 const ptypes = @import("protocol").types;
+const log = std.log.scoped(.agce_embeded);

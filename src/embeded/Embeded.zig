@@ -193,6 +193,14 @@ fn window_id_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?Window
     return null;
 }
 
+pub fn window_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?*Window {
+    for (em.windows.values()) |*win| {
+        if (win.handle == handle) return win;
+    }
+
+    return null;
+}
+
 pub fn poll(em: *Embeded) void {
     var arena: std.heap.ArenaAllocator = .init(em.gpa);
     defer arena.deinit();

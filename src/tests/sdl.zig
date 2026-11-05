@@ -9,13 +9,16 @@ pub fn main(init: std.process.Init) !void {
         return error.SDLInitFailed;
     }
 
-    const window = sdl.SDL_CreateWindow("agce-in-sdl", 512, 512, 0) orelse return error.FailedToCreateWindow;
+    const init_width = 512;
+    const init_height = 512;
+
+    const window = sdl.SDL_CreateWindow("agce-in-sdl", init_width, init_height, sdl.SDL_WINDOW_RESIZABLE) orelse return error.FailedToCreateWindow;
     const renderer = sdl.SDL_CreateRenderer(window, null) orelse return error.FailedToCreateRenderer;
 
     const pid = sdl.SDL_GetWindowProperties(window);
     const display = sdl.SDL_GetPointerProperty(pid, sdl.SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, null) orelse return error.NoWaylandDisplayPointer;
-    const surface = sdl.SDL_GetPointerProperty(pid, sdl.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, null) orelse return error.NoWaylandSurfacePointer;
-    std.log.debug("Got wayland display {} surface {}", .{ display, surface });
+    const window_ptr = window_handle_from_sdl_window(window).?;
+    std.log.debug("Got wayland display {} surface {}", .{ display, window_ptr });
 
     const eh: *embeded.EmbededHandle = try .create(
         init.gpa,
@@ -26,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
     );
     defer eh.destroy();
 
-    try eh.window_add(surface, .{ .width = 512, .height = 512 });
+    try eh.window_add(window_ptr, .{ .width = init_width, .height = init_height });
 
     const remote = try eh.remote_client_create();
     defer eh.remote_client_destroy(remote);
@@ -48,7 +51,7 @@ pub fn main(init: std.process.Init) !void {
         eh.poll();
     }
 
-    const remote_vp = try eh.remote_viewport_embed(remote, surface, .{
+    const remote_vp = try eh.remote_viewport_embed(remote, window_ptr, .{
         .x = 100,
         .y = 100,
         .width = 250,
@@ -62,10 +65,10 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         var event: sdl.SDL_Event = undefined;
         if (sdl.SDL_WaitEvent(&event)) {
-            if (handle_event(event, remote_vp) == .exit) return;
+            if (handle_event(event, eh, remote_vp) == .exit) return;
 
             while (sdl.SDL_PollEvent(&event)) {
-                if (handle_event(event, remote_vp) == .exit) return;
+                if (handle_event(event, eh, remote_vp) == .exit) return;
             }
         }
 
@@ -78,16 +81,57 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const HandleEvent = enum { exit, run };
-fn handle_event(event: sdl.SDL_Event, remote_vp: *embeded.RemoteViewportHandle) HandleEvent {
+fn handle_event(
+    event: sdl.SDL_Event,
+    eh: *embeded.EmbededHandle,
+    remote_vp: *embeded.RemoteViewportHandle,
+) HandleEvent {
     if (event.type == sdl.SDL_EVENT_QUIT) {
         return .exit;
     }
 
-    if (event.type == sdl.SDL_EVENT_MOUSE_BUTTON_DOWN) {
-        remote_vp.send_close() catch return .exit;
+    switch (event.type) {
+        sdl.SDL_EVENT_QUIT => return .exit,
+        sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+            if (event.button.clicks > 1) {
+                remote_vp.pos_set(.{
+                    .x = @trunc(event.button.x),
+                    .y = @trunc(event.button.y),
+                }) catch return .exit;
+            }
+        },
+        sdl.SDL_EVENT_WINDOW_RESIZED => {
+            const width = event.window.data1;
+            const height = event.window.data2;
+
+            remote_vp.size_set(.{
+                .width = @divFloor(width, 3) * 2,
+                .height = @divFloor(height, 3) * 2,
+            }) catch return .exit;
+
+            const window = sdl.SDL_GetWindowFromID(event.window.windowID) orelse return .exit;
+            const ptr = window_handle_from_sdl_window(window).?;
+            eh.window_update_size(ptr, .{ .width = width, .height = height });
+        },
+        else => {},
     }
 
     return .run;
+}
+
+fn window_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
+    const pid = sdl.SDL_GetWindowProperties(window);
+
+    const driver_name = sdl.SDL_GetCurrentVideoDriver();
+    const driver = driver_name[0..std.mem.len(driver_name)];
+    const pointer_name = if (std.mem.eql(u8, driver, "wayland"))
+        sdl.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER
+    else
+        @panic("Unknown driver");
+    const ptr = sdl.SDL_GetPointerProperty(pid, pointer_name, null) orelse
+        return null;
+
+    return ptr;
 }
 
 const std = @import("std");
