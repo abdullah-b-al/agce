@@ -390,7 +390,6 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
                 const wl_vp = &viewport.linux.wayland;
 
                 wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
-                wl_vp.pointer.set_shape(.default);
             }
 
             break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
