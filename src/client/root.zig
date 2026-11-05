@@ -154,6 +154,17 @@ pub const ClientHandle = opaque {
         return remote;
     }
 
+    pub fn remote_client_destroy(handle: *ClientHandle, remote: *RemoteClient) void {
+        const client = handle.cast();
+        for (client.remote_clients.items, 0..) |r, i| {
+            if (r == remote) {
+                _ = client.remote_clients.swapRemove(i);
+                client.gpa.destroy(remote);
+                return;
+            }
+        }
+    }
+
     pub fn process_init(
         handle: *ClientHandle,
         argv: []const []const u8,

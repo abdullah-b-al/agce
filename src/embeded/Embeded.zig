@@ -182,6 +182,16 @@ pub fn remote_client_create(em: *Embeded) !*RemoteClient {
     return remote;
 }
 
+pub fn remote_client_destroy(em: *Embeded, remote: *RemoteClient) void {
+    for (em.remote_clients.items, 0..) |r, i| {
+        if (r == remote) {
+            _ = em.remote_clients.swapRemove(i);
+            em.gpa.destroy(remote);
+            return;
+        }
+    }
+}
+
 pub fn process_init(
     em: *Embeded,
     io: Io,
