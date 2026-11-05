@@ -32,7 +32,7 @@ pub fn create(
     errdefer gpa.destroy(exit_event);
     exit_event.* = .unset;
 
-    const rt = try zio.Runtime.init(gpa, .{
+    const rt = try zio.Runtime.init(std.heap.smp_allocator, .{
         .executors = .exact(2),
         .enable_main_executor = true,
     });
@@ -101,7 +101,10 @@ pub fn destroy(em: *Embeded) void {
     em.tick_thread_handle.join();
     em.com.destroy();
     em.connection.stream.close();
-    em.rt.deinit();
+
+    // Deiniting zio causes a task count assertion to trigger, and I don't know why.
+    // TODO: Deinit zio
+    // em.rt.deinit();
 
     for (em.remote_viewports.values()) |ptr| em.gpa.destroy(ptr);
     for (em.remote_clients.items) |ptr| em.gpa.destroy(ptr);
