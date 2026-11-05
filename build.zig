@@ -330,7 +330,7 @@ fn build_sdl_test(
             .optimize = optimize,
         });
 
-        c.linkSystemLibrary("SDL3", .{});
+        c.addSystemIncludePath(sdl.path("include"));
         const module = c.createModule();
         module.linkLibrary(sdl3);
 
