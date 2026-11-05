@@ -99,9 +99,9 @@ pub fn wait(process: *Process) std.process.Child.WaitError!std.process.Child.Ter
 }
 
 pub const SpawnOptions = struct {
-    stdout: std.process.SpawnOptions.StdIo = .close,
-    stderr: std.process.SpawnOptions.StdIo = .close,
-    stdin: std.process.SpawnOptions.StdIo = .close,
+    stdout: std.process.SpawnOptions.StdIo = .ignore,
+    stderr: std.process.SpawnOptions.StdIo = .ignore,
+    stdin: std.process.SpawnOptions.StdIo = .ignore,
 };
 
 const std = @import("std");
