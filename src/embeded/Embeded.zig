@@ -6,12 +6,15 @@ rt: *zio.Runtime,
 registered: bool,
 
 windows: std.array_hash_map.Auto(WindowID, Window),
+next_window_id: WindowID,
+next_remote_viewport_id: ptypes.RemoteViewportID,
 
 com: *compositor.CompositorHandle,
 tick_thread_handle: zio.JoinHandle(void),
 tick_thread_exit: *Io.Event,
 
 remote_clients: std.ArrayList(*RemoteClient),
+remote_viewports: std.array_hash_map.Auto(ptypes.RemoteViewportID, *RemoteViewport),
 
 connection: LocalConnection,
 
@@ -64,10 +67,14 @@ pub fn create(
         .gpa = gpa,
         .com = com,
         .registered = false,
+        .next_window_id = .first,
+        .next_remote_viewport_id = .first,
         .rt = rt,
         .windows = .empty,
-        .remote_clients = .empty,
         .connection = .{ .uuid = .new(io), .stream = stream, .format = .json },
+
+        .remote_clients = .empty,
+        .remote_viewports = .empty,
 
         .tick_thread_handle = thread_handle,
         .tick_thread_exit = exit_event,
@@ -95,13 +102,103 @@ pub fn destroy(em: *Embeded) void {
     em.connection.stream.close();
     em.rt.deinit();
 
+    for (em.remote_viewports.values()) |ptr| em.gpa.destroy(ptr);
     for (em.remote_clients.items) |ptr| em.gpa.destroy(ptr);
 
+    em.remote_viewports.deinit(em.gpa);
     em.remote_clients.deinit(em.gpa);
+
     em.windows.deinit(em.gpa);
 
     em.gpa.destroy(em.tick_thread_exit);
     em.gpa.destroy(em);
+}
+
+pub fn remote_client_create(em: *Embeded) !*RemoteClient {
+    try em.remote_clients.ensureUnusedCapacity(em.gpa, 1);
+    const remote = try em.gpa.create(RemoteClient);
+
+    remote.* = .init(em.rt.io());
+    em.remote_clients.appendAssumeCapacity(remote);
+
+    return remote;
+}
+
+pub fn remote_client_destroy(em: *Embeded, remote: *RemoteClient) void {
+    for (em.remote_clients.items, 0..) |r, i| {
+        if (r == remote) {
+            _ = em.remote_clients.swapRemove(i);
+            em.gpa.destroy(remote);
+            return;
+        }
+    }
+}
+
+pub fn process_init(
+    em: *Embeded,
+    io: Io,
+    gpa: std.mem.Allocator,
+    argv: []const []const u8,
+    environ_map: *const std.process.Environ.Map,
+) !Process {
+    return try .init(io, gpa, argv, environ_map, em.com.socket_path());
+}
+
+pub fn window_add(em: *Embeded, new: *anyopaque, size: ptypes.Size) !void {
+    for (em.windows.values()) |win| {
+        const this: *anyopaque = @ptrCast(win.handle);
+        if (new == this) return;
+    }
+
+    try em.windows.ensureUnusedCapacity(em.gpa, 1);
+
+    em.windows.putAssumeCapacityNoClobber(
+        em.next_window_id.increment(),
+        .{ .handle = @ptrCast(new), .size = size },
+    );
+}
+
+pub fn remote_viewport_embed(em: *Embeded, remote: *RemoteClient, handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
+    const window_id = em.window_id_from_handle(@ptrCast(handle)) orelse return error.WindowDoesNotExist;
+
+    try em.remote_viewports.ensureUnusedCapacity(em.gpa, 1);
+
+    const remote_vp = try em.gpa.create(RemoteViewport);
+    errdefer em.gpa.destroy(remote_vp);
+
+    remote_vp.* = .init(
+        window_id,
+        em.next_remote_viewport_id.increment(),
+        rect,
+    );
+
+    em.com.io_queue().putOneUncancelable(em.rt.io(), .{
+        .remote_viewport_embed_with_window = .{
+            .client_uuid = em.connection.uuid,
+            .payload = .{
+                .client_uuid_to_embed = remote.uuid,
+                .remote_viewport_id = remote_vp.id,
+                .window_id = window_id,
+                .rect = rect,
+            },
+        },
+    }) catch |err| switch (err) {
+        error.Closed => unreachable,
+    };
+
+    try em.connection.send_queue_pop(em.rt.io(), em.gpa);
+
+    em.remote_viewports.putAssumeCapacityNoClobber(remote_vp.id, remote_vp);
+
+    return remote_vp;
+}
+
+fn window_id_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?WindowID {
+    for (em.windows.keys(), em.windows.values()) |id, win| {
+        if (win.handle == handle) return id;
+    }
+
+    return null;
 }
 
 pub fn poll(em: *Embeded) void {
@@ -167,41 +264,22 @@ pub fn poll(em: *Embeded) void {
                     }
                 }
             },
+            .remote_viewport_embeded => |m| {
+                const rvp = em.remote_viewports.get(m.remote_viewport_id) orelse
+                    continue;
+
+                switch (m.status) {
+                    .success => {
+                        rvp.state = .{ .shown = m.viewport_key };
+                        rvp.render_size = m.render_size;
+                    },
+                    .failure => rvp.state = .failed,
+                }
+            },
             else => {},
         }
     }
 }
-
-pub fn remote_client_create(em: *Embeded) !*RemoteClient {
-    try em.remote_clients.ensureUnusedCapacity(em.gpa, 1);
-    const remote = try em.gpa.create(RemoteClient);
-
-    remote.* = .init(em.rt.io());
-    em.remote_clients.appendAssumeCapacity(remote);
-
-    return remote;
-}
-
-pub fn remote_client_destroy(em: *Embeded, remote: *RemoteClient) void {
-    for (em.remote_clients.items, 0..) |r, i| {
-        if (r == remote) {
-            _ = em.remote_clients.swapRemove(i);
-            em.gpa.destroy(remote);
-            return;
-        }
-    }
-}
-
-pub fn process_init(
-    em: *Embeded,
-    io: Io,
-    gpa: std.mem.Allocator,
-    argv: []const []const u8,
-    environ_map: *const std.process.Environ.Map,
-) !Process {
-    return try .init(io, gpa, argv, environ_map, em.com.socket_path());
-}
-
 fn tick_thread(com: *compositor.CompositorHandle, exit: *Io.Event) void {
     while (!exit.isSet()) {
         const poll_result = com.poll(.none) catch |err| {
@@ -229,8 +307,9 @@ const mux_interface = struct {
         @panic("TODO");
     }
 
-    fn window_id_from_handle(_: *anyopaque, _: *Compositor.WindowHandle) ?WindowID {
-        @panic("TODO");
+    fn window_id_from_handle(ptr: *anyopaque, handle: *Compositor.WindowHandle) ?WindowID {
+        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        return em.window_id_from_handle(handle);
     }
 
     fn window_handle_from_id(ptr: *anyopaque, id: WindowID) ?*Compositor.WindowHandle {
@@ -257,3 +336,4 @@ const LocalConnection = @import("LocalConnection.zig");
 const log = std.log.scoped(.agce_embeded);
 const RemoteClient = @import("remote_client").RemoteClient;
 const Process = @import("remote_client").Process;
+const RemoteViewport = @import("RemoteViewport.zig");

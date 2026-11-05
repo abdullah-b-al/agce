@@ -1,5 +1,6 @@
 pub const Embeded = @import("Embeded.zig");
 pub const Native = @import("Embeded.zig").Native;
+pub const RemoteViewport = @import("RemoteViewport.zig");
 pub const Process = @import("remote_client").Process;
 pub const RemoteClient = @import("remote_client").RemoteClient;
 

@@ -312,10 +312,14 @@ pub fn handle_event(
         },
 
         inline else => |e, tag| {
-            const client = server.clients.known.get(e.client_uuid) orelse return;
+            const connection: *ClientConnection = blk: {
+                if (server.clients.known.get(e.client_uuid)) |known| break :blk &known.connection;
+                if (server.clients.local.get(e.client_uuid)) |local| break :blk &local.connection;
+                return;
+            };
 
             const send = @field(ClientConnection, "send_" ++ @tagName(tag));
-            send(&client.connection, server.io, server.gpa, e.payload) catch
+            send(connection, server.io, server.gpa, e.payload) catch
                 return error.ConnectionClosed;
         },
     }
