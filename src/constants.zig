@@ -22,5 +22,10 @@ pub const os_supports_fd = switch (os) {
     else => false,
 };
 
+pub const os_supports_wayland = switch (os) {
+    .linux => true,
+    else => false,
+};
+
 const net = @import("std").Io.net;
 const os = @import("builtin").os.tag;

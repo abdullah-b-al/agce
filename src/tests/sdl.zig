@@ -1,3 +1,9 @@
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
+        .{ .scope = .zio, .level = .info },
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const program = blk: {
         var iter = try init.minimal.args.iterateAllocator(init.arena.allocator());
@@ -15,8 +21,7 @@ pub fn main(init: std.process.Init) !void {
     const window = sdl.SDL_CreateWindow("agce-in-sdl", init_width, init_height, sdl.SDL_WINDOW_RESIZABLE) orelse return error.FailedToCreateWindow;
     const renderer = sdl.SDL_CreateRenderer(window, null) orelse return error.FailedToCreateRenderer;
 
-    const pid = sdl.SDL_GetWindowProperties(window);
-    const display = sdl.SDL_GetPointerProperty(pid, sdl.SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, null) orelse return error.NoWaylandDisplayPointer;
+    const display = display_handle_from_sdl_window(window).?;
     const window_ptr = window_handle_from_sdl_window(window).?;
     std.log.debug("Got wayland display {} surface {}", .{ display, window_ptr });
 
@@ -24,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
         init.gpa,
         init.environ_map,
         display,
-        .wayland_display,
+        embeded_native_from_driver(),
         "sdl_test",
     );
     defer eh.destroy();
@@ -43,8 +48,8 @@ pub fn main(init: std.process.Init) !void {
     defer process.deinit();
 
     try process.spawn(remote, .{
-        .stderr = .inherit,
-        .stdout = .inherit,
+        .stderr = .ignore,
+        .stdout = .ignore,
     });
 
     while (remote.status == .pending) {
@@ -65,10 +70,10 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         var event: sdl.SDL_Event = undefined;
         if (sdl.SDL_WaitEvent(&event)) {
-            if (handle_event(event, eh, remote_vp) == .exit) return;
+            if (handle_event(event, eh, remote_vp) == .exit) break;
 
             while (sdl.SDL_PollEvent(&event)) {
-                if (handle_event(event, eh, remote_vp) == .exit) return;
+                if (handle_event(event, eh, remote_vp) == .exit) break;
             }
         }
 
@@ -78,6 +83,8 @@ pub fn main(init: std.process.Init) !void {
         _ = sdl.SDL_RenderClear(renderer);
         _ = sdl.SDL_RenderPresent(renderer);
     }
+
+    std.log.info("Exiting...", .{});
 }
 
 const HandleEvent = enum { exit, run };
@@ -91,7 +98,10 @@ fn handle_event(
     }
 
     switch (event.type) {
-        sdl.SDL_EVENT_QUIT => return .exit,
+        sdl.SDL_EVENT_QUIT,
+        sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED,
+        => return .exit,
+
         sdl.SDL_EVENT_MOUSE_BUTTON_DOWN => {
             if (event.button.clicks > 1) {
                 remote_vp.pos_set(.{
@@ -122,16 +132,39 @@ fn handle_event(
 fn window_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     const pid = sdl.SDL_GetWindowProperties(window);
 
-    const driver_name = sdl.SDL_GetCurrentVideoDriver();
-    const driver = driver_name[0..std.mem.len(driver_name)];
-    const pointer_name = if (std.mem.eql(u8, driver, "wayland"))
-        sdl.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER
-    else
-        @panic("Unknown driver");
+    const pointer_name = switch (embeded_native_from_driver()) {
+        .wayland_display => sdl.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
+        .win32_instance => sdl.SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+    };
     const ptr = sdl.SDL_GetPointerProperty(pid, pointer_name, null) orelse
         return null;
 
     return ptr;
+}
+
+fn display_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
+    const pid = sdl.SDL_GetWindowProperties(window);
+
+    const pointer_name = switch (embeded_native_from_driver()) {
+        .wayland_display => sdl.SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER,
+        .win32_instance => sdl.SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER,
+    };
+
+    const ptr = sdl.SDL_GetPointerProperty(pid, pointer_name, null) orelse
+        return null;
+
+    return ptr;
+}
+
+fn embeded_native_from_driver() embeded.Native {
+    const driver_name = sdl.SDL_GetCurrentVideoDriver();
+    const driver = driver_name[0..std.mem.len(driver_name)];
+    if (std.mem.eql(u8, driver, "wayland"))
+        return .wayland_display
+    else if (std.mem.eql(u8, driver, "windows"))
+        return .win32_instance
+    else
+        @panic("Unknown driver");
 }
 
 const std = @import("std");

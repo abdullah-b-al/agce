@@ -39,24 +39,33 @@ pub fn create(
     errdefer rt.deinit();
     const io = rt.io();
 
-    const com = switch (native) {
-        .wayland_display => try compositor.CompositorHandle.create_wayland(@ptrCast(ptr), .{
-            .io = io,
-            .gpa = gpa,
-            .environ_map = environ_map,
-            .class = class,
-            .muxi = .{
-                .ptr = em,
-                .vtable = &.{
-                    .window_handle_for_viewport = mux_interface.window_handle_for_viewport,
-                    .window_id_from_handle = mux_interface.window_id_from_handle,
-                    .window_handle_from_id = mux_interface.window_handle_from_id,
-                    .window_size = mux_interface.window_size,
-                    .uuid = mux_interface.uuid,
-                },
+    const create_args: Compositor.CreateArgs = .{
+        .io = io,
+        .gpa = gpa,
+        .environ_map = environ_map,
+        .class = class,
+        .muxi = .{
+            .ptr = em,
+            .vtable = &.{
+                .window_handle_for_viewport = mux_interface.window_handle_for_viewport,
+                .window_id_from_handle = mux_interface.window_id_from_handle,
+                .window_handle_from_id = mux_interface.window_handle_from_id,
+                .window_size = mux_interface.window_size,
+                .uuid = mux_interface.uuid,
             },
-            .socket_owner = .{ .embeded = class },
-        }),
+        },
+        .socket_owner = .{ .embeded = class },
+    };
+
+    const com: *compositor.CompositorHandle = blk: switch (native) {
+        .wayland_display => {
+            if (!constants.os_supports_wayland) return error.OsDoesNotSupportWayland;
+            break :blk try .create_wayland(@ptrCast(ptr), create_args);
+        },
+        .win32_instance => {
+            if (os != .windows) return error.OsIsNotWindows;
+            break :blk try .create_win32(@ptrCast(ptr), create_args);
+        },
     };
     errdefer com.destroy();
 
@@ -99,8 +108,8 @@ pub fn destroy(em: *Embeded) void {
     };
 
     em.tick_thread_handle.join();
-    em.com.destroy();
     em.connection.stream.close();
+    em.com.destroy();
 
     // Deiniting zio causes a task count assertion to trigger, and I don't know why.
     // TODO: Deinit zio
@@ -298,6 +307,7 @@ fn tick_thread(com: *compositor.CompositorHandle, exit: *Io.Event) void {
 
 pub const Native = enum {
     wayland_display,
+    win32_instance,
 };
 
 pub const Window = struct {
@@ -345,3 +355,5 @@ const log = std.log.scoped(.agce_embeded);
 const RemoteClient = @import("remote_client").RemoteClient;
 const Process = @import("remote_client").Process;
 const RemoteViewport = @import("RemoteViewport.zig");
+const constants = @import("constants");
+const os = @import("builtin").os.tag;
