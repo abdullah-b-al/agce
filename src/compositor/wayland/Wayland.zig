@@ -377,12 +377,10 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
     const ws_event: Event = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse {
-                log.warn("Dropping pointer event without a surface {t}", .{tag});
                 return;
             };
 
             const key, _ = viewport_from_surface(com, surface) orelse {
-                log.warn("Dropping pointer event without a viewport {t}", .{tag});
                 return;
             };
 
