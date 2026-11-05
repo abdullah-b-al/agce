@@ -110,7 +110,7 @@ pub fn destroy(mux: *Mux) void {
     switch (native_tag) {
         .wayland => |tag| {
             tag.guard();
-            mux.wayland_objects.deinit();
+            mux.wayland_objects.display.disconnect();
         },
         else => {},
     }
@@ -361,17 +361,6 @@ pub const WaylandObjects = if (os != .linux) void else struct {
     wm_base: *xdg.WmBase,
     viewporter: *wp.Viewporter,
     seat: *cwl.Seat,
-
-    pub fn deinit(wo: *WaylandObjects) void {
-        wo.shm.destroy();
-        wo.compositor.destroy();
-        wo.wm_base.destroy();
-        wo.viewporter.destroy();
-        wo.seat.destroy();
-
-        wo.queue.destroy();
-        wo.display.disconnect();
-    }
 };
 
 pub const Win32 = if (os != .windows) void else struct {

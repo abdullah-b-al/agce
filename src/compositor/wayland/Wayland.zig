@@ -96,18 +96,8 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
 pub fn destroy(wl: *Wayland) void {
     wl.frame_callbacks.deinit(wl.gpa);
 
-    wl.shm.destroy();
-    wl.compositor.destroy();
-    wl.subcompositor.destroy();
-    wl.wm_base.destroy();
-    wl.seat.destroy();
-    wl.dmabuf.destroy();
-    wl.viewporter.destroy();
-    wl.sync_object_manager.destroy();
-
     wl.buffer_listener_pool.deinit(wl.gpa);
     wl.register_gpu_buffer_pool.deinit(wl.gpa);
-    wl.event_queue.destroy();
 
     wl.gpa.destroy(wl);
 }
