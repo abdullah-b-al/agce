@@ -1238,6 +1238,7 @@ pub fn mouse_enter(com: *Compositor, args: @FieldType(Event, "mouse_enter")) !vo
 
 pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !void {
     try com.server_events.ensure_unused_capacity(1);
+    com.input_focus_mouse = null;
     com.server_events.push_assume_capacity(.{
         .mouse_leave = .{
             .client_uuid = args.viewport_key.client_uuid,
