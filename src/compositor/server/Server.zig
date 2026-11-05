@@ -133,24 +133,45 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
-pub fn process_incoming_messages(server: *Server, arena: std.mem.Allocator, poll_result: []const MessageSource) ![]const CompositorEvent {
+pub fn process_incoming_messages(
+    server: *Server,
+    arena: std.mem.Allocator,
+    poll_result: []const polling.ClientResult,
+) ![]const CompositorEvent {
     if (poll_result.len == 0)
         return &.{};
 
     const messages_raw = blk: {
         var messages_raw: std.ArrayList(RawMessage) = .empty;
 
-        for (poll_result) |source| {
+        for (poll_result) |ps| {
+            const source = ps.source;
+
             const connection: *ClientConnection = switch (source) {
+                .unknown => |i| &server.clients.unknown.items[i].connection,
                 .known => |id| &server.clients.known.get(id).?.connection,
-                .unknown => |index| &server.clients.unknown.items[index].connection,
                 .local => |id| &server.clients.local.get(id).?.connection,
             };
 
-            connection.receive_raw_all(server.io, arena, &messages_raw, source) catch |err|
-                switch (err) {
-                    error.OutOfMemory => continue,
-                };
+            switch (ps.event) {
+                .none => continue,
+                .read => {
+                    connection.receive_raw_all(server.io, arena, &messages_raw, source) catch |err|
+                        switch (err) {
+                            error.OutOfMemory => continue,
+                        };
+                },
+                .closed => {
+                    const err = error.ConnectionClosed;
+                    switch (source) {
+                        .unknown => |i| server.mark_for_closing_unknown_client_with(i, err),
+                        .known => |id| server.mark_for_closing_known_client_with(id, err),
+                        .local => |id| server.mark_for_closing_local_client_with(id, err),
+                    }
+
+                    continue;
+                },
+            }
         }
 
         break :blk messages_raw.items;
@@ -485,16 +506,20 @@ pub fn compositor_event_from_message(
 
 pub fn close_clients_marked_with_error(server: *Server) void {
     for (server.clients.known.values()) |client| {
-        if (client.connection.close_with_error) |err| {
-            client.connection.close();
+        const err = client.connection.close_with_error orelse continue;
+        client.connection.close();
 
-            if (err == error.ConnectionClosed) {
-                log.info("Closing client {} with {}", .{ client.id, err });
-            } else {
-                log.err("Closing client {} with {}", .{ client.id, err });
-            }
+        if (err == error.ConnectionClosed) {
+            log.info("Closing known client {f} with {}", .{ client.id, err });
+        } else {
+            log.err("Closing known client {f} with {}", .{ client.id, err });
+        }
 
-            for (server.clients.known.values()) |c| {
+        inline for (&.{
+            server.clients.known.values(),
+            server.clients.local.values(),
+        }) |clients| {
+            for (clients) |c| {
                 if (c.id == client.id or c.connection.closed) continue;
 
                 c.connection.send_client_disconnected(server.io, server.gpa, .{ .client_uuid = client.id }) catch {};
@@ -503,30 +528,27 @@ pub fn close_clients_marked_with_error(server: *Server) void {
     }
 
     for (server.clients.local.values()) |client| {
-        if (client.connection.close_with_error) |err| {
-            client.connection.close();
-            log.err("Closing client local with {}", .{err});
+        const err = client.connection.close_with_error orelse continue;
+        client.connection.close();
 
-            switch (err) {
-                error.MisbehavingUnknownClient => {
-                    log.err("Expected only a register message during register phase", .{});
-                },
-                else => {},
-            }
+        if (err == error.ConnectionClosed) {
+            log.info("Closing local client {f} with {}", .{ client.id, err });
+        } else {
+            log.err("Closing local client {f} with {}", .{ client.id, err });
         }
     }
 
     for (server.clients.unknown.items) |client| {
-        if (client.connection.close_with_error) |err| {
-            client.connection.close();
-            log.err("Closing client unknown with {}", .{err});
+        const err = client.connection.close_with_error orelse continue;
+        client.connection.close();
 
-            switch (err) {
-                error.MisbehavingUnknownClient => {
-                    log.err("Expected only a register message during register phase", .{});
-                },
-                else => {},
-            }
+        log.err("Closing unknown client with {}", .{err});
+
+        switch (err) {
+            error.MisbehavingUnknownClient => {
+                log.err("Expected only a register message during register phase", .{});
+            },
+            else => {},
         }
     }
 }
@@ -674,3 +696,4 @@ const zio = @import("zio");
 const win_sock = @import("win32").networking.win_sock;
 const Win32EventHandle = @import("Win32EventHandle.zig");
 const known_folders = @import("known-folders");
+const polling = @import("../polling.zig");

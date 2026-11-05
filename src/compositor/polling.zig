@@ -1,9 +1,3 @@
-pub const Poll = struct {
-    dispatch: bool,
-    accept: bool,
-    clients: []Server.MessageSource,
-};
-
 pub fn poll(
     arena: std.mem.Allocator,
     com: *Compositor,
@@ -20,7 +14,7 @@ pub fn poll(
     const pollable_len = server.clients.count() + pollable_len_add;
     var pollable: std.MultiArrayList(Pollable) = try .initCapacity(arena, pollable_len);
 
-    var clients: std.ArrayList(Server.MessageSource) =
+    var clients: std.ArrayList(ClientResult) =
         try .initCapacity(arena, server.clients.count());
 
     switch (com.native_tag()) {
@@ -74,11 +68,8 @@ pub fn poll(
             },
             .server => accept = p.event() == .read,
             .client => |client| {
-                // TODO: Handle close and read
                 const event = p.event();
-                if (event != .none) {
-                    clients.appendAssumeCapacity(client);
-                }
+                clients.appendAssumeCapacity(.{ .source = client, .event = event });
             },
         }
     }
@@ -242,16 +233,27 @@ const PollableWindows = struct {
     }
 };
 
+pub const Poll = struct {
+    dispatch: bool,
+    accept: bool,
+    clients: []const ClientResult,
+};
+
+pub const ClientResult = struct {
+    source: Server.MessageSource,
+    event: Event,
+};
+
+pub const Event = enum {
+    read,
+    closed,
+    none,
+};
+
 const Source = union(enum) {
     server,
     display,
     client: Server.MessageSource,
-};
-
-const Event = enum {
-    read,
-    closed,
-    none,
 };
 
 const std = @import("std");
