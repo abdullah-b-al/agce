@@ -231,6 +231,10 @@ fn window_size(ptr: *anyopaque, id: WindowID) ?ptypes.Size {
     return win.get_size();
 }
 
+fn uuid(_: *anyopaque) ptypes.ClientUUID {
+    @panic("TODO");
+}
+
 pub fn windows_destroy_if_closed(mux: *Mux) void {
     var i: usize = mux.windows.count();
     while (i > 0) {
@@ -384,6 +388,7 @@ const vtable: Compositor.MuxInterface.VTable = .{
     .window_id_from_handle = window_id_from_handle,
     .window_handle_from_id = window_handle_from_id,
     .window_size = window_size,
+    .uuid = uuid,
 };
 
 const std = @import("std");

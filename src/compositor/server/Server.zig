@@ -338,8 +338,8 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
         => |_, tag| log.err("Received invalid message for client {s}", .{@tagName(tag)}),
 
         inline else => |_, tag| {
-            const client = server.clients.known.get(client_uuid).?;
-            const ce = try server.compositor_event_from_message(client, tag, msg);
+            std.debug.assert(server.clients.known.contains(client_uuid));
+            const ce = try server.compositor_event_from_message(client_uuid, tag, msg);
             events.appendAssumeCapacity(ce);
         },
     }
@@ -417,10 +417,9 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
     std.debug.assert(message.from == .local);
 
-    const index = message.from.local;
+    const uuid = message.from.local;
     const msg = message.payload;
 
-    _ = index;
     switch (msg) {
         .wake_up => {
             log.debug("Received wake_up", .{});
@@ -429,6 +428,17 @@ fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: 
             const event = server.io_queue.getOne(server.io) catch return;
             events.appendAssumeCapacity(event);
         },
+
+        inline .viewport_pos_set,
+        .viewport_size_set,
+        .viewport_display_state_set,
+        .viewport_close,
+        => |_, tag| {
+            std.debug.assert(server.clients.local.contains(uuid));
+            const ce = try server.compositor_event_from_message(uuid, tag, msg);
+            events.appendAssumeCapacity(ce);
+        },
+
         else => {
             log.err("Received invalid message for local client", .{});
         },
@@ -437,7 +447,7 @@ fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: 
 
 pub fn compositor_event_from_message(
     _: *Server,
-    client: *Client,
+    uuid: ClientUUID,
     comptime payload_tag: client_to_server.MessageTag,
     payload: client_to_server.MessagePayload,
 ) error{UnsupportedMessageOnOs}!CompositorEvent {
@@ -467,7 +477,7 @@ pub fn compositor_event_from_message(
             return @unionInit(
                 CompositorEvent,
                 @tagName(payload_tag),
-                .{ .client_uuid = client.id, .payload = msg },
+                .{ .client_uuid = uuid, .payload = msg },
             );
         },
     }

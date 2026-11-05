@@ -1,5 +1,6 @@
 const RemoteViewport = @This();
 
+embeded: *Embeded,
 window_id: WindowID,
 id: RemoteViewportID,
 render_size: ptypes.Size,
@@ -8,11 +9,13 @@ size: ptypes.Size,
 state: State,
 
 pub fn init(
+    em: *Embeded,
     window_id: WindowID,
     id: RemoteViewportID,
     rect: ptypes.Rect,
 ) RemoteViewport {
     return .{
+        .embeded = em,
         .window_id = window_id,
         .id = id,
         .pos = .from_rect(rect),
@@ -53,3 +56,4 @@ const RemoteViewportID = ptypes.RemoteViewportID;
 const ViewportID = ptypes.ViewportID;
 const BufferID = ptypes.BufferID;
 const WindowID = @import("compositor").Compositor.WindowID;
+const Embeded = @import("Embeded.zig");

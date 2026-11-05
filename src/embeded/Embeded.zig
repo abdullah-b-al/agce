@@ -52,6 +52,7 @@ pub fn create(
                     .window_id_from_handle = mux_interface.window_id_from_handle,
                     .window_handle_from_id = mux_interface.window_handle_from_id,
                     .window_size = mux_interface.window_size,
+                    .uuid = mux_interface.uuid,
                 },
             },
             .socket_owner = .{ .embeded = class },
@@ -157,6 +158,7 @@ pub fn remote_viewport_embed(em: *Embeded, remote: *RemoteClient, window_handle:
     errdefer em.gpa.destroy(remote_vp);
 
     remote_vp.* = .init(
+        em,
         window_id,
         em.next_remote_viewport_id.increment(),
         rect,
@@ -312,6 +314,11 @@ const mux_interface = struct {
         const em: *Embeded = @ptrCast(@alignCast(ptr));
         const win = em.windows.get(id) orelse return null;
         return win.size;
+    }
+
+    fn uuid(ptr: *anyopaque) ptypes.ClientUUID {
+        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        return em.connection.uuid;
     }
 };
 

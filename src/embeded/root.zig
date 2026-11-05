@@ -3,6 +3,7 @@ pub const Process = @import("remote_client").Process;
 pub const RemoteClient = @import("remote_client").RemoteClient;
 pub const Size = ptypes.Size;
 pub const Rect = ptypes.Rect;
+pub const Pos = ptypes.Pos;
 
 pub const EmbededHandle = opaque {
     fn cast(h: *EmbededHandle) *Embeded {
@@ -78,8 +79,103 @@ pub const RemoteViewportHandle = opaque {
         return @ptrCast(@alignCast(h));
     }
 
-    pub fn state(h: *RemoteViewportHandle) RemoteViewport.State {
-        return h.cast().state;
+    pub fn send_close(handle: *RemoteViewportHandle) !void {
+        const rvp = handle.cast();
+        const vp_key = switch (rvp.state) {
+            .shown, .hidden => |key| key,
+            .failed, .pending, .closed => return,
+        };
+        try rvp.embeded.connection.send_viewport_close(
+            rvp.embeded.rt.io(),
+            rvp.embeded.gpa,
+            .{ .viewport_key = vp_key },
+        );
+    }
+
+    pub fn state(handle: *RemoteViewportHandle) RemoteViewport.State {
+        return handle.cast().state;
+    }
+
+    pub fn render_size(handle: *RemoteViewportHandle) ptypes.Size {
+        return handle.cast().render_size;
+    }
+
+    pub fn pos_get(handle: *RemoteViewportHandle) Pos {
+        return handle.cast().pos;
+    }
+
+    pub fn size_get(handle: *RemoteViewportHandle) Size {
+        return handle.cast().size;
+    }
+
+    pub fn rect_get(handle: *RemoteViewportHandle) Rect {
+        const rvp = handle.cast();
+        return .init(rvp.pos, rvp.size);
+    }
+
+    pub fn pos_set(handle: *RemoteViewportHandle, pos: Pos) !void {
+        const rvp = handle.cast();
+
+        const key = switch (rvp.state) {
+            .shown, .hidden => |key| key,
+            .pending, .failed, .closed => return,
+        };
+
+        if (pos.x != rvp.pos.x or pos.y != rvp.pos.y) {
+            try rvp.embeded.connection.send_viewport_pos_set(
+                rvp.embeded.rt.io(),
+                rvp.embeded.gpa,
+                .{ .pos = pos, .viewport_key = key },
+            );
+        }
+
+        rvp.pos = pos;
+    }
+
+    pub fn size_set(handle: *RemoteViewportHandle, size: Size) !void {
+        const rvp = handle.cast();
+
+        const vp_key = switch (rvp.state) {
+            .shown, .hidden => |key| key,
+            .pending, .failed, .closed => return,
+        };
+
+        if (size.width != rvp.size.width or size.height != rvp.size.height) {
+            try rvp.embeded.connection.send_viewport_size_set(
+                rvp.embeded.rt.io(),
+                rvp.embeded.gpa,
+                .{ .size = size, .viewport_key = vp_key },
+            );
+        }
+
+        rvp.size = size;
+    }
+
+    pub fn rect_set(handle: *RemoteViewportHandle, rect: Rect) !void {
+        try handle.pos_set(.from_rect(rect));
+        try handle.size_set(.from_rect(rect));
+    }
+
+    pub fn display_state_get(handle: *RemoteViewportHandle) ptypes.ViewportDisplayState {
+        return handle.cast().state.to_display_state();
+    }
+
+    pub fn display_state_set(handle: *RemoteViewportHandle, s: ptypes.ViewportDisplayState) !void {
+        const rvp = handle.cast();
+
+        const vp_key = switch (rvp.state) {
+            .shown => |key| if (s != .shown) key else return,
+            .hidden => |key| if (s != .hidden) key else return,
+            .pending, .failed, .closed => return,
+        };
+
+        try rvp.embeded.connection.send_viewport_display_state_set(
+            rvp.embeded.rt.io(),
+            rvp.embeded.gpa,
+            .{ .viewport_key = vp_key, .state = s },
+        );
+
+        rvp.state = .from_display_state(s, vp_key);
     }
 };
 

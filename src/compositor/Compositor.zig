@@ -835,8 +835,10 @@ pub fn viewport_from_key(com: *Compositor, key: ViewportKey) ?*Viewport {
 pub fn remote_viewport_from_key(com: *Compositor, key: ViewportKey, parent_client_uuid: ClientUUID) !*Viewport {
     const rs = com.resources.getPtr(key.client_uuid) orelse return error.ClientDoesNotExist;
     const vp = rs.viewports.get(key.viewport_id) orelse return error.ViewportDoesNotExist;
-    const parent_key = vp.parent_key orelse return error.ViewportHasNoParent;
-    if (parent_key.client_uuid != parent_client_uuid) {
+
+    const real_parent = if (vp.parent_key) |p| p.client_uuid else com.muxi.uuid();
+
+    if (real_parent != parent_client_uuid) {
         return error.ClientDoesNotOwnViewport;
     }
 
@@ -998,16 +1000,19 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "vie
         },
     }
 
-    const parent_key = vp.parent_key.?;
-    com.server_events.push_assume_capacity(.{
-        .remote_viewport_display_state = .{
-            .client_uuid = parent_key.client_uuid,
-            .payload = .{
-                .viewport_key = args.payload.viewport_key,
-                .state = args.payload.state,
+    {
+        const parent_uuid = if (vp.parent_key) |k| k.client_uuid else com.muxi.uuid();
+
+        com.server_events.push_assume_capacity(.{
+            .remote_viewport_display_state = .{
+                .client_uuid = parent_uuid,
+                .payload = .{
+                    .viewport_key = args.payload.viewport_key,
+                    .state = args.payload.state,
+                },
             },
-        },
-    });
+        });
+    }
 
     com.server_events.push_assume_capacity(.{
         .viewport_display_state = .{
@@ -1619,6 +1624,7 @@ pub const MuxInterface = struct {
         window_id_from_handle: *const fn (*anyopaque, *WindowHandle) ?WindowID,
         window_handle_from_id: *const fn (*anyopaque, WindowID) ?*WindowHandle,
         window_size: *const fn (*anyopaque, WindowID) ?ptypes.Size,
+        uuid: *const fn (*anyopaque) ClientUUID,
     };
 
     pub fn window_handle_for_viewport(self: MuxInterface, key: ViewportKey, size: ptypes.Size) ?*WindowHandle {
@@ -1635,6 +1641,10 @@ pub const MuxInterface = struct {
 
     pub fn window_size(self: MuxInterface, id: WindowID) ?ptypes.Size {
         return self.vtable.window_size(self.ptr, id);
+    }
+
+    pub fn uuid(self: MuxInterface) ClientUUID {
+        return self.vtable.uuid(self.ptr);
     }
 };
 

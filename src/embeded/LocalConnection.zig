@@ -55,6 +55,26 @@ pub fn send_queue_pop(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void
     try c.send(io, gpa, message);
 }
 
+pub fn send_viewport_pos_set(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportPosSet) !void {
+    const message = try c.stringify(gpa, .{ .viewport_pos_set = payload });
+    try c.send(io, gpa, message);
+}
+
+pub fn send_viewport_size_set(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportSizeSet) !void {
+    const message = try c.stringify(gpa, .{ .viewport_size_set = payload });
+    try c.send(io, gpa, message);
+}
+
+pub fn send_viewport_display_state_set(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportDisplayStateSet) !void {
+    const message = try c.stringify(gpa, .{ .viewport_display_state_set = payload });
+    try c.send(io, gpa, message);
+}
+
+pub fn send_viewport_close(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.RemoteViewportClose) !void {
+    const message = try c.stringify(gpa, .{ .viewport_close = payload });
+    try c.send(io, gpa, message);
+}
+
 fn stringify(c: *LocalConnection, gpa: std.mem.Allocator, payload: client_to_server.MessagePayload) !client_to_server.Message {
     std.debug.assert(c.format == .json);
 
