@@ -1,5 +1,11 @@
 var exit = false;
 
+pub const std_options: std.Options = .{
+    .log_scope_levels = &.{
+        .{ .scope = .zio, .level = .info },
+    },
+};
+
 pub fn main(init: std.process.Init.Minimal) !void {
     var debug: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug.deinit();
