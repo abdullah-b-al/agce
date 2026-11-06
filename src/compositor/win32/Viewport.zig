@@ -3,6 +3,7 @@ const Viewport = @This();
 base: *const Compositor.Viewport,
 child_window_handle: win32_foundation.HWND,
 swap_chain: *dxgi.IDXGISwapChain1,
+parent_tag: std.meta.Tag(ParentOfViewport),
 
 mouse_tracking: bool = false,
 
@@ -70,13 +71,36 @@ pub fn init(
     return .{
         .base = base,
         .child_window_handle = handle,
+        .parent_tag = parent,
         .swap_chain = swap_chain,
     };
 }
 
 pub fn deinit(vp: *Viewport) void {
     _ = vp.swap_chain.IUnknown.Release();
-    _ = win32_win.DestroyWindow(vp.child_window_handle);
+
+    switch (vp.parent_tag) {
+        .window => {
+            // HACK: Do not destroy the window if removing the parent fails.
+            // In the `embeded` module where the parent is in a different thread,
+            // calling DestroyWindow will cause a deadlock as the input threads are attached.
+            // I could not find a way to detach them that prevented the deadlock.
+            //
+            // This only matters if the parent is in a different thread, which
+            // is only possible when the parent is a window.
+
+            const result = win32_win.SetParent(vp.child_window_handle, null);
+            if (result == null) {
+                const err = win32_foundation.GetLastError();
+                log.err("Failed to SetParent to null {}. Leaking child window...", .{err});
+            } else {
+                _ = win32_win.DestroyWindow(vp.child_window_handle);
+            }
+        },
+        .viewport => {
+            _ = win32_win.DestroyWindow(vp.child_window_handle);
+        },
+    }
 }
 
 const std = @import("std");
