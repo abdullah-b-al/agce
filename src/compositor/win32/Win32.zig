@@ -257,8 +257,9 @@ fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime native_
             .d11 => {
                 // TODO: Do not block thread when copying
 
+                const swap_chain = nvp.swap_chain.?;
                 var back_buffer: *d11.ID3D11Texture2D = undefined;
-                const hr = nvp.swap_chain.IDXGISwapChain.GetBuffer(
+                const hr = swap_chain.IDXGISwapChain.GetBuffer(
                     0,
                     d11.IID_ID3D11Texture2D,
                     @ptrCast(&back_buffer),
@@ -309,9 +310,10 @@ fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime nati
             .d11 => |*b| {
                 // TODO: Do not block thread when presenting
 
+                const swap_chain = nvp.swap_chain.?;
                 const sync = item.sync.?;
 
-                _ = nvp.swap_chain.IDXGISwapChain.Present(0, 0);
+                _ = swap_chain.IDXGISwapChain.Present(0, 0);
                 _ = win32.d11_context.device_context4.Signal(
                     b.release.release,
                     @intFromEnum(sync.release_point),

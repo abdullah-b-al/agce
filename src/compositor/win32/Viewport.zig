@@ -2,8 +2,9 @@ const Viewport = @This();
 
 base: *const Compositor.Viewport,
 child_window_handle: win32_foundation.HWND,
-swap_chain: *dxgi.IDXGISwapChain1,
 parent_tag: std.meta.Tag(ParentOfViewport),
+
+swap_chain: ?*dxgi.IDXGISwapChain1,
 
 mouse_tracking: bool = false,
 
@@ -52,21 +53,25 @@ pub fn init(
     // TODO: Check return value
     _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
 
-    var desc: dxgi.DXGI_SWAP_CHAIN_DESC1 = .{
-        .Width = @intCast(base.clipping_rect.width),
-        .Height = @intCast(base.clipping_rect.height),
-        .Format = Win32.buffer_format_to_dxgi_format(base.format),
-        .Stereo = 0,
-        .SampleDesc = .{ .Count = 1, .Quality = 0 },
-        .BufferUsage = dxgi.DXGI_USAGE_RENDER_TARGET_OUTPUT,
-        .BufferCount = 2,
-        .Scaling = .NONE,
-        .SwapEffect = .FLIP_DISCARD,
-        .AlphaMode = .IGNORE,
-        .Flags = 0,
-    };
+    const swap_chain = blk: {
+        if (base.buffer_type != .d11) break :blk null;
 
-    const swap_chain = try win32.d11_context.create_swap_chain_for_hwnd(handle, &desc);
+        var desc: dxgi.DXGI_SWAP_CHAIN_DESC1 = .{
+            .Width = @intCast(base.clipping_rect.width),
+            .Height = @intCast(base.clipping_rect.height),
+            .Format = Win32.buffer_format_to_dxgi_format(base.format),
+            .Stereo = 0,
+            .SampleDesc = .{ .Count = 1, .Quality = 0 },
+            .BufferUsage = dxgi.DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            .BufferCount = 2,
+            .Scaling = .NONE,
+            .SwapEffect = .FLIP_DISCARD,
+            .AlphaMode = .IGNORE,
+            .Flags = 0,
+        };
+
+        break :blk try win32.d11_context.create_swap_chain_for_hwnd(handle, &desc);
+    };
 
     return .{
         .base = base,
@@ -77,7 +82,9 @@ pub fn init(
 }
 
 pub fn deinit(vp: *Viewport) void {
-    _ = vp.swap_chain.IUnknown.Release();
+    if (vp.swap_chain) |swap_chain| {
+        _ = swap_chain.IUnknown.Release();
+    }
 
     switch (vp.parent_tag) {
         .window => {
