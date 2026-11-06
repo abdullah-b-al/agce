@@ -418,33 +418,59 @@ fn buffer_create_cpu_inner(com: *Compositor, rs: *ClientResources, size: ptypes.
         },
         .win32 => |tag| {
             tag.guard();
-            const handle_ptr = win32_memory.CreateFileMappingA(
+            const handle: ptypes.CpuBufferHandle = .from_HANDLE(win32_memory.CreateFileMappingA(
                 win32_foundation.INVALID_HANDLE_VALUE,
                 null,
                 win32_memory.PAGE_READWRITE,
                 0,
                 @intCast(size_bytes),
                 null,
-            ) orelse return error.FailedToCreateFileMapping;
-            errdefer _ = win32_foundation.CloseHandle(handle_ptr);
+            ) orelse return error.FailedToCreateFileMapping);
+            errdefer handle.close();
 
-            const pixels = win32_memory.MapViewOfFile(
-                handle_ptr,
-                win32_memory.FILE_MAP_READ,
-                0,
-                0,
-                @intCast(size_bytes),
-            ) orelse return error.FailedToMapViewOfFile;
+            var bitmap_info: win32_gdi.BITMAPINFO = undefined;
+            bitmap_info.bmiHeader.biSize = @sizeOf(win32_gdi.BITMAPINFOHEADER);
+            bitmap_info.bmiHeader.biWidth = size.width;
+            bitmap_info.bmiHeader.biHeight = -size.height;
+            bitmap_info.bmiHeader.biPlanes = 1;
 
-            const handle: ptypes.CpuBufferHandle = .from_HANDLE(handle_ptr);
+            switch (format) {
+                .argb8888 => {
+                    bitmap_info.bmiHeader.biBitCount = 32;
+                    bitmap_info.bmiHeader.biCompression = win32_gdi.BI_RGB;
+                },
+            }
+
+            var pixels: *anyopaque = undefined;
+
+            const bitmap = win32_gdi.CreateDIBSection(
+                null,
+                &bitmap_info,
+                win32_gdi.DIB_RGB_COLORS,
+                @ptrCast(&pixels),
+                handle.to_HANDLE(),
+                0,
+            ) orelse return error.FailedToCreateDIBSection;
+            errdefer _ = win32_gdi.DeleteObject(bitmap);
+
+            const hdc = win32_gdi.CreateCompatibleDC(null);
+            errdefer _ = win32_gdi.DeleteDC(hdc);
+
+            if (win32_gdi.SelectObject(hdc, bitmap) == null) {
+                return error.FailedToSelectObject;
+            }
 
             const buffer_id = rs.next_buffer_id.increment();
-            rs.buffers.putAssumeCapacity(buffer_id, .init_win32(.{ .cpu = .{
-                .handle = handle,
-                .pixels = pixels,
-                .format = format,
-                .size = size,
-            } }));
+            rs.buffers.putAssumeCapacity(buffer_id, .init_win32(.{
+                .cpu = .{
+                    .handle = handle,
+                    .hdc = hdc,
+                    .bitmap = bitmap,
+                    .pixels = pixels,
+                    .format = format,
+                    .size = size,
+                },
+            }));
 
             return .{
                 .handle = handle,

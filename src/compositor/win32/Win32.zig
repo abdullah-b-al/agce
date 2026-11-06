@@ -331,36 +331,18 @@ pub fn buffer_copy_cpu_hdc(
     cpu: *const Buffer.Cpu,
     buffer_present_item: *Compositor.BufferPresent,
 ) void {
-    const hdc = win32_gdi.GetDC(nvp.child_window_handle) orelse return;
+    const target_hdc = win32_gdi.GetDC(nvp.child_window_handle) orelse return;
     defer {
-        _ = win32_gdi.ReleaseDC(nvp.child_window_handle, hdc);
+        _ = win32_gdi.ReleaseDC(nvp.child_window_handle, target_hdc);
         buffer_present_item.state.advance();
-    }
-
-    var bitmap_info: win32_gdi.BITMAPINFO = undefined;
-
-    bitmap_info.bmiHeader.biSize = @sizeOf(win32_gdi.BITMAPINFOHEADER);
-    bitmap_info.bmiHeader.biWidth = cpu.size.width;
-    bitmap_info.bmiHeader.biHeight = -cpu.size.height;
-    bitmap_info.bmiHeader.biPlanes = 1;
-
-    switch (cpu.format) {
-        .argb8888 => {
-            bitmap_info.bmiHeader.biBitCount = 32;
-            bitmap_info.bmiHeader.biCompression = win32_gdi.BI_RGB;
-        },
     }
 
     const size = buffer_present_item.render_size;
     // zig fmt: off
-    _ = win32_gdi.StretchDIBits(
-        hdc,
+    _ = win32_gdi.BitBlt(
+        target_hdc,
         0, 0, size.width, size.height,
-        0, 0, size.width, size.height,
-
-        cpu.pixels,
-        &bitmap_info,
-        win32_gdi.DIB_RGB_COLORS,
+        cpu.hdc, 0, 0,
         win32_gdi.SRCCOPY,
     );
     // zig fmt: on
@@ -430,7 +412,8 @@ pub const Buffer = union(enum) {
     pub fn deinit(buffer: *Buffer) void {
         switch (buffer.*) {
             .cpu => |cpu| {
-                _ = win32_memory.UnmapViewOfFile(cpu.pixels);
+                _ = win32_gdi.DeleteDC(cpu.hdc);
+                _ = win32_gdi.DeleteObject(cpu.bitmap);
                 cpu.handle.close();
             },
             .d11 => |d| {
@@ -441,6 +424,8 @@ pub const Buffer = union(enum) {
 
     pub const Cpu = struct {
         handle: ptypes.CpuBufferHandle,
+        hdc: win32_gdi.HDC,
+        bitmap: win32_gdi.HBITMAP,
         pixels: *anyopaque,
         size: ptypes.Size,
         format: ptypes.BufferFormat,
