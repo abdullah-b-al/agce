@@ -162,7 +162,7 @@ pub fn process_incoming_messages(
                         };
                 },
                 .closed => {
-                    const err = error.ConnectionClosed;
+                    const err = error.ConnectionResetByPeer;
                     switch (source) {
                         .unknown => |i| server.mark_for_closing_unknown_client_with(i, err),
                         .known => |id| server.mark_for_closing_known_client_with(id, err),
@@ -509,7 +509,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
         const err = client.connection.close_with_error orelse continue;
         client.connection.close();
 
-        if (err == error.ConnectionClosed) {
+        if (err == error.ConnectionClosed or err == error.ConnectionResetByPeer) {
             log.info("Closing known client {f} with {}", .{ client.id, err });
         } else {
             log.err("Closing known client {f} with {}", .{ client.id, err });
@@ -531,7 +531,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
         const err = client.connection.close_with_error orelse continue;
         client.connection.close();
 
-        if (err == error.ConnectionClosed) {
+        if (err == error.ConnectionClosed or err == error.ConnectionResetByPeer) {
             log.info("Closing local client {f} with {}", .{ client.id, err });
         } else {
             log.err("Closing local client {f} with {}", .{ client.id, err });
