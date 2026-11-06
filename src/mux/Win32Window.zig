@@ -77,7 +77,6 @@ pub fn window_proc(
         // Window has been removed. Pass through msg
         return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
     };
-    _ = win;
 
     switch (msg) {
         win32_win.WM_SIZE => {
@@ -89,6 +88,10 @@ pub fn window_proc(
             _ = h;
 
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+        },
+        win32_win.WM_CLOSE => {
+            mux.compositor.viewport_should_close(win.viewport_key) catch return 0;
+            return 0;
         },
 
         else => {},
