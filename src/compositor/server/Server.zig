@@ -252,7 +252,6 @@ pub fn events_handle(server: *Server, com: *Compositor) void {
                     switch (err) {
                         error.OutOfMemory => {
                             log.err("events_handle {}", .{err});
-                            event.close_handles();
                         },
 
                         error.FailedToCreateWin32EventHandle,
@@ -260,15 +259,12 @@ pub fn events_handle(server: *Server, com: *Compositor) void {
                         error.FailedToSendHandle,
                         error.ConnectionClosed,
                         => |mark| {
-                            event.close_handles();
                             server.mark_for_closing_known_client_with(v.client_uuid, mark);
                         },
                     }
                 },
             }
         };
-
-        event.close_handles();
     }
 }
 
@@ -292,6 +288,12 @@ pub fn handle_event(
             log.info("Unknown client connected", .{});
         },
         .buffer_created_cpu => |e| {
+            defer {
+                if (constants.os_supports_fd) {
+                    e.payload.handle.close();
+                }
+            }
+
             const client = server.clients.known.get(e.client_uuid) orelse return;
             client.connection.send_buffer_created_cpu(
                 server.io,
@@ -312,12 +314,22 @@ pub fn handle_event(
             if (!constants.os_has_gbm) {
                 @panic("OS does not support gbm");
             }
+            defer {
+                e.payload.fds.buffer.close();
+                e.payload.fds.acquire_timeline.close();
+                e.payload.fds.release_timeline.close();
+            }
 
             const client = server.clients.known.get(e.client_uuid) orelse return;
             try client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload);
         },
         .texture_created_d3d => |e| {
             if (!constants.os_has_d3d) @panic("OS does not support d3d");
+            defer {
+                e.payload.texture_handle.close();
+                e.payload.acquire_fence_handle.close();
+                e.payload.release_fence_handle.close();
+            }
 
             const client = server.clients.known.get(e.client_uuid) orelse return;
             client.connection.send_texture_created_d3d(server.io, server.gpa, e.payload) catch |err|
@@ -647,29 +659,6 @@ pub const Event = union(enum) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
-    }
-
-    pub fn close_handles(event: Event) void {
-        switch (event) {
-            .buffer_created_cpu => |e| {
-                e.payload.handle.close();
-            },
-            .buffer_created_gbm_bo => |e| {
-                if (os == .linux) {
-                    e.payload.fds.buffer.close();
-                    e.payload.fds.acquire_timeline.close();
-                    e.payload.fds.release_timeline.close();
-                }
-            },
-            .texture_created_d3d => |e| {
-                if (os == .windows) {
-                    e.payload.texture_handle.close();
-                    e.payload.acquire_fence_handle.close();
-                    e.payload.release_fence_handle.close();
-                }
-            },
-            else => {},
-        }
     }
 };
 
