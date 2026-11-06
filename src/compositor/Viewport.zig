@@ -8,6 +8,7 @@ state: ptypes.ViewportDisplayState,
 parent_key: ?ViewportKey,
 remote_viewports: std.ArrayList(ViewportKey),
 format: ptypes.BufferFormat,
+buffer_type: ptypes.BufferType,
 cursor_shape: ptypes.CursorShape,
 
 win32: if (os == .windows) Win32.Viewport else void,
@@ -23,6 +24,7 @@ pub fn create(
     parent_key: ?ViewportKey,
     create_sync_timeline: bool,
     format: ptypes.BufferFormat,
+    buffer_type: ptypes.BufferType,
 ) !*Viewport {
     const vp = try com.gpa.create(Viewport);
     errdefer com.gpa.destroy(vp);
@@ -41,6 +43,7 @@ pub fn create(
         .render_size = render_size,
         .remote_viewports = .empty,
         .format = format,
+        .buffer_type = buffer_type,
         .cursor_shape = .default,
 
         .win32 = undefined,

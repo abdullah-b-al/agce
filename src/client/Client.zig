@@ -479,6 +479,11 @@ pub fn send_viewport_create(
         .create_sync_timeline = create_sync_timeline,
         .size = size,
         .format = vp.format,
+        .buffer_type = switch (vp.renderer) {
+            .cpu => .cpu,
+            .gl => .gbm_bo,
+            .d11 => .d11,
+        },
     });
 }
 

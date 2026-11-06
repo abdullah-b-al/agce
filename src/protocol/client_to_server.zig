@@ -55,6 +55,7 @@ pub const ViewportCreate = struct {
     viewport_id: types.ViewportID,
     create_sync_timeline: bool,
     format: types.BufferFormat,
+    buffer_type: types.BufferType,
 
     size: types.Size,
 };

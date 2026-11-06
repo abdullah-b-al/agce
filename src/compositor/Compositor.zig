@@ -746,6 +746,7 @@ fn viewport_create_with_remote_viewport(
                 args.payload.create_sync_timeline,
                 .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
                 args.payload.format,
+                args.payload.buffer_type,
             );
 
             embeder_viewport.remote_viewports.appendAssumeCapacity(embeded_key);
@@ -764,6 +765,7 @@ fn viewport_create_with_remote_viewport(
                 args.payload.create_sync_timeline,
                 null,
                 args.payload.format,
+                args.payload.buffer_type,
             );
         },
     }
@@ -813,6 +815,7 @@ fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "vi
         args.payload.create_sync_timeline,
         null,
         args.payload.format,
+        args.payload.buffer_type,
     );
 
     log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_uuid });

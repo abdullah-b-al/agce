@@ -191,6 +191,12 @@ pub const BufferFormat = enum {
     }
 };
 
+pub const BufferType = enum {
+    cpu,
+    gbm_bo,
+    d11,
+};
+
 pub const ViewportDisplayState = enum {
     shown,
     hidden,
