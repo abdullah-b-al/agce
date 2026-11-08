@@ -134,8 +134,8 @@ pub fn tick(mux: *Mux, timeout: std.Io.Timeout) !void {
 
     try mux.compositor.tick(poll_result);
 
-    mux.flush();
     mux.windows_destroy_if_closed();
+    mux.flush();
 }
 
 pub fn dispatch(mux: *Mux) void {
