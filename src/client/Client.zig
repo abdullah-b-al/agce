@@ -466,17 +466,8 @@ pub fn send_viewport_create(
 ) !void {
     const vp = client.viewports.get(viewport_id).?;
 
-    const create_sync_timeline = blk: {
-        break :blk switch (vp.renderer) {
-            .gl => true,
-            .cpu => false,
-            .d11 => false, // TODO: Set to true
-        };
-    };
-
     try client.connection.send_viewport_create(client.io, client.gpa, .{
         .viewport_id = viewport_id,
-        .create_sync_timeline = create_sync_timeline,
         .size = size,
         .format = vp.format,
         .buffer_type = switch (vp.renderer) {

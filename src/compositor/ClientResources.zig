@@ -100,7 +100,6 @@ pub fn viewport_create(
     window_id: WindowID,
     rect: ptypes.Rect,
     render_size: ptypes.Size,
-    create_sync_timeline: bool,
     parent_key: ?ViewportKey,
     format: ptypes.BufferFormat,
     buffer_type: ptypes.BufferType,
@@ -114,7 +113,6 @@ pub fn viewport_create(
         rect,
         render_size,
         parent_key,
-        create_sync_timeline,
         format,
         buffer_type,
     );

@@ -22,7 +22,6 @@ pub fn create(
     clipping_rect: ptypes.Rect,
     render_size: ptypes.Size,
     parent_key: ?ViewportKey,
-    create_sync_timeline: bool,
     format: ptypes.BufferFormat,
     buffer_type: ptypes.BufferType,
 ) !*Viewport {
@@ -53,6 +52,13 @@ pub fn create(
     switch (com.native_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
+            const create_sync_timeline = switch (buffer_type) {
+                .d11 => unreachable,
+
+                .cpu => false,
+                .gbm_bo => true,
+            };
+
             vp.linux = .{
                 .wayland = try .init(
                     com,
