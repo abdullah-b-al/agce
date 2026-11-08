@@ -53,12 +53,12 @@ pub fn create(
         };
         defer agce_dir.close(io);
 
-        if (socket_owner == .embeded) {
-            agce_dir.createDir(io, socket_owner.embeded, .default_dir) catch |err| switch (err) {
+        if (socket_owner == .embedded) {
+            agce_dir.createDir(io, socket_owner.embedded, .default_dir) catch |err| switch (err) {
                 error.PathAlreadyExists => {},
                 else => {
                     log.err("{}", .{err});
-                    return error.CouldNotCreateEmbededSocketDir;
+                    return error.CouldNotCreateEmbeddedSocketDir;
                 },
             };
         }
@@ -72,10 +72,10 @@ pub fn create(
                 constants.socket_dir_name,
                 constants.socket_mux_file_name,
             }),
-            .embeded => |embeded| break :blk try std.fs.path.join(gpa, &.{
+            .embedded => |embedded| break :blk try std.fs.path.join(gpa, &.{
                 runtime_path,
                 constants.socket_dir_name,
-                embeded,
+                embedded,
                 random_digits ++ "." ++ constants.socket_extension,
             }),
         }
@@ -586,7 +586,7 @@ fn ReturnType(comptime func: anytype) type {
 
 pub const UnixSocketOwner = union(enum) {
     mux,
-    embeded: []const u8,
+    embedded: []const u8,
 };
 
 const ReceivedMessage = struct {
@@ -638,7 +638,7 @@ pub const Event = union(enum) {
     viewport_close: server_to_client.WithClientUUID(server_to_client.ViewportClose),
     viewport_display_state: server_to_client.WithClientUUID(server_to_client.ViewportDisplayState),
 
-    remote_viewport_embeded: server_to_client.WithClientUUID(server_to_client.RemoteViewportEmbeded),
+    remote_viewport_embedded: server_to_client.WithClientUUID(server_to_client.RemoteViewportEmbedded),
     remote_viewport_display_state: server_to_client.WithClientUUID(server_to_client.RemoteViewportDisplayState),
     remote_viewport_closed: server_to_client.WithClientUUID(server_to_client.RemoteViewportClosed),
 

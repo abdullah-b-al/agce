@@ -145,7 +145,7 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_close: ViewportClose,
     viewport_display_state: ViewportDisplayState,
 
-    remote_viewport_embeded: RemoteViewportEmbeded,
+    remote_viewport_embedded: RemoteViewportEmbedded,
     remote_viewport_display_state: RemoteViewportDisplayState,
     remote_viewport_closed: RemoteViewportClosed,
 
@@ -215,7 +215,7 @@ pub const ViewportResize = struct {
     size: types.Size,
 };
 
-pub const RemoteViewportEmbeded = struct {
+pub const RemoteViewportEmbedded = struct {
     remote_viewport_id: types.RemoteViewportID,
     status: types.Status,
     render_size: types.Size,

@@ -1,12 +1,12 @@
-pub const Native = Embeded.Native;
+pub const Native = Embedded.Native;
 pub const Process = @import("remote_client").Process;
 pub const RemoteClient = @import("remote_client").RemoteClient;
 pub const Size = ptypes.Size;
 pub const Rect = ptypes.Rect;
 pub const Pos = ptypes.Pos;
 
-pub const EmbededHandle = opaque {
-    fn cast(h: *EmbededHandle) *Embeded {
+pub const EmbeddedHandle = opaque {
+    fn cast(h: *EmbeddedHandle) *Embedded {
         return @ptrCast(@alignCast(h));
     }
 
@@ -16,25 +16,25 @@ pub const EmbededHandle = opaque {
         ptr: *anyopaque,
         native: Native,
         class: []const u8,
-    ) !*EmbededHandle {
+    ) !*EmbeddedHandle {
         return @ptrCast(
-            try Embeded.create(gpa, environ_map, ptr, native, class),
+            try Embedded.create(gpa, environ_map, ptr, native, class),
         );
     }
 
-    pub fn destroy(h: *EmbededHandle) void {
+    pub fn destroy(h: *EmbeddedHandle) void {
         h.cast().destroy();
     }
 
-    pub fn poll(h: *EmbededHandle) void {
+    pub fn poll(h: *EmbeddedHandle) void {
         h.cast().poll();
     }
 
-    pub fn window_add(h: *EmbededHandle, new: *anyopaque, size: Size) !void {
+    pub fn window_add(h: *EmbeddedHandle, new: *anyopaque, size: Size) !void {
         try h.cast().window_add(new, size);
     }
 
-    pub fn window_update_size(h: *EmbededHandle, window_handle: *anyopaque, size: Size) void {
+    pub fn window_update_size(h: *EmbeddedHandle, window_handle: *anyopaque, size: Size) void {
         const win = h.cast().window_from_handle(@ptrCast(window_handle)) orelse {
             log.err("Window does not exist {*}", .{window_handle});
             return;
@@ -42,16 +42,16 @@ pub const EmbededHandle = opaque {
         win.size = size;
     }
 
-    pub fn remote_client_create(h: *EmbededHandle) !*RemoteClient {
+    pub fn remote_client_create(h: *EmbeddedHandle) !*RemoteClient {
         return try h.cast().remote_client_create();
     }
 
-    pub fn remote_client_destroy(h: *EmbededHandle, remote: *RemoteClient) void {
+    pub fn remote_client_destroy(h: *EmbeddedHandle, remote: *RemoteClient) void {
         h.cast().remote_client_destroy(remote);
     }
 
     pub fn process_init(
-        h: *EmbededHandle,
+        h: *EmbeddedHandle,
         io: Io,
         gpa: std.mem.Allocator,
         argv: []const []const u8,
@@ -67,7 +67,7 @@ pub const EmbededHandle = opaque {
     }
 
     pub fn remote_viewport_embed(
-        h: *EmbededHandle,
+        h: *EmbeddedHandle,
         remote: *RemoteClient,
         window_handle: *anyopaque,
         rect: Rect,
@@ -93,9 +93,9 @@ pub const RemoteViewportHandle = opaque {
             .shown, .hidden => |key| key,
             .failed, .pending, .closed => return,
         };
-        try rvp.embeded.connection.send_viewport_close(
-            rvp.embeded.rt.io(),
-            rvp.embeded.gpa,
+        try rvp.embedded.connection.send_viewport_close(
+            rvp.embedded.rt.io(),
+            rvp.embedded.gpa,
             .{ .viewport_key = vp_key },
         );
     }
@@ -130,9 +130,9 @@ pub const RemoteViewportHandle = opaque {
         };
 
         if (pos.x != rvp.pos.x or pos.y != rvp.pos.y) {
-            try rvp.embeded.connection.send_viewport_pos_set(
-                rvp.embeded.rt.io(),
-                rvp.embeded.gpa,
+            try rvp.embedded.connection.send_viewport_pos_set(
+                rvp.embedded.rt.io(),
+                rvp.embedded.gpa,
                 .{ .pos = pos, .viewport_key = key },
             );
         }
@@ -149,9 +149,9 @@ pub const RemoteViewportHandle = opaque {
         };
 
         if (size.width != rvp.size.width or size.height != rvp.size.height) {
-            try rvp.embeded.connection.send_viewport_size_set(
-                rvp.embeded.rt.io(),
-                rvp.embeded.gpa,
+            try rvp.embedded.connection.send_viewport_size_set(
+                rvp.embedded.rt.io(),
+                rvp.embedded.gpa,
                 .{ .size = size, .viewport_key = vp_key },
             );
         }
@@ -177,9 +177,9 @@ pub const RemoteViewportHandle = opaque {
             .pending, .failed, .closed => return,
         };
 
-        try rvp.embeded.connection.send_viewport_display_state_set(
-            rvp.embeded.rt.io(),
-            rvp.embeded.gpa,
+        try rvp.embedded.connection.send_viewport_display_state_set(
+            rvp.embedded.rt.io(),
+            rvp.embedded.gpa,
             .{ .viewport_key = vp_key, .state = s },
         );
 
@@ -189,10 +189,10 @@ pub const RemoteViewportHandle = opaque {
 
 const std = @import("std");
 const Io = std.Io;
-const Embeded = @import("Embeded.zig");
+const Embedded = @import("Embedded.zig");
 const RemoteViewport = @import("RemoteViewport.zig");
 const compositor = @import("compositor");
 const zio = @import("zio");
 const LocalConnection = @import("LocalConnection.zig");
 const ptypes = @import("protocol").types;
-const log = std.log.scoped(.agce_embeded);
+const log = std.log.scoped(.agce_embedded);

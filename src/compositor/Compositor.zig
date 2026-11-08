@@ -677,22 +677,22 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
         .create_with_remote_viewport => |v| {
             com.server_events.push_assume_capacity(.{
                 .viewport_created = .{
-                    .client_uuid = v.embeded.client_uuid,
+                    .client_uuid = v.embedded.client_uuid,
                     .payload = .{
-                        .viewport_id = v.embeded.viewport_id,
+                        .viewport_id = v.embedded.viewport_id,
                         .status = .success,
                     },
                 },
             });
 
             com.server_events.push_assume_capacity(.{
-                .remote_viewport_embeded = .{
+                .remote_viewport_embedded = .{
                     .client_uuid = v.embeder.key.client_uuid,
                     .payload = .{
                         .remote_viewport_id = v.embeder.key.remote_viewport_id,
                         .status = .success,
                         .render_size = v.embeder.render_size,
-                        .viewport_key = v.embeded,
+                        .viewport_key = v.embedded,
                     },
                 },
             });
@@ -704,18 +704,18 @@ fn viewport_create_with_remote_viewport(
     com: *Compositor,
     args: @FieldType(Event, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
-    const embeded_key = args.client_uuid.viewport_key(args.payload.viewport_id);
+    const embedded_key = args.client_uuid.viewport_key(args.payload.viewport_id);
 
-    std.debug.assert(embeded_key.viewport_id.is_server_id());
+    std.debug.assert(embedded_key.viewport_id.is_server_id());
 
-    const embeded = com.resources.getPtr(embeded_key.client_uuid) orelse return error.ClientDoesNotExist;
+    const embedded = com.resources.getPtr(embedded_key.client_uuid) orelse return error.ClientDoesNotExist;
     std.debug.assert(
-        embeded.viewports_pending.orderedRemove(embeded_key.viewport_id),
+        embedded.viewports_pending.orderedRemove(embedded_key.viewport_id),
     );
 
-    const embeder = try com.resources_of_embeder_get(embeded_key);
+    const embeder = try com.resources_of_embeder_get(embedded_key);
     const remote_viewport_data =
-        embeder.remote_viewports_pending_fetch_remove_by_embeded_key(embeded_key) orelse
+        embeder.remote_viewports_pending_fetch_remove_by_embedded_key(embedded_key) orelse
         return error.RemoteViewportDoesNotExist;
 
     switch (remote_viewport_data.embed_in) {
@@ -725,10 +725,10 @@ fn viewport_create_with_remote_viewport(
 
             try embeder_viewport.remote_viewports.ensureUnusedCapacity(com.gpa, 1);
 
-            try embeded.viewport_create(
+            try embedded.viewport_create(
                 com,
                 .{ .viewport = embeder_viewport },
-                embeded_key.viewport_id,
+                embedded_key.viewport_id,
                 embeder_viewport.window_id,
                 remote_viewport_data.clip_rect,
                 args.payload.size,
@@ -738,16 +738,16 @@ fn viewport_create_with_remote_viewport(
                 args.payload.buffer_type,
             );
 
-            embeder_viewport.remote_viewports.appendAssumeCapacity(embeded_key);
+            embeder_viewport.remote_viewports.appendAssumeCapacity(embedded_key);
         },
         .window => |id| {
             const window_handle = com.muxi.window_handle_from_id(id) orelse
                 return error.WindowDoesNotExist;
 
-            try embeded.viewport_create(
+            try embedded.viewport_create(
                 com,
                 .{ .window = window_handle },
-                embeded_key.viewport_id,
+                embedded_key.viewport_id,
                 id,
                 remote_viewport_data.clip_rect,
                 args.payload.size,
@@ -763,8 +763,8 @@ fn viewport_create_with_remote_viewport(
         remote_viewport_data.remote_viewport_id,
         embeder.client_uuid,
         remote_viewport_data.embed_in,
-        embeded_key.client_uuid,
-        embeded_key.viewport_id,
+        embedded_key.client_uuid,
+        embedded_key.viewport_id,
     });
 
     return .{
@@ -777,7 +777,7 @@ fn viewport_create_with_remote_viewport(
                 .render_size = args.payload.size,
             },
 
-            .embeded = embeded_key,
+            .embedded = embedded_key,
         },
     };
 }
@@ -1322,7 +1322,7 @@ pub const ViewportCreateResult = union(enum) {
             key: RemoteViewportKey,
             render_size: ptypes.Size,
         },
-        embeded: ViewportKey,
+        embedded: ViewportKey,
     },
 };
 

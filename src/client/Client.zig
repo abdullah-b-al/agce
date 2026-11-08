@@ -240,12 +240,12 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             );
         },
 
-        .remote_viewport_embeded => |e| {
+        .remote_viewport_embedded => |e| {
             const rvp = client.remote_viewports.get(e.remote_viewport_id) orelse return;
             switch (e.status) {
                 .success => {
                     if (client.viewports.get(rvp.parent)) |vp| {
-                        vp.event_push(.{ .remote_viewport_embeded = rvp.id });
+                        vp.event_push(.{ .remote_viewport_embedded = rvp.id });
                     }
                     rvp.state = .{ .shown = e.viewport_key };
                 },
@@ -688,7 +688,7 @@ pub const Event = union(enum) {
     mouse_button: server_to_client.MouseButton,
     mouse_scroll: server_to_client.MouseScroll,
     remote_viewport_closed: RemoteViewportID,
-    remote_viewport_embeded: RemoteViewportID,
+    remote_viewport_embedded: RemoteViewportID,
     wake_up,
 };
 

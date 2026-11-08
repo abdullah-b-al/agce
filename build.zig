@@ -197,8 +197,8 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
-    const embeded = b.createModule(.{
-        .root_source_file = b.path("src/embeded/root.zig"),
+    const embedded = b.createModule(.{
+        .root_source_file = b.path("src/embedded/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -230,7 +230,7 @@ pub fn build(b: *std.Build) !void {
     install_exe(b, "agce-mux", mux, step_mux);
 
     build_tests(b, target, optimize, client, compositor, mux, constants, glad);
-    build_sdl_test(b, target, optimize, embeded);
+    build_sdl_test(b, target, optimize, embedded);
 }
 
 fn build_tests(
@@ -313,7 +313,7 @@ fn build_sdl_test(
     b: *Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    embeded: *Build.Module,
+    embedded: *Build.Module,
 ) void {
     const step = b.step("sdl3", "Build SDL3 test");
 
@@ -345,7 +345,7 @@ fn build_sdl_test(
         .optimize = optimize,
         .imports = &.{
             .{ .name = "sdl", .module = header },
-            .{ .name = "embeded", .module = embeded },
+            .{ .name = "embedded", .module = embedded },
         },
     });
     module.linkLibrary(sdl3);

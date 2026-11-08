@@ -1,4 +1,4 @@
-const Embeded = @This();
+const Embedded = @This();
 
 gpa: std.mem.Allocator,
 rt: *zio.Runtime,
@@ -24,8 +24,8 @@ pub fn create(
     ptr: *anyopaque,
     native: Native,
     class: []const u8,
-) !*Embeded {
-    const em = try gpa.create(Embeded);
+) !*Embedded {
+    const em = try gpa.create(Embedded);
     errdefer gpa.destroy(em);
 
     const exit_event = try gpa.create(Io.Event);
@@ -54,7 +54,7 @@ pub fn create(
                 .uuid = mux_interface.uuid,
             },
         },
-        .socket_owner = .{ .embeded = class },
+        .socket_owner = .{ .embedded = class },
     };
 
     const com: *compositor.CompositorHandle = blk: switch (native) {
@@ -100,7 +100,7 @@ pub fn create(
     return em;
 }
 
-pub fn destroy(em: *Embeded) void {
+pub fn destroy(em: *Embedded) void {
     em.tick_thread_exit.set(em.rt.io());
     em.connection.send_wake_up(em.rt.io(), em.gpa) catch {
         // TODO: Figure out a way to not return an error
@@ -127,7 +127,7 @@ pub fn destroy(em: *Embeded) void {
     em.gpa.destroy(em);
 }
 
-pub fn remote_client_create(em: *Embeded) !*RemoteClient {
+pub fn remote_client_create(em: *Embedded) !*RemoteClient {
     try em.remote_clients.ensureUnusedCapacity(em.gpa, 1);
     const remote = try em.gpa.create(RemoteClient);
 
@@ -137,7 +137,7 @@ pub fn remote_client_create(em: *Embeded) !*RemoteClient {
     return remote;
 }
 
-pub fn remote_client_destroy(em: *Embeded, remote: *RemoteClient) void {
+pub fn remote_client_destroy(em: *Embedded, remote: *RemoteClient) void {
     for (em.remote_clients.items, 0..) |r, i| {
         if (r == remote) {
             _ = em.remote_clients.swapRemove(i);
@@ -147,7 +147,7 @@ pub fn remote_client_destroy(em: *Embeded, remote: *RemoteClient) void {
     }
 }
 
-pub fn window_add(em: *Embeded, new: *anyopaque, size: ptypes.Size) !void {
+pub fn window_add(em: *Embedded, new: *anyopaque, size: ptypes.Size) !void {
     for (em.windows.values()) |win| {
         const this: *anyopaque = @ptrCast(win.handle);
         if (new == this) return;
@@ -161,7 +161,7 @@ pub fn window_add(em: *Embeded, new: *anyopaque, size: ptypes.Size) !void {
     );
 }
 
-pub fn remote_viewport_embed(em: *Embeded, remote: *RemoteClient, window_handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
+pub fn remote_viewport_embed(em: *Embedded, remote: *RemoteClient, window_handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
     const window_id = em.window_id_from_handle(@ptrCast(window_handle)) orelse return error.WindowDoesNotExist;
 
     try em.remote_viewports.ensureUnusedCapacity(em.gpa, 1);
@@ -197,7 +197,7 @@ pub fn remote_viewport_embed(em: *Embeded, remote: *RemoteClient, window_handle:
     return remote_vp;
 }
 
-fn window_id_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?WindowID {
+fn window_id_from_handle(em: *Embedded, handle: *Compositor.WindowHandle) ?WindowID {
     for (em.windows.keys(), em.windows.values()) |id, win| {
         if (win.handle == handle) return id;
     }
@@ -205,7 +205,7 @@ fn window_id_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?Window
     return null;
 }
 
-pub fn window_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?*Window {
+pub fn window_from_handle(em: *Embedded, handle: *Compositor.WindowHandle) ?*Window {
     for (em.windows.values()) |*win| {
         if (win.handle == handle) return win;
     }
@@ -213,7 +213,7 @@ pub fn window_from_handle(em: *Embeded, handle: *Compositor.WindowHandle) ?*Wind
     return null;
 }
 
-pub fn poll(em: *Embeded) void {
+pub fn poll(em: *Embedded) void {
     var arena: std.heap.ArenaAllocator = .init(em.gpa);
     defer arena.deinit();
 
@@ -276,7 +276,7 @@ pub fn poll(em: *Embeded) void {
                     }
                 }
             },
-            .remote_viewport_embeded => |m| {
+            .remote_viewport_embedded => |m| {
                 const rvp = em.remote_viewports.get(m.remote_viewport_id) orelse
                     continue;
 
@@ -321,24 +321,24 @@ const mux_interface = struct {
     }
 
     fn window_id_from_handle(ptr: *anyopaque, handle: *Compositor.WindowHandle) ?WindowID {
-        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        const em: *Embedded = @ptrCast(@alignCast(ptr));
         return em.window_id_from_handle(handle);
     }
 
     fn window_handle_from_id(ptr: *anyopaque, id: WindowID) ?*Compositor.WindowHandle {
-        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        const em: *Embedded = @ptrCast(@alignCast(ptr));
         const win = em.windows.get(id) orelse return null;
         return win.handle;
     }
 
     fn window_size(ptr: *anyopaque, id: WindowID) ?ptypes.Size {
-        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        const em: *Embedded = @ptrCast(@alignCast(ptr));
         const win = em.windows.get(id) orelse return null;
         return win.size;
     }
 
     fn uuid(ptr: *anyopaque) ptypes.ClientUUID {
-        const em: *Embeded = @ptrCast(@alignCast(ptr));
+        const em: *Embedded = @ptrCast(@alignCast(ptr));
         return em.connection.uuid;
     }
 };
@@ -351,7 +351,7 @@ const ptypes = @import("protocol").types;
 const WindowID = Compositor.WindowID;
 const zio = @import("zio");
 const LocalConnection = @import("LocalConnection.zig");
-const log = std.log.scoped(.agce_embeded);
+const log = std.log.scoped(.agce_embedded);
 const RemoteClient = @import("remote_client").RemoteClient;
 const Process = @import("remote_client").Process;
 const RemoteViewport = @import("RemoteViewport.zig");

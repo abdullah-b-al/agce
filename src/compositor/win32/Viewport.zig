@@ -89,7 +89,7 @@ pub fn deinit(vp: *Viewport) void {
     switch (vp.parent_tag) {
         .window => {
             // HACK: Do not destroy the window if removing the parent fails.
-            // In the `embeded` module where the parent is in a different thread,
+            // In the `embedded` module where the parent is in a different thread,
             // calling DestroyWindow will cause a deadlock as the input threads are attached.
             // I could not find a way to detach them that prevented the deadlock.
             //

@@ -25,11 +25,11 @@ pub fn main(init: std.process.Init) !void {
     const window_ptr = window_handle_from_sdl_window(window).?;
     std.log.debug("Got wayland display {} surface {}", .{ display, window_ptr });
 
-    const eh: *embeded.EmbededHandle = try .create(
+    const eh: *embedded.EmbeddedHandle = try .create(
         init.gpa,
         init.environ_map,
         display,
-        embeded_native_from_driver(),
+        embedded_native_from_driver(),
         "sdl_test",
     );
     defer eh.destroy();
@@ -90,8 +90,8 @@ pub fn main(init: std.process.Init) !void {
 const HandleEvent = enum { exit, run };
 fn handle_event(
     event: sdl.SDL_Event,
-    eh: *embeded.EmbededHandle,
-    remote_vp: *embeded.RemoteViewportHandle,
+    eh: *embedded.EmbeddedHandle,
+    remote_vp: *embedded.RemoteViewportHandle,
 ) HandleEvent {
     if (event.type == sdl.SDL_EVENT_QUIT) {
         return .exit;
@@ -132,7 +132,7 @@ fn handle_event(
 fn window_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     const pid = sdl.SDL_GetWindowProperties(window);
 
-    const pointer_name = switch (embeded_native_from_driver()) {
+    const pointer_name = switch (embedded_native_from_driver()) {
         .wayland_display => sdl.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
         .win32_instance => sdl.SDL_PROP_WINDOW_WIN32_HWND_POINTER,
     };
@@ -145,7 +145,7 @@ fn window_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
 fn display_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     const pid = sdl.SDL_GetWindowProperties(window);
 
-    const pointer_name = switch (embeded_native_from_driver()) {
+    const pointer_name = switch (embedded_native_from_driver()) {
         .wayland_display => sdl.SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER,
         .win32_instance => sdl.SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER,
     };
@@ -156,7 +156,7 @@ fn display_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     return ptr;
 }
 
-fn embeded_native_from_driver() embeded.Native {
+fn embedded_native_from_driver() embedded.Native {
     const driver_name = sdl.SDL_GetCurrentVideoDriver();
     const driver = driver_name[0..std.mem.len(driver_name)];
     if (std.mem.eql(u8, driver, "wayland"))
@@ -169,4 +169,4 @@ fn embeded_native_from_driver() embeded.Native {
 
 const std = @import("std");
 const sdl = @import("sdl");
-const embeded = @import("embeded");
+const embedded = @import("embedded");
