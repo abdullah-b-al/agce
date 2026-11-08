@@ -47,7 +47,26 @@ pub const CompositorHandle = opaque {
     }
 
     pub fn window_focused_by_keyboard(h: *CompositorHandle, key: ptypes.ViewportKey) void {
-        h.cast().window_focused_by_keyboard(key);
+        const com = h.cast();
+        if (com.input_focus_keyboard == null) {
+            com.deferred_events.append(
+                com.gpa,
+                .{ .keyboard_enter = .{ .viewport_key = key } },
+            ) catch return;
+        }
+    }
+
+    pub fn key_of_focused_viewport_keyboard(h: *CompositorHandle) ?ptypes.ViewportKey {
+        return h.cast().input_focus_keyboard;
+    }
+
+    pub fn native_handle_from_viewport_key(h: *CompositorHandle, key: ptypes.ViewportKey) ?*anyopaque {
+        const com = h.cast();
+        const vp = com.viewport_from_key(key) orelse return null;
+        return switch (vp.native_tag()) {
+            .wayland => |tag| @ptrCast(tag.viewport(vp).surface),
+            .win32 => |tag| @ptrCast(tag.viewport(vp).child_window_handle),
+        };
     }
 
     pub fn connect_local(h: *CompositorHandle) !zio.net.Stream {

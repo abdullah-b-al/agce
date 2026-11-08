@@ -79,6 +79,16 @@ pub fn window_proc(
     };
 
     switch (msg) {
+        win32_win.WM_SETFOCUS => {
+            // Never focus the window, reset focus to the viewport.
+            if (mux.compositor.key_of_focused_viewport_keyboard()) |focused| {
+                const child_handle = mux.compositor.native_handle_from_viewport_key(focused).?;
+                _ = win32_kbm.SetFocus(@ptrCast(child_handle));
+            }
+
+            mux.compositor.window_focused_by_keyboard(win.viewport_key);
+            return 0;
+        },
         win32_win.WM_SIZE => {
             const low: isize = lparam & 0xFFFF;
             const high: isize = (lparam >> 16) & 0xFFFF;
@@ -106,3 +116,4 @@ const ptypes = @import("protocol").types;
 const win32_foundation = @import("win32").foundation;
 const win32_win = @import("win32").ui.windows_and_messaging;
 const Mux = @import("Mux.zig");
+const win32_kbm = @import("win32").ui.input.keyboard_and_mouse;

@@ -147,13 +147,6 @@ pub fn destroy(com: *Compositor) void {
     com.gpa.destroy(com);
 }
 
-pub fn window_focused_by_keyboard(com: *Compositor, viewport_key: ViewportKey) void {
-    if (com.input_focus_keyboard == null) {
-        com.server_events.ensure_unused_capacity(2) catch return;
-        com.keyboard_focus_set_and_push_event(viewport_key);
-    }
-}
-
 pub fn native_tag(com: *const Compositor) NativeTag {
     return switch (os) {
         .linux => switch (com.linux) {
@@ -240,9 +233,8 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
 
         .cursor_shape_set => |args| try com.cursor_shape_set(args),
 
-        .keyboard_key => |args| try com.keyboard_key(args),
         .keyboard_enter => |args| try com.keyboard_enter(args),
-        .keyboard_leave => |args| try com.keyboard_leave(args),
+        .keyboard_key => |args| try com.keyboard_key(args),
         .mouse_enter => |args| try com.mouse_enter(args),
         .mouse_leave => |args| try com.mouse_leave(args),
         .mouse_motion => |args| try com.mouse_motion(args),
@@ -265,6 +257,7 @@ pub fn client_disconnected(com: *Compositor, id: ClientUUID) void {
     while (i > 0) {
         i -= 1;
         const vp_id = rs.viewports.keys()[i];
+        // TODO: Do not call viewport_destroy. It does too much for clean up
         com.viewport_destroy(.{ .client_uuid = rs.client_uuid, .viewport_id = vp_id });
     }
 
@@ -289,11 +282,11 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
         });
 
         if (std.meta.eql(com.input_focus_keyboard, key)) {
-            com.keyboard_focus_set_and_push_event(parent_key);
+            com.keyboard_focus_switch_assume_capacity(parent_key);
         }
 
         if (std.meta.eql(com.input_focus_mouse, key)) {
-            com.mouse_focus_set_and_push_event(parent_key);
+            com.mouse_focus_switch_assume_capacity(parent_key);
         }
 
         parent.remote_viewport_remove(key);
@@ -1111,7 +1104,7 @@ pub fn cursor_shape_set_from_viewport(com: *Compositor, vp: *Viewport, viewport_
     }
 }
 
-pub fn mouse_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
+fn mouse_focus_switch_assume_capacity(com: *Compositor, key: ViewportKey) void {
     std.debug.assert(com.server_events.capacity >= 2);
 
     if (std.meta.eql(com.input_focus_mouse, key)) return;
@@ -1140,7 +1133,7 @@ pub fn mouse_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
     com.cursor_shape_set_from_viewport(vp, key);
 }
 
-pub fn keyboard_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
+fn keyboard_focus_switch_assume_capacity(com: *Compositor, key: ViewportKey) void {
     std.debug.assert(com.server_events.capacity >= 2);
 
     if (std.meta.eql(com.input_focus_keyboard, key)) return;
@@ -1156,13 +1149,12 @@ pub fn keyboard_focus_set_and_push_event(com: *Compositor, key: ViewportKey) voi
 
     com.input_focus_keyboard = key;
     com.server_events.push_assume_capacity(.{
-        .keyboard_leave = .{
+        .keyboard_enter = .{
             .client_uuid = key.client_uuid,
             .payload = .{ .viewport_id = key.viewport_id },
         },
     });
 
-    // TODO: Notify all viewports of this window that the keyboard left
     switch (com.native_tag()) {
         .wayland => {},
         .win32 => |tag| {
@@ -1235,22 +1227,17 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !
 
 pub fn keyboard_enter(com: *Compositor, args: @FieldType(Event, "keyboard_enter")) !void {
     try com.server_events.ensure_unused_capacity(2);
-    com.keyboard_focus_set_and_push_event(args.viewport_key);
-}
-
-pub fn keyboard_leave(com: *Compositor, _: @FieldType(Event, "keyboard_leave")) !void {
-    try com.server_events.ensure_unused_capacity(2);
-    com.keyboard_focus_set_and_push_event(undefined);
+    com.keyboard_focus_switch_assume_capacity(args.viewport_key);
 }
 
 pub fn mouse_enter(com: *Compositor, args: @FieldType(Event, "mouse_enter")) !void {
-    try com.server_events.ensure_unused_capacity(1);
-    com.mouse_focus_set_and_push_event(args.viewport_key);
+    try com.server_events.ensure_unused_capacity(2);
+    com.mouse_focus_switch_assume_capacity(args.viewport_key);
 }
 
 pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !void {
     try com.server_events.ensure_unused_capacity(1);
-    com.input_focus_mouse = null;
+
     com.server_events.push_assume_capacity(.{
         .mouse_leave = .{
             .client_uuid = args.viewport_key.client_uuid,
@@ -1259,6 +1246,10 @@ pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !vo
             },
         },
     });
+
+    if (std.meta.eql(com.input_focus_mouse, args.viewport_key)) {
+        com.input_focus_mouse = null;
+    }
 }
 
 pub fn mouse_motion(com: *Compositor, args: @FieldType(Event, "mouse_motion")) !void {
@@ -1278,11 +1269,11 @@ pub fn mouse_motion(com: *Compositor, args: @FieldType(Event, "mouse_motion")) !
 }
 
 pub fn mouse_button(com: *Compositor, args: @FieldType(Event, "mouse_button")) !void {
-    try com.server_events.ensure_unused_capacity(1);
+    try com.server_events.ensure_unused_capacity(3);
 
     const key = com.input_focus_mouse orelse return;
     if (args.state == .pressed) {
-        com.keyboard_focus_set_and_push_event(key);
+        com.keyboard_focus_switch_assume_capacity(key);
     }
 
     com.server_events.push_assume_capacity(.{
@@ -1393,7 +1384,6 @@ pub const Event = union(enum) {
 
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
-    keyboard_leave: KeyboardLeave,
 
     mouse_enter: MouseEnter,
     mouse_leave: MouseLeave,
@@ -1441,10 +1431,6 @@ pub const Event = union(enum) {
     };
 
     pub const KeyboardEnter = struct {
-        viewport_key: ViewportKey,
-    };
-
-    pub const KeyboardLeave = struct {
         viewport_key: ViewportKey,
     };
 

@@ -84,9 +84,9 @@ fn viewport_proc(
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
         win32_win.WM_CLOSE => {
-            com.deferred_events.appendAssumeCapacity(.{
+            com.deferred_events.append(com.gpa, .{
                 .viewport_should_close = .{ .viewport_key = vp_key },
-            });
+            }) catch return 0;
             return 0;
         },
 

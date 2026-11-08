@@ -708,7 +708,6 @@ pub fn should_flush(_: *Wayland, event: Compositor.Event) bool {
         .viewport_create,
         .keyboard_key,
         .keyboard_enter,
-        .keyboard_leave,
         .mouse_enter,
         .mouse_leave,
         .mouse_motion,
