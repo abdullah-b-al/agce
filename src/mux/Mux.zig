@@ -125,6 +125,19 @@ pub fn destroy(mux: *Mux) void {
     mux.gpa.destroy(mux);
 }
 
+pub fn tick(mux: *Mux, timeout: std.Io.Timeout) !void {
+    const poll_result = try mux.compositor.poll(timeout);
+
+    if (poll_result.dispatch) {
+        mux.dispatch();
+    }
+
+    try mux.compositor.tick(poll_result);
+
+    mux.flush();
+    mux.windows_destroy_if_closed();
+}
+
 pub fn dispatch(mux: *Mux) void {
     switch (mux.compositor.native_tag()) {
         .wayland => |tag| {

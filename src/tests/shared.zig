@@ -48,28 +48,20 @@ pub const TestServer = struct {
 
         const rt = try zio.Runtime.init(gpa, .{});
         defer rt.deinit();
-        const io = rt.io();
 
-        const com: *CompositorHandle = blk: {
-            break :blk @ptrCast(try Compositor.create(
-                io,
-                gpa,
-                &environ_map,
-                src.fn_name,
-                .mux,
-            ));
-        };
-        defer com.destroy();
+        const mux: *Mux = try .create(rt.io(), gpa, &environ_map);
+        defer mux.destroy();
 
         while (!exit.isSet()) {
-            const poll_result = com.poll(
+            mux.tick(
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
                 error.Timeout => continue,
-                else => |e| return e,
+                else => |e| {
+                    std.log.err("mux.compositor.poll() {}", .{err});
+                    return e;
+                },
             };
-
-            try com.tick(poll_result);
         }
     }
 };
@@ -124,7 +116,6 @@ const client = @import("client");
 const constants = @import("constants");
 const glad = @import("glad");
 const CompositorHandle = @import("compositor").CompositorHandle;
-const Compositor = @import("compositor").Compositor;
-const Server = @import("compositor").Server;
+const Mux = @import("mux").Mux;
 const zio = @import("compositor").zio;
 const tick = @import("compositor").tick;

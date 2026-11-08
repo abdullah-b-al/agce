@@ -1,4 +1,4 @@
-var exit = false;
+pub const Mux = @import("Mux.zig");
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
@@ -37,19 +37,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer mux.destroy();
 
     while (!exit) {
-        const poll_result = try mux.compositor.poll(.none);
-
-        if (poll_result.dispatch) {
-            mux.dispatch();
-        }
-
-        try mux.compositor.tick(poll_result);
-
-        mux.flush();
-        mux.windows_destroy_if_closed();
+        try mux.tick(.none);
     }
 }
 
+var exit = false;
 pub fn interrupt_handler(sig: std.os.linux.SIG) callconv(.c) void {
     switch (sig) {
         .INT => {
@@ -76,4 +68,3 @@ const Compositor = compositor.Compositor;
 const Server = compositor.Server;
 const zio = @import("zio");
 const cwl = @import("wayland").client.wl;
-const Mux = @import("Mux.zig");

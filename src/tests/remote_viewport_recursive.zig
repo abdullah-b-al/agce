@@ -49,6 +49,7 @@ pub fn main(init: std.process.Init) !void {
     defer if (remote_viewport) |rvp| rvp.destroy();
     defer if (maybe_child) |*c| {
         _ = c.wait() catch {};
+        c.deinit();
     };
 
     const rvp_width = @divFloor(viewport.size().width, 3) * 2;
@@ -63,13 +64,12 @@ pub fn main(init: std.process.Init) !void {
         const remote = try handle.remote_client_create();
         var child = try handle.process_init(&.{self_path});
 
-        maybe_child = child;
-
         std.log.debug("depth {} spawn", .{depth});
         try child.spawn(remote, .{
             .stdout = .inherit,
             .stderr = .inherit,
         });
+        maybe_child = child;
 
         std.log.debug("depth {} connected poll", .{depth});
         while (remote.status != .connected) {

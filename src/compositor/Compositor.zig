@@ -29,43 +29,6 @@ linux: if (os == .linux) Linux else void,
 input_focus_mouse: ?ViewportKey,
 input_focus_keyboard: ?ViewportKey,
 
-pub fn create(
-    io: Io,
-    gpa: std.mem.Allocator,
-    environ_map: *const std.process.Environ.Map,
-    class: []const u8,
-    suffix: Server.UnixSocketOwner,
-) !*Compositor {
-    if (true) {
-        @panic("Temporarely disabled. Used by tests which should move to using Mux");
-    }
-    return blk: switch (os) {
-        .linux => {
-            const display = try cwl.Display.connect(null);
-            break :blk try .create_wayland(display, .{
-                .io = io,
-                .gpa = gpa,
-                .environ_map = environ_map,
-                .class = class,
-                .muxi = null,
-                .socket_owner = suffix,
-            });
-        },
-        .windows => {
-            const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
-            break :blk try .create_win32(hinstance, .{
-                .io = io,
-                .gpa = gpa,
-                .environ_map = environ_map,
-                .class = class,
-                .muxi = null,
-                .socket_owner = suffix,
-            });
-        },
-        else => @compileError("Unsupported OS"),
-    };
-}
-
 pub fn create_wayland(display: *cwl.Display, args: CreateArgs) !*Compositor {
     const com: *Compositor = try .create_undefined_native(args);
 

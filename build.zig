@@ -229,7 +229,7 @@ pub fn build(b: *std.Build) !void {
 
     install_exe(b, "agce-mux", mux, step_mux);
 
-    build_tests(b, target, optimize, client, compositor, constants, glad);
+    build_tests(b, target, optimize, client, compositor, mux, constants, glad);
     build_sdl_test(b, target, optimize, embeded);
 }
 
@@ -239,6 +239,7 @@ fn build_tests(
     optimize: std.builtin.OptimizeMode,
     client: *Build.Module,
     compositor: *Build.Module,
+    mux: *Build.Module,
     constants: *Build.Module,
     glad: Glad,
 ) void {
@@ -258,6 +259,7 @@ fn build_tests(
                 .{ .name = "client", .module = client },
                 .{ .name = "glad", .module = glad.c },
                 .{ .name = "compositor", .module = compositor },
+                .{ .name = "mux", .module = mux },
                 .{ .name = "constants", .module = constants },
                 .{ .name = "z2d", .module = z2d },
             },

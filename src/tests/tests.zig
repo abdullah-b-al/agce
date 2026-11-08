@@ -1,7 +1,7 @@
 const this_file = @This();
 
 pub const std_options: std.Options = .{
-    .log_level = .info,
+    .log_level = .debug,
 };
 
 const files = .{
@@ -46,7 +46,14 @@ pub fn main(init: std.process.Init) !void {
 
     while (args.next()) |arg| {
         const case = std.meta.stringToEnum(Case, arg) orelse {
-            std.process.fatal("Unknown test case {s}", .{arg});
+            const available = comptime blk: {
+                var str: []const u8 = "";
+                for (@typeInfo(Case).@"enum".fields) |f| {
+                    str = str ++ f.name ++ "\n";
+                }
+                break :blk str;
+            };
+            std.process.fatal("Unknown test case {s}.\nAvailable cases:\n{s}", .{ arg, available });
         };
 
         cases.insert(case);
@@ -81,6 +88,9 @@ fn create_a_viewport(init: std.process.Init) !void {
     defer handle.deinit();
 
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+
+    try init.io.sleep(.fromSeconds(1), .awake);
+
     vp.destroy();
 
     try server.await(init);
