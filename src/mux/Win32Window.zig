@@ -84,11 +84,12 @@ pub fn window_proc(
             const high: isize = (lparam >> 16) & 0xFFFF;
             const w: i16 = @truncate(low);
             const h: i16 = @truncate(high);
-            _ = w;
-            _ = h;
+            const size: ptypes.Size = .{ .width = w, .height = h };
 
+            mux.compositor.viewport_resize(win.viewport_key, size) catch {};
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
+
         win32_win.WM_CLOSE => {
             mux.compositor.viewport_should_close(win.viewport_key) catch return 0;
             return 0;
