@@ -1,24 +1,12 @@
-var io: Io = undefined;
-var gpa: std.mem.Allocator = undefined;
+pub fn events_resize(init: std.process.Init) !void {
+    const gpa = init.gpa;
 
-pub fn interactive_events(init: std.process.Init) !void {
-    io = init.io;
-    gpa = init.gpa;
     var server = try shared.TestServer.concurrent(@src(), init);
     errdefer server.await(init) catch {};
 
     const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
-    try events_resize(handle);
-    try events_mouse(handle);
-    try events_keys(handle);
-    try events_cursor_shape(handle);
-
-    try server.await(init);
-}
-
-fn events_resize(handle: *client.ClientHandle) !void {
     const ExpectEvent = enum {
         resize_to_480,
         resize_to_720,
@@ -26,7 +14,6 @@ fn events_resize(handle: *client.ClientHandle) !void {
     };
 
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
-    defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
     defer events.deinit(gpa);
@@ -62,11 +49,21 @@ fn events_resize(handle: *client.ClientHandle) !void {
             .{current_size.width},
         );
         defer gpa.free(current_size_text);
-        try render_enums_with_header(vp, current_size_text, ExpectEvent, &expect);
+        try render_enums_with_header(init.io, init.gpa, vp, current_size_text, ExpectEvent, &expect);
     }
+
+    vp.destroy();
 }
 
-fn events_mouse(handle: *client.ClientHandle) !void {
+pub fn events_mouse(init: std.process.Init) !void {
+    const gpa = init.gpa;
+
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
+
+    const handle = try shared.client_init(@src(), init);
+    defer handle.deinit();
+
     const ExpectEvent = enum {
         mouse_motion,
         mouse_enter,
@@ -109,11 +106,19 @@ fn events_mouse(handle: *client.ClientHandle) !void {
             }
         }
 
-        try render_enums_with_header(vp, "Expecting:", ExpectEvent, &expect);
+        try render_enums_with_header(init.io, init.gpa, vp, "Expecting:", ExpectEvent, &expect);
     }
 }
 
-fn events_keys(handle: *client.ClientHandle) !void {
+pub fn events_keys(init: std.process.Init) !void {
+    const gpa = init.gpa;
+
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
+
+    const handle = try shared.client_init(@src(), init);
+    defer handle.deinit();
+
     const ExpectEvent = enum {
         key_a_pressed,
         key_a_released,
@@ -151,11 +156,19 @@ fn events_keys(handle: *client.ClientHandle) !void {
             }
         }
 
-        try render_enums_with_header(vp, "Expecting:", ExpectEvent, &expect);
+        try render_enums_with_header(init.io, init.gpa, vp, "Expecting:", ExpectEvent, &expect);
     }
 }
 
-fn events_cursor_shape(handle: *client.ClientHandle) !void {
+pub fn events_cursor_shape(init: std.process.Init) !void {
+    const gpa = init.gpa;
+
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
+
+    const handle = try shared.client_init(@src(), init);
+    defer handle.deinit();
+
     const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
     defer vp.destroy();
 
@@ -165,7 +178,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
     var mouse_x: i32 = 0;
     var mouse_y: i32 = 0;
     var current_cursor: ?client.CursorShape = null;
-    var hover_time: Io.Timestamp = .now(io, .awake);
+    var hover_time: Io.Timestamp = .now(init.io, .awake);
     while (expect.count() > 0) {
         try handle.poll(0);
 
@@ -199,7 +212,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
             frame.height,
         );
 
-        var context = z2d.Context.init(io, gpa, &surface);
+        var context = z2d.Context.init(init.io, gpa, &surface);
         defer context.deinit();
 
         const line_size = 64;
@@ -216,7 +229,7 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
             if (mouse_y >= y and mouse_y <= y + line_size) {
                 try handle.cursor_shape_set(vp.id(), e);
                 if (current_cursor == null) {
-                    hover_time = .now(io, .awake);
+                    hover_time = .now(init.io, .awake);
                     current_cursor = e;
                 }
 
@@ -230,10 +243,17 @@ fn events_cursor_shape(handle: *client.ClientHandle) !void {
 
         try vp.cpu_present();
 
-        try io.sleep(.fromMilliseconds(33), .awake);
+        try init.io.sleep(.fromMilliseconds(33), .awake);
     }
 }
-fn render_enums_with_header(vp: *client.ViewportHandle, header_text: []const u8, comptime E: type, expect: *const std.EnumSet(E)) !void {
+fn render_enums_with_header(
+    io: Io,
+    gpa: std.mem.Allocator,
+    vp: *client.ViewportHandle,
+    header_text: []const u8,
+    comptime E: type,
+    expect: *const std.EnumSet(E),
+) !void {
     const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
 
     const frame = try vp.cpu_buffer_get();

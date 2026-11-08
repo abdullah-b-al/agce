@@ -23,9 +23,6 @@ pub const TestServer = struct {
     exit: *Io.Event,
 
     pub fn concurrent(src: std.builtin.SourceLocation, init: std.process.Init) !TestServer {
-        // Wait between tests to prevent race conditions in windows
-        try init.io.sleep(.fromSeconds(1), .awake);
-
         const exit = try init.gpa.create(Io.Event);
         exit.* = .unset;
 

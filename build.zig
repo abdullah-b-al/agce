@@ -248,11 +248,37 @@ fn build_tests(
         .optimize = optimize,
     }).module("z2d");
 
-    const test_step = b.step("test", "Build tests");
+    const test_step = b.step("tests", "Build tests");
 
     {
         const module = b.createModule(.{
-            .root_source_file = b.path("src/tests/tests.zig"),
+            .root_source_file = b.path("src/tests/phase1.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "client", .module = client },
+                .{ .name = "compositor", .module = compositor },
+                .{ .name = "mux", .module = mux },
+                .{ .name = "constants", .module = constants },
+                .{ .name = "z2d", .module = z2d },
+            },
+        });
+
+        const t = b.addExecutable(.{
+            .name = "tests-phase1",
+            .root_module = module,
+        });
+        const artifact = b.addInstallArtifact(t, .{});
+        test_step.dependOn(&artifact.step);
+        step_all.dependOn(&artifact.step);
+
+        const t_check = b.addExecutable(.{ .name = "tests-phase1-check", .root_module = module, .use_llvm = false });
+        step_check.dependOn(&t_check.step);
+    }
+
+    {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/tests/phase2.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -268,14 +294,14 @@ fn build_tests(
         module.linkLibrary(glad.lib);
 
         const t = b.addExecutable(.{
-            .name = "tests",
+            .name = "tests-phase2",
             .root_module = module,
         });
         const artifact = b.addInstallArtifact(t, .{});
         test_step.dependOn(&artifact.step);
         step_all.dependOn(&artifact.step);
 
-        const t_check = b.addExecutable(.{ .name = "tests-check", .root_module = module, .use_llvm = false });
+        const t_check = b.addExecutable(.{ .name = "tests-phase2-check", .root_module = module, .use_llvm = false });
         step_check.dependOn(&t_check.step);
     }
 
