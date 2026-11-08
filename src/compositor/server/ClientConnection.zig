@@ -7,11 +7,11 @@ pid: ?ptypes.PID,
 
 close_with_error: ?CloseError,
 
-win32_event_handle: Win32EventHandle,
+win32_socket_event: Win32SocketEvent,
 
 pub fn close(c: *ClientConnection) void {
     std.debug.assert(!c.closed);
-    c.win32_event_handle.close();
+    c.win32_socket_event.close();
     c.stream.close();
     c.closed = true;
 }
@@ -329,7 +329,7 @@ fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
 pub const CloseError =
     zio.ev.NetRecv.Error ||
     Server.HandleMessageFromUnknownError ||
-    error{ FailedToSendHandle, FailedToSendFds, FailedToCreateWin32EventHandle };
+    error{ FailedToSendHandle, FailedToSendFds, FailedToCreateWin32SocketEvent };
 
 const std = @import("std");
 const Io = std.Io;
@@ -343,6 +343,6 @@ const utils = @import("utils");
 const zio = @import("zio");
 const win32 = @import("win32");
 const win_sock = @import("win32").networking.win_sock;
-const Win32EventHandle = @import("Win32EventHandle.zig");
+const Win32SocketEvent = @import("Win32SocketEvent.zig");
 const Server = @import("Server.zig");
 const log = std.log.scoped(.Server);

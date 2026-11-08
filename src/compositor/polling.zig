@@ -191,7 +191,7 @@ const PollableWindows = struct {
     source: Source,
     socket_handle: *anyopaque,
 
-    const Target = Win32EventHandle;
+    const Target = Win32SocketEvent;
 
     fn event(p: PollableWindows) Event {
         var ne = std.mem.zeroes(win_sock.WSANETWORKEVENTS);
@@ -217,14 +217,14 @@ const PollableWindows = struct {
     }
 
     fn from_connection(c: ClientConnection, source: Server.MessageSource) PollableWindows {
-        return .from_handle(c.win32_event_handle, .{ .client = source }, c.stream.socket.handle);
+        return .from_handle(c.win32_socket_event, .{ .client = source }, c.stream.socket.handle);
     }
 
     fn from_server(server: *const Server) PollableWindows {
-        return .from_handle(server.win32_event_handle, .server, server.server.socket.handle);
+        return .from_handle(server.win32_socket_event, .server, server.server.socket.handle);
     }
 
-    fn from_handle(event_handle: Win32EventHandle, source: Source, socket_handle: *anyopaque) PollableWindows {
+    fn from_handle(event_handle: Win32SocketEvent, source: Source, socket_handle: *anyopaque) PollableWindows {
         return .{
             .target = event_handle,
             .source = source,
@@ -271,4 +271,4 @@ const ClientConnection = @import("server/ClientConnection.zig");
 const Server = @import("server/Server.zig");
 const Compositor = @import("Compositor.zig");
 const zio = @import("zio");
-const Win32EventHandle = @import("server/Win32EventHandle.zig");
+const Win32SocketEvent = @import("server/Win32SocketEvent.zig");

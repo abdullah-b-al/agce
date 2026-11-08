@@ -11,7 +11,7 @@ clients: Clients,
 io_queue_buffer: []Compositor.Event,
 io_queue: *Io.Queue(Compositor.Event),
 
-win32_event_handle: Win32EventHandle,
+win32_socket_event: Win32SocketEvent,
 
 pub fn create(
     io: Io,
@@ -91,7 +91,7 @@ pub fn create(
     };
     log.info("Created server on {s}", .{unix_path});
 
-    const win32_event_handle = try Win32EventHandle.create(net_server.socket, .accept);
+    const socket_event = try Win32SocketEvent.create(net_server.socket, .accept);
 
     server.* = .{
         .io = io,
@@ -104,7 +104,7 @@ pub fn create(
         .io_queue_buffer = io_queue_buffer,
         .io_queue = io_queue,
 
-        .win32_event_handle = win32_event_handle,
+        .win32_socket_event = socket_event,
     };
     return server;
 }
@@ -112,7 +112,7 @@ pub fn create(
 pub fn destroy(server: *Server) void {
     server.clients.deinit(server.io, server.gpa);
 
-    server.win32_event_handle.close();
+    server.win32_socket_event.close();
     server.server.shutdown(.both) catch {};
     const err =
         if (std.fs.path.isAbsolute(server.unix_path))
@@ -254,7 +254,7 @@ pub fn events_handle(server: *Server, com: *Compositor) void {
                             log.err("events_handle {}", .{err});
                         },
 
-                        error.FailedToCreateWin32EventHandle,
+                        error.FailedToCreateWin32SocketEvent,
                         error.FailedToSendFds,
                         error.FailedToSendHandle,
                         error.ConnectionClosed,
@@ -276,7 +276,7 @@ pub fn handle_event(
     FailedToSendFds,
     FailedToSendHandle,
     ConnectionClosed,
-    FailedToCreateWin32EventHandle,
+    FailedToCreateWin32SocketEvent,
 }!void {
     switch (event) {
         .unknown_client_connected => |stream| {
@@ -683,6 +683,6 @@ const os = @import("builtin").os.tag;
 const ClientConnection = @import("ClientConnection.zig");
 const zio = @import("zio");
 const win_sock = @import("win32").networking.win_sock;
-const Win32EventHandle = @import("Win32EventHandle.zig");
+const Win32SocketEvent = @import("Win32SocketEvent.zig");
 const known_folders = @import("known-folders");
 const polling = @import("../polling.zig");
