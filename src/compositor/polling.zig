@@ -34,9 +34,9 @@ pub fn poll(
         );
     }
 
-    for (server.clients.known.values()) |c| {
+    for (server.clients.remote.values()) |c| {
         pollable.appendAssumeCapacity(
-            .from_connection(c.connection, .{ .known = c.id }),
+            .from_connection(c.connection, .{ .remote = c.id }),
         );
     }
 

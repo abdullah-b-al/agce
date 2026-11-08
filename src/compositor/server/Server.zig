@@ -149,7 +149,7 @@ pub fn process_incoming_messages(
 
             const connection: *ClientConnection = switch (source) {
                 .unknown => |i| &server.clients.unknown.items[i].connection,
-                .known => |id| &server.clients.known.get(id).?.connection,
+                .remote => |id| &server.clients.remote.get(id).?.connection,
                 .local => |id| &server.clients.local.get(id).?.connection,
             };
 
@@ -165,7 +165,7 @@ pub fn process_incoming_messages(
                     const err = error.ConnectionResetByPeer;
                     switch (source) {
                         .unknown => |i| server.mark_for_closing_unknown_client_with(i, err),
-                        .known => |id| server.mark_for_closing_known_client_with(id, err),
+                        .remote => |id| server.mark_for_closing_known_client_with(id, err),
                         .local => |id| server.mark_for_closing_local_client_with(id, err),
                     }
 
@@ -206,7 +206,7 @@ pub fn connect_local(server: *Server) !zio.net.Stream {
 
 fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) void {
     const @"error" = switch (message.from) {
-        .known => server.handle_message_from_known(message, events),
+        .remote => server.handle_message_from_known(message, events),
         .unknown => server.handle_message_from_unknown(message),
         .local => server.handle_message_from_local(message, events),
     };
@@ -219,7 +219,7 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
         => |e| {
             switch (message.from) {
                 .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                .known => @panic("Not possible with a known client"),
+                .remote => @panic("Not possible with a remote client"),
                 .local => @panic("Not possible with a local client"),
             }
         },
@@ -228,7 +228,7 @@ fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayL
         => |e| {
             switch (message.from) {
                 .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                .known => |id| server.mark_for_closing_known_client_with(id, e),
+                .remote => |id| server.mark_for_closing_known_client_with(id, e),
                 .local => |id| server.mark_for_closing_local_client_with(id, e),
             }
         },
@@ -294,7 +294,7 @@ pub fn handle_event(
                 }
             }
 
-            const client = server.clients.known.get(e.client_uuid) orelse return;
+            const client = server.clients.remote.get(e.client_uuid) orelse return;
             client.connection.send_buffer_created_cpu(
                 server.io,
                 server.gpa,
@@ -320,7 +320,7 @@ pub fn handle_event(
                 e.payload.fds.release_timeline.close();
             }
 
-            const client = server.clients.known.get(e.client_uuid) orelse return;
+            const client = server.clients.remote.get(e.client_uuid) orelse return;
             try client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload);
         },
         .texture_created_d3d => |e| {
@@ -331,7 +331,7 @@ pub fn handle_event(
                 e.payload.release_fence_handle.close();
             }
 
-            const client = server.clients.known.get(e.client_uuid) orelse return;
+            const client = server.clients.remote.get(e.client_uuid) orelse return;
             client.connection.send_texture_created_d3d(server.io, server.gpa, e.payload) catch |err|
                 return switch (err) {
                     error.OutOfMemory => error.OutOfMemory,
@@ -346,7 +346,7 @@ pub fn handle_event(
 
         inline else => |e, tag| {
             const connection: *ClientConnection = blk: {
-                if (server.clients.known.get(e.client_uuid)) |known| break :blk &known.connection;
+                if (server.clients.remote.get(e.client_uuid)) |remote| break :blk &remote.connection;
                 if (server.clients.local.get(e.client_uuid)) |local| break :blk &local.connection;
                 return;
             };
@@ -359,9 +359,9 @@ pub fn handle_event(
 }
 
 fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
-    std.debug.assert(message.from == .known);
+    std.debug.assert(message.from == .remote);
 
-    const client_uuid = message.from.known;
+    const client_uuid = message.from.remote;
     const msg = message.payload;
 
     switch (msg) {
@@ -371,7 +371,7 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
         => |_, tag| log.err("Received invalid message for client {s}", .{@tagName(tag)}),
 
         inline else => |_, tag| {
-            std.debug.assert(server.clients.known.contains(client_uuid));
+            std.debug.assert(server.clients.remote.contains(client_uuid));
             const ce = try server.compositor_event_from_message(client_uuid, tag, msg);
             events.appendAssumeCapacity(ce);
         },
@@ -412,7 +412,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
         log.debug("Promoted unknown client to local {f}", .{client.id});
     } else {
         const id: ClientUUID = register.uuid orelse .new(server.io);
-        if (server.clients.known.contains(id)) {
+        if (server.clients.remote.contains(id)) {
             return error.ClientUUIDAlreadyExists;
         }
 
@@ -423,7 +423,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
         // Finalize registration
         //
 
-        const client = server.clients.known.get(id).?;
+        const client = server.clients.remote.get(id).?;
 
         client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
             error.OutOfMemory => error.OutOfMemoryDuringRegister,
@@ -434,7 +434,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 
         // broadcast the new client
         inline for (.{
-            server.clients.known.values(),
+            server.clients.remote.values(),
             server.clients.local.values(),
         }) |clients| {
             for (clients) |other| {
@@ -517,18 +517,18 @@ pub fn compositor_event_from_message(
 }
 
 pub fn close_clients_marked_with_error(server: *Server) void {
-    for (server.clients.known.values()) |client| {
+    for (server.clients.remote.values()) |client| {
         const err = client.connection.close_with_error orelse continue;
         client.connection.close();
 
         if (err == error.ConnectionClosed or err == error.ConnectionResetByPeer) {
-            log.info("Closing known client {f} with {}", .{ client.id, err });
+            log.info("Closing remote client {f} with {}", .{ client.id, err });
         } else {
-            log.err("Closing known client {f} with {}", .{ client.id, err });
+            log.err("Closing remote client {f} with {}", .{ client.id, err });
         }
 
         inline for (&.{
-            server.clients.known.values(),
+            server.clients.remote.values(),
             server.clients.local.values(),
         }) |clients| {
             for (clients) |c| {
@@ -566,7 +566,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
 }
 
 fn mark_for_closing_known_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
-    const client = server.clients.known.get(id) orelse return;
+    const client = server.clients.remote.get(id) orelse return;
     client.connection.close_with_error = err;
 }
 
@@ -625,7 +625,7 @@ pub const RawMessage = struct {
 
 pub const MessageSource = union(enum) {
     unknown: usize,
-    known: ClientUUID,
+    remote: ClientUUID,
     local: ClientUUID,
 };
 
@@ -677,7 +677,7 @@ const client_to_server = @import("protocol").client_to_server;
 const local_client = @import("protocol").local_client;
 const ptypes = @import("protocol").types;
 const ClientUUID = ptypes.ClientUUID;
-const Client = Clients.Client;
+const RemoteClient = Clients.RemoteClient;
 const UnknownClient = Clients.UnknownClient;
 const os = @import("builtin").os.tag;
 const ClientConnection = @import("ClientConnection.zig");

@@ -127,7 +127,7 @@ pub const CompositorHandle = opaque {
 
         try com.resources.ensureTotalCapacity(com.gpa, server.clients.count());
         inline for (.{
-            server.clients.known.keys(),
+            server.clients.remote.keys(),
             server.clients.local.keys(),
         }) |keys| {
             for (keys) |uuid| {
