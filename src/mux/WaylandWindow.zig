@@ -10,6 +10,7 @@ configured: bool,
 
 buffer_pixels: []align(std.heap.page_size_min) u8,
 buffer: CpuBuffer,
+size_from_configure: ptypes.Size,
 
 pub fn init(
     mux: *Mux,
@@ -67,6 +68,7 @@ pub fn init(
         .configured = false,
         .buffer_pixels = pixels,
         .buffer = buffer,
+        .size_from_configure = buffer.size,
     };
 
     xdg_surface.setListener(*Mux, listener_xdg_surface, mux);
@@ -92,14 +94,14 @@ pub fn commit(win: *WaylandWindow) void {
     win.surface.commit();
 }
 
-pub fn resize(win: *WaylandWindow, mux: *Mux, requested_size: ptypes.Size) !void {
+pub fn resize(win: *WaylandWindow, mux: *Mux, requested_size: ptypes.Size) !bool {
     const width, const height = utils.new_dimensions(
         @intCast(requested_size.width),
         @intCast(requested_size.height),
     );
 
     if (width <= win.buffer.size.width and height <= win.buffer.size.height) {
-        return;
+        return false;
     }
 
     const new_size = width * height * win.buffer.format.bytes_per_pixel();
@@ -134,6 +136,8 @@ pub fn resize(win: *WaylandWindow, mux: *Mux, requested_size: ptypes.Size) !void
     win.buffer = new_buffer;
 
     win.fill_color();
+
+    return true;
 }
 
 fn fill_color(win: *WaylandWindow) void {
@@ -156,8 +160,31 @@ pub fn listener_xdg_surface(xdg_surface: *xdg.Surface, event: xdg.Surface.Event,
             xdg_surface.ackConfigure(configure.serial);
             const id = window_id_from_xdg_surface(mux, xdg_surface);
             const win = mux.windows.get(id).?;
-            win.linux.wayland.surface.commit();
-            win.linux.wayland.configured = true;
+            const nw: *WaylandWindow = &win.linux.wayland;
+
+            if (nw.configured) blk: {
+                const size = nw.size_from_configure;
+                const resized = nw.resize(mux, size) catch break :blk;
+
+                if (resized) {
+                    nw.surface.attach(nw.buffer.wl_buffer, 0, 0);
+                    nw.surface.damage(0, 0, nw.buffer.size.width, nw.buffer.size.height);
+                } else {
+                    nw.viewport.setSource(
+                        .fromInt(0),
+                        .fromInt(0),
+                        .fromInt(@truncate(size.width)),
+                        .fromInt(@truncate(size.height)),
+                    );
+                }
+
+                nw.surface.commit();
+
+                mux.compositor.viewport_resize(win.viewport_key, size) catch {};
+            } else {
+                nw.surface.commit();
+                nw.configured = true;
+            }
         },
     }
 }
@@ -177,10 +204,8 @@ pub fn listener_xdg_toplevel(tl: *xdg.Toplevel, event: xdg.Toplevel.Event, mux: 
                 .width = @intCast(configure.width),
                 .height = @intCast(configure.height),
             };
-            win.linux.wayland.resize(mux, size) catch return;
-            win.linux.wayland.surface.commit();
 
-            mux.compositor.viewport_resize(win.viewport_key, size) catch return;
+            win.linux.wayland.size_from_configure = size;
         },
 
         .close => {
