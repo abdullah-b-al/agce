@@ -588,7 +588,6 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
         };
     }
 
-    try rs.buffers_commited.ensureUnusedCapacity(com.gpa, 1);
     const buffer = rs.buffers.getPtr(buffer_id) orelse {
         if (rs.wl_buffers_pending.contains(buffer_id)) {
             log.warn("Buffer is pending {} for {}", .{ buffer_id, client_uuid });

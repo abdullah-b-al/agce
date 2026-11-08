@@ -152,21 +152,28 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
                 std.debug.assert(item.sync == null);
                 const node = com.server_events.create_assume_capacity();
 
-                if (should_be_hidden) {
-                    com.server_events.push(node, .{
-                        .buffer_released = .{
-                            .client_uuid = item.client_uuid,
-                            .payload = .{
-                                .buffer_id = item.buffer_id,
-                                .viewport_id = item.viewport_id,
+                const case: enum { release, commit } =
+                    if (should_be_hidden) .release else .commit;
+
+                branch: switch (case) {
+                    .release => {
+                        com.server_events.push(node, .{
+                            .buffer_released = .{
+                                .client_uuid = item.client_uuid,
+                                .payload = .{
+                                    .buffer_id = item.buffer_id,
+                                    .viewport_id = item.viewport_id,
+                                },
                             },
-                        },
-                    });
-                } else {
-                    rs.buffers_commited.putAssumeCapacityNoClobber(
-                        item.buffer_id,
-                        .{ .viewport_id = item.viewport_id, .ptr = node },
-                    );
+                        });
+                    },
+                    .commit => {
+                        rs.buffers_commited.putNoClobber(
+                            com.gpa,
+                            item.buffer_id,
+                            .{ .viewport_id = item.viewport_id, .ptr = node },
+                        ) catch continue :branch .release;
+                    },
                 }
             },
         }
