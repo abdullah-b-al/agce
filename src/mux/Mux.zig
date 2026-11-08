@@ -257,7 +257,8 @@ pub fn windows_destroy_if_closed(mux: *Mux) void {
         const should_close = blk: {
             for (mux.compositor.resources()) |rs| {
                 for (rs.viewports.values()) |vp| {
-                    if (vp.window_id == win.id) {
+                    const key = rs.client_uuid.viewport_key(vp.id);
+                    if (std.meta.eql(key, win.viewport_key)) {
                         break :blk false;
                     }
                 }
