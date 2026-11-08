@@ -61,6 +61,7 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
 
     const remote = try handle.remote_client_create();
     var child = try handle.process_init(&.{path});
+    defer child.deinit();
 
     try child.spawn(remote, .{ .stdout = .inherit, .stderr = .inherit });
     while (remote.status != .connected) {
