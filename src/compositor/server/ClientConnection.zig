@@ -201,6 +201,16 @@ pub fn send_frame_render(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, p
     try c.send(io, gpa, message);
 }
 
+pub fn send_keyboard_enter(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardEnter) !void {
+    const message = try c.stringify(gpa, .{ .keyboard_enter = payload });
+    try c.send(io, gpa, message);
+}
+
+pub fn send_keyboard_leave(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardLeave) !void {
+    const message = try c.stringify(gpa, .{ .keyboard_leave = payload });
+    try c.send(io, gpa, message);
+}
+
 pub fn send_keyboard_char(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardChar) !void {
     const message = try c.stringify(gpa, .{ .keyboard_char = payload });
     try c.send(io, gpa, message);

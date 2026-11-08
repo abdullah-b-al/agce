@@ -649,6 +649,8 @@ pub const Event = union(enum) {
     buffer_created_gbm_bo: server_to_client.WithClientUUID(server_to_client.BufferCreatedGbmBo),
     texture_created_d3d: server_to_client.WithClientUUID(server_to_client.TextureCreatedD3D),
 
+    keyboard_enter: server_to_client.WithClientUUID(server_to_client.KeyboardEnter),
+    keyboard_leave: server_to_client.WithClientUUID(server_to_client.KeyboardLeave),
     keyboard_key: server_to_client.WithClientUUID(server_to_client.KeyboardKey),
     keyboard_char: server_to_client.WithClientUUID(server_to_client.KeyboardChar),
     mouse_enter: server_to_client.WithClientUUID(server_to_client.MouseEnter),

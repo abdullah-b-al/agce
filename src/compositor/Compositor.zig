@@ -149,7 +149,8 @@ pub fn destroy(com: *Compositor) void {
 
 pub fn window_focused_by_keyboard(com: *Compositor, viewport_key: ViewportKey) void {
     if (com.input_focus_keyboard == null) {
-        com.keyboard_focus_set(viewport_key);
+        com.server_events.ensure_unused_capacity(2) catch return;
+        com.keyboard_focus_set_and_push_event(viewport_key);
     }
 }
 
@@ -272,7 +273,7 @@ pub fn client_disconnected(com: *Compositor, id: ClientUUID) void {
 }
 
 fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
-    std.debug.assert(com.server_events.capacity >= 2);
+    std.debug.assert(com.server_events.capacity >= 5);
 
     const rs = com.resources.getPtr(key.client_uuid) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
@@ -288,7 +289,7 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
         });
 
         if (std.meta.eql(com.input_focus_keyboard, key)) {
-            com.keyboard_focus_set(parent_key);
+            com.keyboard_focus_set_and_push_event(parent_key);
         }
 
         if (std.meta.eql(com.input_focus_mouse, key)) {
@@ -1111,15 +1112,24 @@ pub fn cursor_shape_set_from_viewport(com: *Compositor, vp: *Viewport, viewport_
 }
 
 pub fn mouse_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
-    std.debug.assert(com.server_events.capacity >= 1);
+    std.debug.assert(com.server_events.capacity >= 2);
 
     if (std.meta.eql(com.input_focus_mouse, key)) return;
 
     const vp = com.viewport_from_key(key) orelse return;
 
-    com.input_focus_mouse = key;
+    if (com.input_focus_mouse) |old| {
+        com.server_events.push_assume_capacity(.{
+            .mouse_leave = .{
+                .client_uuid = old.client_uuid,
+                .payload = .{
+                    .viewport_id = old.viewport_id,
+                },
+            },
+        });
+    }
 
-    // TODO: Notify all viewports of this window that the mouse left
+    com.input_focus_mouse = key;
     com.server_events.push_assume_capacity(.{
         .mouse_enter = .{
             .client_uuid = key.client_uuid,
@@ -1130,10 +1140,27 @@ pub fn mouse_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
     com.cursor_shape_set_from_viewport(vp, key);
 }
 
-pub fn keyboard_focus_set(com: *Compositor, key: ViewportKey) void {
+pub fn keyboard_focus_set_and_push_event(com: *Compositor, key: ViewportKey) void {
+    std.debug.assert(com.server_events.capacity >= 2);
+
     if (std.meta.eql(com.input_focus_keyboard, key)) return;
 
+    if (com.input_focus_keyboard) |old| {
+        com.server_events.push_assume_capacity(.{
+            .keyboard_leave = .{
+                .client_uuid = old.client_uuid,
+                .payload = .{ .viewport_id = old.viewport_id },
+            },
+        });
+    }
+
     com.input_focus_keyboard = key;
+    com.server_events.push_assume_capacity(.{
+        .keyboard_leave = .{
+            .client_uuid = key.client_uuid,
+            .payload = .{ .viewport_id = key.viewport_id },
+        },
+    });
 
     // TODO: Notify all viewports of this window that the keyboard left
     switch (com.native_tag()) {
@@ -1207,11 +1234,13 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !
 }
 
 pub fn keyboard_enter(com: *Compositor, args: @FieldType(Event, "keyboard_enter")) !void {
-    com.keyboard_focus_set(args.viewport_key);
+    try com.server_events.ensure_unused_capacity(2);
+    com.keyboard_focus_set_and_push_event(args.viewport_key);
 }
 
 pub fn keyboard_leave(com: *Compositor, _: @FieldType(Event, "keyboard_leave")) !void {
-    com.input_focus_keyboard = null;
+    try com.server_events.ensure_unused_capacity(2);
+    com.keyboard_focus_set_and_push_event(undefined);
 }
 
 pub fn mouse_enter(com: *Compositor, args: @FieldType(Event, "mouse_enter")) !void {
@@ -1253,7 +1282,7 @@ pub fn mouse_button(com: *Compositor, args: @FieldType(Event, "mouse_button")) !
 
     const key = com.input_focus_mouse orelse return;
     if (args.state == .pressed) {
-        com.keyboard_focus_set(key);
+        com.keyboard_focus_set_and_push_event(key);
     }
 
     com.server_events.push_assume_capacity(.{

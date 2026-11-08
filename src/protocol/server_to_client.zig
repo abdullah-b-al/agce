@@ -160,6 +160,8 @@ pub const MessagePayload = union(enum(u32)) {
 
     frame_render: FrameRender,
 
+    keyboard_enter: KeyboardEnter,
+    keyboard_leave: KeyboardLeave,
     keyboard_char: KeyboardChar,
     keyboard_key: KeyboardKey,
     mouse_enter: MouseEnter,
@@ -283,6 +285,14 @@ pub const KeyboardKey = struct {
     key: input.Key,
     state: input.KeyState,
     modifiers: input.Modifiers,
+};
+
+pub const KeyboardEnter = struct {
+    viewport_id: types.ViewportID,
+};
+
+pub const KeyboardLeave = struct {
+    viewport_id: types.ViewportID,
 };
 
 pub const MouseEnter = struct {

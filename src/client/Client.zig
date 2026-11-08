@@ -304,6 +304,8 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
 
         inline .mouse_enter,
         .mouse_leave,
+        .keyboard_enter,
+        .keyboard_leave,
         .mouse_motion,
         .mouse_button,
         .mouse_scroll,
@@ -673,6 +675,8 @@ pub const Event = union(enum) {
     viewport_close: server_to_client.ViewportClose,
     keyboard_char: server_to_client.KeyboardChar,
     keyboard_key: server_to_client.KeyboardKey,
+    keyboard_enter: server_to_client.KeyboardEnter,
+    keyboard_leave: server_to_client.KeyboardLeave,
     mouse_enter: server_to_client.MouseEnter,
     mouse_leave: server_to_client.MouseLeave,
     mouse_motion: server_to_client.MouseMotion,
