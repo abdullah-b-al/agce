@@ -38,7 +38,12 @@ pub fn deinit(rs: *ClientResources, com: *Compositor) void {
         rs.buffer_destroy(com, rs.buffers.keys()[i]);
     }
 
-    for (rs.viewports.values()) |vp| vp.destroy(com.gpa);
+    for (rs.viewports.values()) |vp| {
+        if (!vp.memory_reserve_for_destroy.released) {
+            vp.memory_reserve_for_destroy.release(com);
+        }
+        vp.destroy(com.gpa);
+    }
 
     if (constants.os_has_gbm) {
         for (rs.gbm_bos.values()) |*bo| bo.deinit(com.gbm);
@@ -92,32 +97,13 @@ pub fn remote_viewports_pending_fetch_remove_by_embedded_key(rs: *ClientResource
     return rs.remote_viewports_pending.fetchOrderedRemove(id).?.value;
 }
 
-pub fn viewport_create(
-    rs: *ClientResources,
-    com: *Compositor,
-    parent: Compositor.ParentOfViewport,
-    viewport_id: ViewportID,
-    window_id: WindowID,
-    rect: ptypes.Rect,
-    render_size: ptypes.Size,
-    parent_key: ?ViewportKey,
-    format: ptypes.BufferFormat,
-    buffer_type: ptypes.BufferType,
-) !void {
-    try rs.viewports.ensureUnusedCapacity(com.gpa, 1);
-    const vp = try Viewport.create(
-        com,
-        parent,
-        .{ .client_uuid = rs.client_uuid, .viewport_id = viewport_id },
-        window_id,
-        rect,
-        render_size,
-        parent_key,
-        format,
-        buffer_type,
-    );
+pub fn viewport_create(rs: *ClientResources, args: Viewport.CreateArgs) !void {
+    std.debug.assert(args.key.client_uuid == rs.client_uuid);
 
-    rs.viewports.putAssumeCapacity(viewport_id, vp);
+    try rs.viewports.ensureUnusedCapacity(args.com.gpa, 1);
+    const vp = try Viewport.create(args);
+
+    rs.viewports.putAssumeCapacity(args.key.viewport_id, vp);
 }
 
 pub fn viewport_key_from_remote_viewport_id(rs: *const ClientResources, id: RemoteViewportID) ?ViewportKey {

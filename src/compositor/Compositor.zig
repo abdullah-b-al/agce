@@ -218,10 +218,7 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
         .texture_create_d3d => |args| try com.texture_create_d3d(args),
 
         .viewport_create => |args| try com.viewport_create(args),
-        .viewport_destroy => |args| {
-            try com.server_events.ensure_unused_capacity(2);
-            com.viewport_destroy(.{ .client_uuid = args.client_uuid, .viewport_id = args.payload.viewport_id });
-        },
+        .viewport_destroy => |args| com.viewport_destroy(args.client_uuid.viewport_key(args.payload.viewport_id)),
         .viewport_should_close => |args| try com.viewport_should_close(args),
         .viewport_pos_set => |args| try com.viewport_pos_set(args),
         .viewport_size_set => |args| try com.viewport_size_set(args),
@@ -247,32 +244,48 @@ pub fn client_registered(com: *Compositor, client_uuid: ClientUUID) !void {
     try com.resources.putNoClobber(com.gpa, client_uuid, .init(client_uuid));
 }
 
-pub fn client_disconnected(com: *Compositor, id: ClientUUID) void {
-    const rs = com.resources.getPtr(id) orelse {
-        log.warn("Tried to disconnected an nonexistent client {}", .{id});
+pub fn client_disconnected(com: *Compositor, uuid: ClientUUID) void {
+    const rs = com.resources.getPtr(uuid) orelse {
+        log.warn("Tried to disconnected an nonexistent client {}", .{uuid});
         return;
     };
 
     var i = rs.viewports.count();
     while (i > 0) {
         i -= 1;
-        const vp_id = rs.viewports.keys()[i];
-        // TODO: Do not call viewport_destroy. It does too much for clean up
-        com.viewport_destroy(.{ .client_uuid = rs.client_uuid, .viewport_id = vp_id });
+        const id = rs.viewports.keys()[i];
+        com.viewport_destroy(rs.client_uuid.viewport_key(id));
     }
 
     rs.deinit(com);
-    _ = com.resources.orderedRemove(id);
+    _ = com.resources.orderedRemove(uuid);
 }
 
 fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
-    std.debug.assert(com.server_events.capacity >= 5);
-
     const rs = com.resources.getPtr(key.client_uuid) orelse return;
     const vp = rs.viewports.get(key.viewport_id) orelse return;
 
+    const has_keyboard_focus = std.meta.eql(com.input_focus_keyboard, key);
+    const has_mouse_focus = std.meta.eql(com.input_focus_mouse, key);
+
+    const old_capacity = com.server_events.capacity;
+    vp.memory_reserve_for_destroy.release(com);
+    std.debug.assert(
+        com.server_events.capacity ==
+            old_capacity + Viewport.MemoryReserveForDestroy.server_events_len,
+    );
+
+    if (has_keyboard_focus) {
+        com.keyboard_focus_switch_assume_capacity(vp.parent_key);
+    }
+
+    if (has_mouse_focus) {
+        com.mouse_focus_switch_assume_capacity(vp.parent_key);
+    }
+
     if (vp.parent_key) |parent_key| {
         const parent = com.viewport_from_key(parent_key).?;
+        parent.remote_viewport_remove(key);
 
         com.server_events.push_assume_capacity(.{
             .remote_viewport_closed = .{
@@ -281,15 +294,6 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
             },
         });
 
-        if (std.meta.eql(com.input_focus_keyboard, key)) {
-            com.keyboard_focus_switch_assume_capacity(parent_key);
-        }
-
-        if (std.meta.eql(com.input_focus_mouse, key)) {
-            com.mouse_focus_switch_assume_capacity(parent_key);
-        }
-
-        parent.remote_viewport_remove(key);
         vp.parent_key = null;
     }
 
@@ -644,13 +648,15 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
         return error.InvalidSize;
     }
 
+    var reserve: Viewport.MemoryReserveForDestroy = try .init(com);
+    errdefer reserve.release(com);
     try com.server_events.ensure_unused_capacity(2);
 
     const result: ViewportCreateResult = blk: {
         if (args.payload.viewport_id.is_server_id()) {
-            break :blk try com.viewport_create_with_remote_viewport(args);
+            break :blk try com.viewport_create_with_remote_viewport(reserve, args);
         } else {
-            const key = try com.viewport_create_with_mux_window(args);
+            const key = try com.viewport_create_with_mux_window(reserve, args);
             break :blk .{ .create_with_window = key };
         }
     };
@@ -695,6 +701,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
 
 fn viewport_create_with_remote_viewport(
     com: *Compositor,
+    reserve: Viewport.MemoryReserveForDestroy,
     args: @FieldType(Event, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
     const embedded_key = args.client_uuid.viewport_key(args.payload.viewport_id);
@@ -718,17 +725,18 @@ fn viewport_create_with_remote_viewport(
 
             try embeder_viewport.remote_viewports.ensureUnusedCapacity(com.gpa, 1);
 
-            try embedded.viewport_create(
-                com,
-                .{ .viewport = embeder_viewport },
-                embedded_key.viewport_id,
-                embeder_viewport.window_id,
-                remote_viewport_data.clip_rect,
-                args.payload.size,
-                .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
-                args.payload.format,
-                args.payload.buffer_type,
-            );
+            try embedded.viewport_create(.{
+                .com = com,
+                .parent = .{ .viewport = embeder_viewport },
+                .key = embedded_key,
+                .window_id = embeder_viewport.window_id,
+                .clipping_rect = remote_viewport_data.clip_rect,
+                .render_size = args.payload.size,
+                .parent_key = .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
+                .format = args.payload.format,
+                .buffer_type = args.payload.buffer_type,
+                .reserve = reserve,
+            });
 
             embeder_viewport.remote_viewports.appendAssumeCapacity(embedded_key);
         },
@@ -736,17 +744,18 @@ fn viewport_create_with_remote_viewport(
             const window_handle = com.muxi.window_handle_from_id(id) orelse
                 return error.WindowDoesNotExist;
 
-            try embedded.viewport_create(
-                com,
-                .{ .window = window_handle },
-                embedded_key.viewport_id,
-                id,
-                remote_viewport_data.clip_rect,
-                args.payload.size,
-                null,
-                args.payload.format,
-                args.payload.buffer_type,
-            );
+            try embedded.viewport_create(.{
+                .com = com,
+                .parent = .{ .window = window_handle },
+                .key = embedded_key,
+                .window_id = id,
+                .clipping_rect = remote_viewport_data.clip_rect,
+                .render_size = args.payload.size,
+                .parent_key = null,
+                .format = args.payload.format,
+                .buffer_type = args.payload.buffer_type,
+                .reserve = reserve,
+            });
         },
     }
 
@@ -773,7 +782,11 @@ fn viewport_create_with_remote_viewport(
     };
 }
 
-fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "viewport_create")) !ViewportKey {
+fn viewport_create_with_mux_window(
+    com: *Compositor,
+    reserve: Viewport.MemoryReserveForDestroy,
+    args: @FieldType(Event, "viewport_create"),
+) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
 
     const key: ViewportKey = .{
@@ -785,17 +798,23 @@ fn viewport_create_with_mux_window(com: *Compositor, args: @FieldType(Event, "vi
 
     const rs = com.resources.getPtr(args.client_uuid) orelse return error.ClientDoesNotExist;
 
-    try rs.viewport_create(
-        com,
-        .{ .window = window_handle },
-        args.payload.viewport_id,
-        window_id,
-        .{ .x = 0, .y = 0, .width = args.payload.size.width, .height = args.payload.size.height },
-        args.payload.size,
-        null,
-        args.payload.format,
-        args.payload.buffer_type,
-    );
+    try rs.viewport_create(.{
+        .com = com,
+        .parent = .{ .window = window_handle },
+        .key = key,
+        .window_id = window_id,
+        .clipping_rect = .{
+            .x = 0,
+            .y = 0,
+            .width = args.payload.size.width,
+            .height = args.payload.size.height,
+        },
+        .render_size = args.payload.size,
+        .parent_key = null,
+        .format = args.payload.format,
+        .buffer_type = args.payload.buffer_type,
+        .reserve = reserve,
+    });
 
     log.debug("{f} of {f} created", .{ args.payload.viewport_id, rs.client_uuid });
 
@@ -1104,12 +1123,10 @@ pub fn cursor_shape_set_from_viewport(com: *Compositor, vp: *Viewport, viewport_
     }
 }
 
-fn mouse_focus_switch_assume_capacity(com: *Compositor, key: ViewportKey) void {
+pub fn mouse_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?ViewportKey) void {
     std.debug.assert(com.server_events.capacity >= 2);
 
-    if (std.meta.eql(com.input_focus_mouse, key)) return;
-
-    const vp = com.viewport_from_key(key) orelse return;
+    if (std.meta.eql(com.input_focus_mouse, maybe_key)) return;
 
     if (com.input_focus_mouse) |old| {
         com.server_events.push_assume_capacity(.{
@@ -1122,21 +1139,25 @@ fn mouse_focus_switch_assume_capacity(com: *Compositor, key: ViewportKey) void {
         });
     }
 
-    com.input_focus_mouse = key;
-    com.server_events.push_assume_capacity(.{
-        .mouse_enter = .{
-            .client_uuid = key.client_uuid,
-            .payload = .{ .viewport_id = key.viewport_id },
-        },
-    });
+    com.input_focus_mouse = maybe_key;
 
-    com.cursor_shape_set_from_viewport(vp, key);
+    if (maybe_key) |key| {
+        const vp = com.viewport_from_key(key) orelse return;
+        com.server_events.push_assume_capacity(.{
+            .mouse_enter = .{
+                .client_uuid = key.client_uuid,
+                .payload = .{ .viewport_id = key.viewport_id },
+            },
+        });
+
+        com.cursor_shape_set_from_viewport(vp, key);
+    }
 }
 
-fn keyboard_focus_switch_assume_capacity(com: *Compositor, key: ViewportKey) void {
+pub fn keyboard_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?ViewportKey) void {
     std.debug.assert(com.server_events.capacity >= 2);
 
-    if (std.meta.eql(com.input_focus_keyboard, key)) return;
+    if (std.meta.eql(com.input_focus_keyboard, maybe_key)) return;
 
     if (com.input_focus_keyboard) |old| {
         com.server_events.push_assume_capacity(.{
@@ -1147,24 +1168,27 @@ fn keyboard_focus_switch_assume_capacity(com: *Compositor, key: ViewportKey) voi
         });
     }
 
-    com.input_focus_keyboard = key;
-    com.server_events.push_assume_capacity(.{
-        .keyboard_enter = .{
-            .client_uuid = key.client_uuid,
-            .payload = .{ .viewport_id = key.viewport_id },
-        },
-    });
+    com.input_focus_keyboard = maybe_key;
 
-    switch (com.native_tag()) {
-        .wayland => {},
-        .win32 => |tag| {
-            // windows requires explict focusing to receive
-            // keyboard events for child windows
-            tag.guard();
-            const vp = com.viewport_from_key(key) orelse return;
-            const nvp = tag.viewport(vp);
-            _ = win32_kbm.SetFocus(nvp.child_window_handle);
-        },
+    if (maybe_key) |key| {
+        com.server_events.push_assume_capacity(.{
+            .keyboard_enter = .{
+                .client_uuid = key.client_uuid,
+                .payload = .{ .viewport_id = key.viewport_id },
+            },
+        });
+
+        switch (com.native_tag()) {
+            .wayland => {},
+            .win32 => |tag| {
+                // windows requires explict focusing to receive
+                // keyboard events for child windows
+                tag.guard();
+                const vp = com.viewport_from_key(key) orelse return;
+                const nvp = tag.viewport(vp);
+                _ = win32_kbm.SetFocus(nvp.child_window_handle);
+            },
+        }
     }
 }
 

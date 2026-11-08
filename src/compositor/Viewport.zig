@@ -14,45 +14,39 @@ cursor_shape: ptypes.CursorShape,
 win32: if (os == .windows) Win32.Viewport else void,
 linux: if (os == .linux) Linux else void,
 
-pub fn create(
-    com: *Compositor,
-    parent: ParentOfViewport,
-    key: ViewportKey,
-    window_id: WindowID,
-    clipping_rect: ptypes.Rect,
-    render_size: ptypes.Size,
-    parent_key: ?ViewportKey,
-    format: ptypes.BufferFormat,
-    buffer_type: ptypes.BufferType,
-) !*Viewport {
-    const vp = try com.gpa.create(Viewport);
-    errdefer com.gpa.destroy(vp);
+memory_reserve_for_destroy: MemoryReserveForDestroy,
 
-    if (parent_key) |p| {
-        std.debug.assert(key.viewport_id.is_server_id());
-        std.debug.assert(!std.meta.eql(p, key));
+pub fn create(args: CreateArgs) !*Viewport {
+    const vp = try args.com.gpa.create(Viewport);
+    errdefer args.com.gpa.destroy(vp);
+
+    if (args.parent_key) |p| {
+        std.debug.assert(args.key.viewport_id.is_server_id());
+        std.debug.assert(!std.meta.eql(p, args.key));
     }
 
     vp.* = .{
-        .id = key.viewport_id,
-        .window_id = window_id,
-        .parent_key = parent_key,
+        .id = args.key.viewport_id,
+        .window_id = args.window_id,
+        .parent_key = args.parent_key,
         .state = .shown,
-        .clipping_rect = clipping_rect,
-        .render_size = render_size,
+        .clipping_rect = args.clipping_rect,
+        .render_size = args.render_size,
         .remote_viewports = .empty,
-        .format = format,
-        .buffer_type = buffer_type,
+        .format = args.format,
+        .buffer_type = args.buffer_type,
         .cursor_shape = .default,
 
         .win32 = undefined,
         .linux = undefined,
+
+        .memory_reserve_for_destroy = args.reserve,
     };
 
-    switch (com.native_tag()) {
+    switch (args.com.native_tag()) {
         .wayland => |tag| {
-            const wl = tag.compositor(com);
-            const create_sync_timeline = switch (buffer_type) {
+            const wl = tag.compositor(args.com);
+            const create_sync_timeline = switch (args.buffer_type) {
                 .d11 => unreachable,
 
                 .cpu => false,
@@ -61,18 +55,18 @@ pub fn create(
 
             vp.linux = .{
                 .wayland = try .init(
-                    com,
+                    args.com,
                     wl,
                     vp,
-                    parent,
-                    key.client_uuid,
+                    args.parent,
+                    args.key.client_uuid,
                     create_sync_timeline,
                 ),
             };
         },
         .win32 => |tag| {
-            const win32 = tag.compositor(com);
-            vp.win32 = try .init(com, win32, vp, parent, key.client_uuid);
+            const win32 = tag.compositor(args.com);
+            vp.win32 = try .init(args.com, win32, vp, args.parent, args.key.client_uuid);
         },
     }
 
@@ -80,6 +74,7 @@ pub fn create(
 }
 
 pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
+    std.debug.assert(vp.memory_reserve_for_destroy.released);
     // Remote viewports should be closed before calling deinit
     std.debug.assert(vp.remote_viewports.items.len == 0);
     // If the viewport is a remote viewport we must inform the parent then set to null
@@ -138,6 +133,45 @@ pub const Linux = union(enum) {
     wayland: Wayland.Viewport,
 };
 
+pub const MemoryReserveForDestroy = struct {
+    pub const server_events_len = 5;
+    server_events: [5]*ServerQueue.Node,
+    released: bool,
+
+    pub fn init(com: *Compositor) !MemoryReserveForDestroy {
+        try com.server_events.ensure_unused_capacity(5);
+        var nodes: [5]*ServerQueue.Node = undefined;
+
+        for (&nodes) |*node| {
+            node.* = com.server_events.create_assume_capacity();
+        }
+
+        return .{ .server_events = nodes, .released = false };
+    }
+
+    pub fn release(reserve: *MemoryReserveForDestroy, com: *Compositor) void {
+        std.debug.assert(!reserve.released);
+        for (reserve.server_events) |node| {
+            com.server_events.destroy(node);
+        }
+        reserve.released = true;
+        reserve.server_events = undefined;
+    }
+};
+
+pub const CreateArgs = struct {
+    com: *Compositor,
+    parent: ParentOfViewport,
+    key: ViewportKey,
+    window_id: WindowID,
+    clipping_rect: ptypes.Rect,
+    render_size: ptypes.Size,
+    parent_key: ?ViewportKey,
+    format: ptypes.BufferFormat,
+    buffer_type: ptypes.BufferType,
+    reserve: MemoryReserveForDestroy,
+};
+
 const std = @import("std");
 const ptypes = @import("protocol").types;
 const ClientUUID = @import("server/Clients.zig").ClientUUID;
@@ -152,3 +186,4 @@ const Buffer = @import("ClientResources.zig").Buffer;
 const ParentOfViewport = Compositor.ParentOfViewport;
 const os = @import("builtin").os.tag;
 const Win32 = @import("win32/Win32.zig");
+const ServerQueue = @import("server/EventQueue.zig");
