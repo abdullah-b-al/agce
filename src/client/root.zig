@@ -43,7 +43,7 @@ pub fn init(
         pid,
     );
 
-    const duration: Io.Clock.Duration = .{ .raw = .fromSeconds(1), .clock = .awake };
+    const duration: Io.Clock.Duration = .{ .raw = .fromSeconds(60), .clock = .awake };
     client.poll(.{ .duration = duration }) catch |err| switch (err) {
         error.Timeout => return error.TimeoutDuringRegisterPhase,
         else => |e| return e,
