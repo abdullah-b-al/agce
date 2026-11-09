@@ -245,7 +245,7 @@ fn window_size(ptr: *anyopaque, id: WindowID) ?ptypes.Size {
 }
 
 fn uuid(_: *anyopaque) ptypes.ClientUUID {
-    @panic("TODO");
+    @panic("Unused at the time of writing this");
 }
 
 pub fn windows_destroy_if_closed(mux: *Mux) void {

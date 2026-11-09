@@ -50,7 +50,6 @@ pub fn init(
 
     const ilong: isize = @bitCast(@intFromPtr(com));
 
-    // TODO: Check return value
     _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
 
     const swap_chain = blk: {

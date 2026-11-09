@@ -137,8 +137,6 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
             .gpu => |gpu| {
                 std.debug.assert(item.sync != null);
                 const gbm_bo = rs.gbm_bos.get(item.buffer_id).?;
-                // TODO: Should we add a check to make sure we are not presenting
-                // a non-released buffer, or is the timeline sufficient ?
 
                 if (should_be_hidden) {
                     // Maybe this should wait on the acquisition before releasing ?

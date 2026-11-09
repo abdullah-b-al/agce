@@ -975,12 +975,12 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "vie
 
             switch (vp.state) {
                 .hidden => {
-                    // TODO: If needed, attach a null buffer recursivly for all children
+                    // NOTE: If needed, attach a null buffer recursivly for all children
                     nvp.surface.attach(null, 0, 0);
                     nvp.surface.commit();
                 },
                 .shown => {
-                    // TODO: Maybe, attach the last buffer to re-present the surface ?
+                    // NOTE: Maybe, attach the last buffer to re-present the surface ?
                     // Or send an event asking for a redraw
                 },
             }
