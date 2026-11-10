@@ -122,13 +122,9 @@ pub const CompositorHandle = opaque {
         server.events_handle(com);
 
         if (poll_result.accept) {
-            // FIXME: In windows, we must accept all connections as resetting the accept event
-            // will result in ignoring new clients
-            if (server.server.accept(.{})) |stream| {
-                try server.handle_event(.{ .unknown_client_connected = stream });
-            } else |err| {
+            server.accept() catch |err| {
                 log.err("Accept client failed {}", .{err});
-            }
+            };
         }
 
         server.close_clients_marked_with_error();

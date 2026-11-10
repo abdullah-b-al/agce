@@ -133,6 +133,22 @@ pub fn destroy(server: *Server) void {
     server.gpa.destroy(server);
 }
 
+pub fn accept(server: *Server) !void {
+    while (true) {
+        const stream = server.server.accept(.{ .timeout = .fromNanoseconds(0) }) catch |err|
+            switch (err) {
+                error.Timeout => return,
+                else => |e| return e,
+            };
+        errdefer stream.close();
+
+        try server.clients.prepare_for_new_client(server.gpa);
+        try server.clients.new_unknown(server.gpa, stream);
+
+        log.info("Unknown client connected", .{});
+    }
+}
+
 pub fn process_incoming_messages(
     server: *Server,
     arena: std.mem.Allocator,
