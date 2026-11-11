@@ -1,5 +1,5 @@
 pub const Event = Client.Event;
-pub const Renderer = Viewport.Renderer.Tag;
+pub const Renderer = Viewport.Renderer;
 pub const opengl = @import("opengl.zig");
 
 pub const ViewportID = ptypes.ViewportID;
@@ -303,11 +303,12 @@ pub const ViewportHandle = opaque {
         const vp = handle.cast();
 
         std.debug.assert(vp.renderer == .gl);
-        const gl = &vp.renderer.gl;
-
         std.debug.assert(vp.current_buffer == null);
 
-        const buffer = gl.get_buffer(std.math.maxInt(i64)) catch |err| switch (err) {
+        const buffer = vp.buffers.get_gl_linux(
+            vp.client.gbm.?,
+            std.math.maxInt(i64),
+        ) catch |err| switch (err) {
             error.Timeout => unreachable,
         };
 
@@ -321,12 +322,14 @@ pub const ViewportHandle = opaque {
     pub fn gl_present(handle: *ViewportHandle) !void {
         const vp = handle.cast();
         std.debug.assert(vp.renderer == .gl);
-        const gl = &vp.renderer.gl;
 
-        const buffer = gl.buffers.getPtr(vp.current_buffer.?) orelse
+        const buffer = vp.buffers.gl_linux.getPtr(vp.current_buffer.?) orelse
             @panic("Buffer prematurely destroyed");
 
-        gl.frame_end(buffer);
+        buffer.frame_end(
+            vp.client.gbm.?,
+            vp.client.gl_context.?.egl_display,
+        );
 
         try vp.buffer_present(.gl);
     }
@@ -338,26 +341,23 @@ pub const ViewportHandle = opaque {
 
         const client = vp.client;
         std.debug.assert(vp.renderer == .cpu);
-        const cpu = &vp.renderer.cpu;
-
         std.debug.assert(vp.current_buffer == null);
 
-        var buffer: ?*RendererCpu.Buffer = null;
-        while (buffer == null) {
-            buffer = cpu.get_buffer() orelse {
-                std.debug.assert(cpu.buffers.count() > 0);
-                try client.poll(.none); // poll for buffer_released
-                continue;
-            };
-        }
+        var buffer: *Buffers.Cpu = blk: while (true) {
+            if (vp.buffers.get_cpu()) |buffer| {
+                break :blk buffer;
+            }
 
-        vp.current_buffer = buffer.?.id;
+            try client.poll(.none); // poll for buffer_released
+        };
+
+        vp.current_buffer = buffer.id;
 
         return .{
-            .buffer = buffer.?.data,
-            .width = buffer.?.size.width,
-            .height = buffer.?.size.height,
-            .bytes_per_pixel = buffer.?.format.bytes_per_pixel(),
+            .buffer = buffer.data,
+            .width = buffer.size.width,
+            .height = buffer.size.height,
+            .bytes_per_pixel = buffer.format.bytes_per_pixel(),
             .viewport_size = vp.size,
         };
     }
@@ -376,10 +376,9 @@ pub const ViewportHandle = opaque {
 
         const client = vp.client;
         std.debug.assert(vp.renderer == .d11);
-        const r = &vp.renderer.d11;
-
         std.debug.assert(vp.current_buffer == null);
-        const buffer: *RendererD11.Buffer = try r.get_buffer();
+
+        const buffer = try vp.buffers.get_d11();
 
         vp.current_buffer = buffer.id;
 
@@ -399,7 +398,7 @@ pub const ViewportHandle = opaque {
 
         std.debug.assert(vp.current_buffer != null);
 
-        const buffer = vp.renderer.d11.buffers.getPtr(vp.current_buffer.?).?;
+        const buffer = vp.buffers.d11.getPtr(vp.current_buffer.?).?;
         const hr = d11_device.context4.Signal(
             buffer.acquire.fence.acquire,
             @intFromEnum(buffer.acquire.point),
@@ -418,7 +417,7 @@ pub const ViewportHandle = opaque {
         std.debug.assert(vp.renderer == .d11);
         std.debug.assert(vp.current_buffer != null);
 
-        const buffer = vp.renderer.d11.buffers.get(vp.current_buffer.?).?;
+        const buffer = vp.renderer.d11.Buffers.get(vp.current_buffer.?).?;
         return buffer.rtv;
     }
 
@@ -563,9 +562,6 @@ const ptypes = @import("protocol").types;
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;
 const Client = @import("Client.zig");
-const RendererGL = Viewport.RendererGL;
-const RendererCpu = Viewport.RendererCpu;
-const RendererD11 = Viewport.RendererD11;
 const Viewport = @import("Viewport.zig");
 const RemoteViewport = @import("RemoteViewport.zig");
 const constants = @import("constants");
@@ -575,3 +571,4 @@ const os = @import("builtin").os.tag;
 const win32_foundation = @import("win32").foundation;
 const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
+const Buffers = @import("Buffers.zig");

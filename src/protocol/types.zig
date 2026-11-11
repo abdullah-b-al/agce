@@ -179,6 +179,11 @@ pub const Size = struct {
     pub fn from_rect(r: Rect) Size {
         return .{ .width = r.width, .height = r.height };
     }
+
+    pub fn eql(a: Size, b: Size) bool {
+        return a.width == b.width and
+            a.height == b.height;
+    }
 };
 
 pub const BufferFormat = enum {

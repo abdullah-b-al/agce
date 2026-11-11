@@ -13,9 +13,8 @@ frame_number: usize,
 current_buffer: ?BufferID,
 
 status: Client.CreateStatus,
-pending_buffers_cpu: std.ArrayList(BufferCreatedCpu),
-pending_buffers_gbm_bo: std.ArrayList(BufferCreatedGbmBo),
-pending_textures_d3d: std.ArrayList(TextureCreatedD3D),
+
+buffers: Buffers,
 
 events: std.ArrayList(Client.Event),
 
@@ -36,14 +35,13 @@ pub fn init(
         .size = size,
         .format = format,
         .throttle_frames = throttle,
-        .pending_buffers_cpu = .empty,
-        .pending_buffers_gbm_bo = .empty,
-        .pending_textures_d3d = .empty,
 
         .should_close = false,
         .refresh_cycle = 0,
         .frame_number = 0,
         .current_buffer = null,
+
+        .buffers = .init_for_viewport(renderer),
 
         .events = .empty,
 
@@ -56,14 +54,7 @@ pub fn deinit(vp: *Viewport) void {
     std.debug.assert(!vp.deinited);
     const gpa = vp.client.gpa;
 
-    vp.pending_buffers_cpu.deinit(gpa);
-    vp.pending_buffers_gbm_bo.deinit(gpa);
-    vp.pending_textures_d3d.deinit(gpa);
-
-    switch (vp.renderer) {
-        inline else => |*r| r.deinit(gpa),
-    }
-
+    vp.buffers.deinit(gpa);
     vp.events.deinit(gpa);
     vp.deinited = true;
 }
@@ -76,26 +67,68 @@ pub fn event_pop(vp: *Viewport) ?Client.Event {
     return vp.events.pop();
 }
 
-pub fn resize(vp: *Viewport, size: ptypes.Size) !void {
-    vp.buffer_resize(size) catch |err| {
-        log.err("Viewport.resize {}", .{err});
-        return error.ResizeFailed;
-    };
-
-    const buffer_size = switch (vp.renderer) {
-        inline else => |r| r.buffer_size(),
-    };
-
-    const width = @min(buffer_size.width, size.width);
-    const height = @min(buffer_size.height, size.height);
-
-    vp.size = .{ .width = width, .height = height };
+pub fn resize(vp: *Viewport, requested_size: ptypes.Size) !void {
+    try vp.buffers_resize(requested_size);
+    vp.size = requested_size;
 }
 
-pub fn buffer_present(vp: *Viewport, comptime renderer_tag: Renderer.Tag) !void {
-    std.debug.assert(vp.renderer == renderer_tag);
+fn buffers_resize(vp: *Viewport, requested_size: ptypes.Size) !void {
+    const new_size: ptypes.Size = blk: {
+        const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
+        break :blk .{ .width = width, .height = height };
+    };
 
-    if (renderer_tag == .d11 and !constants.os_has_d3d) {
+    switch (vp.renderer) {
+        inline else => |tag| {
+            const map = vp.buffers.map(tag);
+            const old_size = map.values()[0].size;
+            for (map.values()) |buffer| std.debug.assert(buffer.size.eql(old_size));
+
+            if (new_size.width <= old_size.width and new_size.height <= old_size.height) {
+                return;
+            }
+
+            const buffer_type = vp.renderer.buffer_type();
+            const request = 2;
+
+            for (0..request) |_| {
+                try vp.client.send_buffer_create(vp.id, vp.format, new_size, buffer_type);
+            }
+
+            const expected_size = vp.buffers.count(tag) + request;
+
+            while (vp.buffers.count(tag) != expected_size) {
+                try vp.client.poll(.none);
+                try vp.client.buffers_create_from_pending_into(
+                    buffer_type,
+                    &vp.buffers,
+                    vp.id,
+                );
+            }
+
+            var i = map.count();
+            while (i > 0) {
+                i -= 1;
+                const buffer = &map.values()[i];
+
+                if (!buffer.size.eql(old_size)) continue;
+
+                buffer.deinit();
+
+                vp.client.send_buffer_destroy(buffer.id) catch |err| switch (err) {
+                    error.WriteFailed, error.OutOfMemory => {},
+                };
+
+                _ = map.orderedRemove(buffer.id);
+            }
+        },
+    }
+}
+
+pub fn buffer_present(vp: *Viewport, comptime renderer: Renderer) !void {
+    std.debug.assert(vp.renderer == renderer);
+
+    if (renderer == .d11 and !constants.os_has_d3d) {
         @compileError("OS does not have d3d");
     }
 
@@ -103,298 +136,84 @@ pub fn buffer_present(vp: *Viewport, comptime renderer_tag: Renderer.Tag) !void 
         vp.current_buffer = null;
     }
 
-    const buffer: *Renderer.RendererBuffer(renderer_tag) =
-        blk: switch (renderer_tag) {
-            .cpu => {
-                const buffer = vp.renderer.cpu.buffers.getPtr(vp.current_buffer.?).?;
-                std.debug.assert(buffer.released);
+    switch (renderer) {
+        .cpu => {
+            const buffer = vp.buffers.cpu.getPtr(vp.current_buffer.?).?;
+            std.debug.assert(buffer.released);
 
-                try vp.client.connection.send_buffer_present(
-                    vp.client.io,
-                    vp.client.gpa,
-                    .{
-                        .viewport_id = vp.id,
-                        .buffer_id = buffer.id,
-                        .viewport_size = vp.size,
-                    },
-                );
+            try vp.client.connection.send_buffer_present(
+                vp.client.io,
+                vp.client.gpa,
+                .{
+                    .viewport_id = vp.id,
+                    .buffer_id = buffer.id,
+                    .viewport_size = vp.size,
+                },
+            );
+            buffer.released = false;
+        },
 
-                break :blk buffer;
-            },
+        .gl, .d11 => |tag| {
+            const map = switch (tag) {
+                .d11 => &vp.buffers.d11,
+                .gl => &vp.buffers.gl_linux,
+                .cpu => comptime unreachable,
+            };
+            const buffer = map.getPtr(vp.current_buffer.?).?;
 
-            .gl, .d11 => |tag| {
-                const renderer = switch (tag) {
-                    .d11, .gl => @field(vp.renderer, @tagName(tag)),
-                    .cpu => comptime unreachable,
-                };
+            std.debug.assert(buffer.released);
 
-                const buffer = renderer.buffers.getPtr(vp.current_buffer.?) orelse
-                    @panic("Buffer prematurely destroyed");
-                std.debug.assert(buffer.released);
+            buffer.release.point.advance();
 
-                buffer.release.point.advance();
+            try vp.client.connection.send_buffer_present_with_sync(
+                vp.client.io,
+                vp.client.gpa,
+                .{
+                    .viewport_id = vp.id,
+                    .buffer_id = buffer.id,
+                    .acquire_point = buffer.acquire.point,
+                    .release_point = buffer.release.point,
+                    .viewport_size = vp.size,
+                },
+            );
 
-                try vp.client.connection.send_buffer_present_with_sync(
-                    vp.client.io,
-                    vp.client.gpa,
-                    .{
-                        .viewport_id = vp.id,
-                        .buffer_id = buffer.id,
-                        .acquire_point = buffer.acquire.point,
-                        .release_point = buffer.release.point,
-                        .viewport_size = vp.size,
-                    },
-                );
-
-                break :blk buffer;
-            },
-        };
-
-    buffer.released = false;
-    switch (renderer_tag) {
-        .d11, .gl => buffer.acquire.point.advance(),
-        .cpu => {},
+            buffer.released = false;
+            buffer.acquire.point.advance();
+        },
     }
 
     vp.frame_number += 1;
 }
 
-pub fn buffers_create(
-    vp: *Viewport,
-    requested_size: ptypes.Size,
-) !void {
-    const client = vp.client;
-    const buffer_count = 2;
-    const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
-    switch (vp.renderer) {
-        .cpu => {
-            for (0..buffer_count) |_| {
-                try client.connection.send_buffer_create_cpu(
-                    client.io,
-                    client.gpa,
-                    .{
-                        .viewport_id = vp.id,
-                        .format = vp.format,
-                        .size = .{ .width = width, .height = height },
-                    },
-                );
-            }
+pub const Renderer = enum {
+    gl,
+    cpu,
+    d11,
 
-            std.debug.assert(vp.pending_buffers_cpu.items.len == 0);
-            while (vp.pending_buffers_cpu.items.len != buffer_count) {
-                try client.poll(.none);
-            }
-            std.debug.assert(vp.pending_buffers_cpu.items.len >= buffer_count);
-
-            try vp.renderer_buffers_create(BufferCreatedCpu, vp.pending_buffers_cpu.items);
-            vp.pending_buffers_cpu.clearRetainingCapacity();
-        },
-        .gl => {
-            switch (os) {
-                .linux => {
-                    for (0..buffer_count) |_| {
-                        try client.connection.send_buffer_create_gbm_bo(
-                            client.io,
-                            client.gpa,
-                            .{
-                                .viewport_id = vp.id,
-                                .format = vp.format,
-                                .size = .{ .width = width, .height = height },
-                            },
-                        );
-                    }
-
-                    std.debug.assert(vp.pending_buffers_gbm_bo.items.len == 0);
-                    while (vp.pending_buffers_gbm_bo.items.len != buffer_count) {
-                        try client.poll(.none);
-                    }
-                    std.debug.assert(vp.pending_buffers_gbm_bo.items.len >= buffer_count);
-
-                    try vp.renderer_buffers_create(BufferCreatedGbmBo, vp.pending_buffers_gbm_bo.items);
-                    vp.pending_buffers_gbm_bo.clearRetainingCapacity();
-                },
-                .windows => @panic("TODO"),
-                else => @compileError("Unsupported OS"),
-            }
-        },
-
-        .d11 => {
-            if (!constants.os_has_d3d) {
-                @panic("OS does not support d3d");
-            }
-
-            for (0..buffer_count) |_| {
-                try client.connection.send_texture_create_d3d(
-                    client.io,
-                    client.gpa,
-                    .{
-                        .viewport_id = vp.id,
-                        .format = vp.format,
-                        .size = .{ .width = width, .height = height },
-                        .version = .d3d11,
-                    },
-                );
-            }
-
-            std.debug.assert(vp.pending_textures_d3d.items.len == 0);
-            while (vp.pending_textures_d3d.items.len != buffer_count) {
-                try client.poll(.none);
-            }
-            std.debug.assert(vp.pending_textures_d3d.items.len >= buffer_count);
-
-            try vp.renderer_buffers_create(TextureCreatedD3D, vp.pending_textures_d3d.items);
-            vp.pending_textures_d3d.clearRetainingCapacity();
-        },
-    }
-}
-pub fn renderer_buffers_create(
-    vp: *Viewport,
-    comptime Buffer: type,
-    created: []Buffer,
-) !void {
-    const gpa = vp.client.gpa;
-
-    defer {
-        for (created) |c| {
-            switch (Buffer) {
-                BufferCreatedCpu => {
-                    switch (os) {
-                        .linux => {
-                            std.debug.assert(std.os.linux.close(@intFromEnum(c.handle)) == 0);
-                        },
-                        .windows => {
-                            _ = win32.foundation.CloseHandle(@ptrFromInt(@intFromEnum(c.handle)));
-                        },
-                        else => comptime unreachable,
-                    }
-                },
-                // TODO: Close fds here
-                BufferCreatedGbmBo => {},
-                TextureCreatedD3D => {},
-                else => comptime unreachable,
-            }
-        }
-    }
-
-    switch (vp.renderer) {
-        .gl => |*r| {
-            switch (RendererGL) {
-                LinuxRendererGL => {
-                    if (Buffer == BufferCreatedGbmBo) {
-                        std.debug.assert(r.buffers.count() == 0);
-                        try r.buffers.ensureUnusedCapacity(gpa, created.len);
-
-                        for (created) |b| {
-                            const buffer: LinuxRendererGL.Buffer = try .init(
-                                vp.client.gbm.?,
-                                vp.client.gl_context.?,
-                                b,
-                            );
-                            r.buffers.putAssumeCapacityNoClobber(buffer.id, buffer);
-                        }
-                    }
-                },
-                Win32RendererGL => @panic("TODO"),
-                else => comptime unreachable,
-            }
-        },
-        .cpu => |*r| {
-            if (Buffer == BufferCreatedCpu) {
-                std.debug.assert(r.buffers.count() == 0);
-                try r.buffers.ensureUnusedCapacity(gpa, created.len);
-
-                for (created) |b| {
-                    const buffer: RendererCpu.Buffer = try .init(b);
-                    r.buffers.putAssumeCapacityNoClobber(buffer.id, buffer);
-                }
-            }
-        },
-        .d11 => |*r| {
-            if (!constants.os_has_d3d) {
-                @panic("OS does not support d3d");
-            }
-
-            if (Buffer == TextureCreatedD3D) {
-                try r.buffers.ensureUnusedCapacity(gpa, created.len);
-                for (created) |b| {
-                    const buffer: RendererD11.Buffer = try .init(vp.client.d11_device.?, b);
-                    r.buffers.putAssumeCapacityNoClobber(buffer.id, buffer);
-                }
-            }
-        },
-    }
-}
-
-pub fn buffer_resize(
-    vp: *Viewport,
-    requested_size: ptypes.Size,
-) !void {
-    const new_width, const new_height = utils.new_dimensions(requested_size.width, requested_size.height);
-    const new_size: ptypes.Size = .{ .width = new_width, .height = new_height };
-    const buffer_size = switch (vp.renderer) {
-        inline else => |r| r.buffer_size(),
-    };
-
-    if (buffer_size.width < new_width or buffer_size.height < new_height) {
-        switch (vp.renderer) {
-            inline .gl, .cpu, .d11 => |*r| {
-                var old_buffers = r.buffers;
-                r.buffers = .empty;
-
-                vp.buffers_create(new_size) catch |err| {
-                    r.buffers = old_buffers;
-                    return err;
-                };
-                std.debug.assert(r.buffers.count() != 0);
-
-                for (old_buffers.values()) |*old| {
-                    old.deinit();
-
-                    vp.client.connection.send_buffer_destroy(
-                        vp.client.io,
-                        vp.client.gpa,
-                        .{ .buffer_id = old.id },
-                    ) catch {};
-                }
-                old_buffers.deinit(vp.client.gpa);
-            },
-        }
-    }
-}
-
-pub const RendererGL = switch (os) {
-    .linux => LinuxRendererGL,
-    .windows => Win32RendererGL,
-    else => unreachable,
-};
-
-pub const RendererCpu = switch (os) {
-    .linux => LinuxRendererCpu,
-    .windows => Win32RendererCpu,
-    else => unreachable,
-};
-
-pub const Renderer = union(enum) {
-    pub const Tag = std.meta.Tag(Renderer);
-
-    gl: RendererGL,
-    cpu: RendererCpu,
-    d11: RendererD11,
-
-    pub fn RendererBuffer(comptime tag: Tag) type {
+    pub fn buffer_type(tag: Renderer) ptypes.BufferType {
         return switch (tag) {
-            .gl => RendererGL.Buffer,
-            .cpu => RendererCpu.Buffer,
-            .d11 => RendererD11.Buffer,
+            .gl => .gbm_bo,
+            .cpu => .cpu,
+            .d11 => .d11,
+        };
+    }
+
+    pub fn BufferType(comptime tag: Renderer) type {
+        return switch (tag) {
+            .gl => Buffers.GlLinux,
+            .cpu => Buffers.Cpu,
+            .d11 => Buffers.D11,
+        };
+    }
+
+    pub fn MapType(comptime tag: Renderer) type {
+        return switch (tag) {
+            .cpu => std.array_hash_map.Auto(BufferID, Buffers.Cpu),
+            .gl => std.array_hash_map.Auto(BufferID, Buffers.GlLinux),
+            .d11 => std.array_hash_map.Auto(BufferID, Buffers.D11),
         };
     }
 };
-
-pub const LinuxRendererGL = @import("LinuxRendererGL.zig");
-pub const LinuxRendererCpu = @import("LinuxRendererCpu.zig");
-pub const Win32RendererGL = @import("Win32RendererGL.zig");
-pub const Win32RendererCpu = @import("Win32RendererCpu.zig");
-pub const RendererD11 = @import("RendererD11.zig");
 
 const std = @import("std");
 const Io = std.Io;
@@ -417,3 +236,4 @@ const BufferCreatedGbmBo = server_to_client.BufferCreatedGbmBo;
 const TextureCreatedD3D = server_to_client.TextureCreatedD3D;
 const utils = @import("utils");
 const win32 = @import("win32");
+const Buffers = @import("Buffers.zig");

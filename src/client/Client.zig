@@ -21,6 +21,10 @@ gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
 d11_device: ?D11Device,
 
+pending_buffers_cpu: std.ArrayList(BufferCreatedCpu),
+pending_buffers_gbm_bo: std.ArrayList(BufferCreatedGbmBo),
+pending_textures_d3d: std.ArrayList(TextureCreatedD3D),
+
 env: Env,
 
 read_future: Io.Future(void),
@@ -84,6 +88,10 @@ pub fn init(
         .gl_context = null,
         .d11_device = null,
 
+        .pending_buffers_cpu = .empty,
+        .pending_buffers_gbm_bo = .empty,
+        .pending_textures_d3d = .empty,
+
         .env = env,
         .read_future = future,
     };
@@ -128,6 +136,9 @@ pub fn deinit(client: *Client) void {
         &client.remote_viewports,
         &client.viewports_from_server,
         &client.remote_clients,
+        &client.pending_buffers_cpu,
+        &client.pending_buffers_gbm_bo,
+        &client.pending_textures_d3d,
     };
 
     inline for (containers) |container| {
@@ -187,11 +198,11 @@ pub fn poll(client: *Client, timeout: Io.Timeout) error{ Timeout, Canceled, OutO
     const len = client.messages_queue.messages.items.len;
 
     try client.viewports_from_server.ensureUnusedCapacity(client.gpa, len);
+    try client.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, len);
+    try client.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, len);
+    try client.pending_textures_d3d.ensureUnusedCapacity(client.gpa, len);
     for (client.viewports.values()) |vp| {
         try vp.events.ensureUnusedCapacity(client.gpa, len);
-        try vp.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, len);
-        try vp.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, len);
-        try vp.pending_textures_d3d.ensureUnusedCapacity(client.gpa, len);
     }
 
     while (client.messages_queue.messages.pop()) |message| {
@@ -318,21 +329,17 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         },
 
         .buffer_created_cpu => |e| {
-            const vp = client.viewports.get(e.viewport_id) orelse return;
-            vp.pending_buffers_cpu.appendAssumeCapacity(e);
+            client.pending_buffers_cpu.appendAssumeCapacity(e);
         },
         .buffer_created_gbm_bo => |e| {
-            const vp = client.viewports.get(e.viewport_id) orelse return;
-            vp.pending_buffers_gbm_bo.appendAssumeCapacity(e);
+            client.pending_buffers_gbm_bo.appendAssumeCapacity(e);
         },
 
         .texture_created_d3d => |e, tag| {
             if (!constants.os_has_d3d) {
                 @panic("Received invalid message on os " ++ @tagName(tag));
             }
-
-            const vp = client.viewports.get(e.viewport_id) orelse return;
-            vp.pending_textures_d3d.appendAssumeCapacity(e);
+            client.pending_textures_d3d.appendAssumeCapacity(e);
         },
 
         .viewport_created => |e| {
@@ -349,7 +356,10 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             switch (vp.renderer) {
                 .d11 => {}, // relies on fences
                 .gl => {}, // relies on timelines
-                .cpu => |*r| r.buffer_released(e.buffer_id),
+                .cpu => {
+                    const buffer = vp.buffers.cpu.getPtr(e.buffer_id) orelse return;
+                    buffer.released = true;
+                },
             }
         },
 
@@ -362,7 +372,7 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
 
 pub fn viewport_create(
     client: *Client,
-    tag: Viewport.Renderer.Tag,
+    tag: Viewport.Renderer,
     size: ptypes.Size,
     throttle: bool,
 ) !*Viewport {
@@ -377,7 +387,7 @@ pub fn viewport_create(
 
 pub fn viewport_create_from_pending(
     client: *Client,
-    tag: Viewport.Renderer.Tag,
+    tag: Viewport.Renderer,
     id: ViewportID,
     throttle: bool,
     size: ptypes.Size,
@@ -397,7 +407,7 @@ pub fn viewport_create_from_pending(
 
 pub fn viewport_create_with_id(
     client: *Client,
-    tag: Viewport.Renderer.Tag,
+    comptime renderer: Viewport.Renderer,
     id: ViewportID,
     requested_size: ptypes.Size,
     throttle: bool,
@@ -405,14 +415,6 @@ pub fn viewport_create_with_id(
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
 
     const vp = blk: {
-        const renderer: Viewport.Renderer = switch (tag) {
-            .gl => if (RendererGL == Viewport.LinuxRendererGL)
-                .{ .gl = .init(client.gbm.?, client.gl_context.?) }
-            else
-                @panic("TODO"),
-            .cpu => .{ .cpu = .init() },
-            .d11 => .{ .d11 = .init() },
-        };
         const vp = try client.gpa.create(Viewport);
         vp.* = .init(
             id,
@@ -432,8 +434,25 @@ pub fn viewport_create_with_id(
         client.gpa.destroy(vp);
     }
 
+    const request = 2;
+
+    const buffer_type = vp.renderer.buffer_type();
+    const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
+    const buffer_size: ptypes.Size = .{ .width = width, .height = height };
+
     try client.send_viewport_create(id, requested_size);
-    try vp.buffers_create(requested_size);
+    for (0..request) |_| {
+        try client.send_buffer_create(vp.id, vp.format, buffer_size, buffer_type);
+    }
+
+    while (vp.buffers.count(vp.renderer) != request) {
+        try client.poll(.none);
+        try client.buffers_create_from_pending_into(
+            buffer_type,
+            &vp.buffers,
+            vp.id,
+        );
+    }
 
     while (vp.status == .pending) {
         try client.poll(.none);
@@ -478,6 +497,94 @@ pub fn send_viewport_create(
             .d11 => .d11,
         },
     });
+}
+
+pub fn send_buffer_create(
+    client: *Client,
+    viewport_id: ptypes.ViewportID,
+    format: ptypes.BufferFormat,
+    size: ptypes.Size,
+    buffer_type: ptypes.BufferType,
+) !void {
+    switch (buffer_type) {
+        .cpu => {
+            try client.connection.send_buffer_create_cpu(
+                client.io,
+                client.gpa,
+                .{
+                    .viewport_id = viewport_id,
+                    .format = format,
+                    .size = size,
+                },
+            );
+        },
+        .gbm_bo => {
+            if (!constants.os_has_gbm) @panic("OS does not support gbm");
+
+            try client.connection.send_buffer_create_gbm_bo(
+                client.io,
+                client.gpa,
+                .{
+                    .viewport_id = viewport_id,
+                    .format = format,
+                    .size = size,
+                },
+            );
+        },
+        .d11 => {
+            if (!constants.os_has_d3d) @panic("OS does not support d3d");
+
+            try client.connection.send_texture_create_d3d(
+                client.io,
+                client.gpa,
+                .{
+                    .viewport_id = viewport_id,
+                    .format = format,
+                    .size = size,
+                    .version = .d3d11,
+                },
+            );
+        },
+    }
+}
+
+pub fn buffers_create_from_pending_into(
+    client: *Client,
+    buffer_type: ptypes.BufferType,
+    buffers: *Buffers,
+    viewport_id: ptypes.ViewportID,
+) !void {
+    try buffers.cpu.ensureUnusedCapacity(client.gpa, client.pending_buffers_cpu.items.len);
+    try buffers.gl_linux.ensureUnusedCapacity(client.gpa, client.pending_buffers_gbm_bo.items.len);
+    try buffers.d11.ensureUnusedCapacity(client.gpa, client.pending_textures_d3d.items.len);
+
+    switch (buffer_type) {
+        .cpu => {
+            while (client.pending_buffers_cpu.pop()) |created| {
+                if (created.viewport_id != viewport_id) continue;
+                const cpu = try Buffers.Cpu.init(created);
+                buffers.cpu.putAssumeCapacityNoClobber(cpu.id, cpu);
+            }
+        },
+        .gbm_bo => {
+            if (!constants.os_has_gbm) @panic("OS does not support gbm");
+
+            while (client.pending_buffers_gbm_bo.pop()) |created| {
+                if (created.viewport_id != viewport_id) continue;
+                const gl = try Buffers.GlLinux.init(client.gbm.?, client.gl_context.?, created);
+                buffers.gl_linux.putAssumeCapacityNoClobber(gl.id, gl);
+            }
+        },
+
+        .d11 => {
+            if (!constants.os_has_d3d) @panic("OS does not support d3d");
+            while (client.pending_textures_d3d.pop()) |created| {
+                if (created.viewport_id != viewport_id) continue;
+                const texture = try Buffers.D11.init(client.d11_device.?, created);
+                buffers.d11.putAssumeCapacityNoClobber(texture.id, texture);
+            }
+        },
+    }
 }
 
 pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
@@ -766,8 +873,6 @@ const BufferID = ptypes.BufferID;
 const log = std.log.scoped(.Client);
 const Viewport = @import("Viewport.zig");
 const RemoteViewport = @import("RemoteViewport.zig");
-const RendererGL = Viewport.RendererGL;
-const RendererCpu = Viewport.RendererCpu;
 const Process = @import("remote_client").Process;
 const RemoteClient = @import("remote_client").RemoteClient;
 const ServerConnection = @import("ServerConnection.zig");
@@ -776,3 +881,7 @@ const d11 = @import("win32").graphics.direct3d11;
 const d3d = @import("win32").graphics.direct3d;
 const win32_foundation = @import("win32").foundation;
 const known_folders = @import("known-folders");
+const Buffers = @import("Buffers.zig");
+const BufferCreatedCpu = server_to_client.BufferCreatedCpu;
+const BufferCreatedGbmBo = server_to_client.BufferCreatedGbmBo;
+const TextureCreatedD3D = server_to_client.TextureCreatedD3D;
