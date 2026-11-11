@@ -6,6 +6,7 @@ environ_map: std.process.Environ.Map,
 connection: ServerConnection,
 registered: bool,
 
+next_request_id: ptypes.RequestID,
 next_viewport_id: ptypes.ViewportID,
 next_remote_viewport_id: ptypes.RemoteViewportID,
 
@@ -21,9 +22,10 @@ gbm: ?Gbm,
 gl_context: ?opengl.ContextLinux,
 d11_device: ?D11Device,
 
-pending_buffers_cpu: std.ArrayList(BufferCreatedCpu),
-pending_buffers_gbm_bo: std.ArrayList(BufferCreatedGbmBo),
-pending_textures_d3d: std.ArrayList(TextureCreatedD3D),
+pending_viewports: std.array_hash_map.Auto(ptypes.RequestID, ViewportCreated),
+pending_buffers_cpu: std.array_hash_map.Auto(ptypes.RequestID, BufferCreatedCpu),
+pending_buffers_gbm_bo: std.array_hash_map.Auto(ptypes.RequestID, BufferCreatedGbmBo),
+pending_textures_d3d: std.array_hash_map.Auto(ptypes.RequestID, TextureCreatedD3D),
 
 env: Env,
 
@@ -78,6 +80,7 @@ pub fn init(
         .messages_queue = queues,
         .registered = false,
         .messages_arena = .init(gpa),
+        .next_request_id = .first,
         .next_viewport_id = .first_for_client,
         .next_remote_viewport_id = .first,
         .viewports = .empty,
@@ -88,6 +91,7 @@ pub fn init(
         .gl_context = null,
         .d11_device = null,
 
+        .pending_viewports = .empty,
         .pending_buffers_cpu = .empty,
         .pending_buffers_gbm_bo = .empty,
         .pending_textures_d3d = .empty,
@@ -136,6 +140,7 @@ pub fn deinit(client: *Client) void {
         &client.remote_viewports,
         &client.viewports_from_server,
         &client.remote_clients,
+        &client.pending_viewports,
         &client.pending_buffers_cpu,
         &client.pending_buffers_gbm_bo,
         &client.pending_textures_d3d,
@@ -198,6 +203,7 @@ pub fn poll(client: *Client, timeout: Io.Timeout) error{ Timeout, Canceled, OutO
     const len = client.messages_queue.messages.items.len;
 
     try client.viewports_from_server.ensureUnusedCapacity(client.gpa, len);
+    try client.pending_viewports.ensureUnusedCapacity(client.gpa, len);
     try client.pending_buffers_cpu.ensureUnusedCapacity(client.gpa, len);
     try client.pending_buffers_gbm_bo.ensureUnusedCapacity(client.gpa, len);
     try client.pending_textures_d3d.ensureUnusedCapacity(client.gpa, len);
@@ -329,26 +335,21 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
         },
 
         .buffer_created_cpu => |e| {
-            client.pending_buffers_cpu.appendAssumeCapacity(e);
+            client.pending_buffers_cpu.putAssumeCapacityNoClobber(e.request_id(), e);
         },
         .buffer_created_gbm_bo => |e| {
-            client.pending_buffers_gbm_bo.appendAssumeCapacity(e);
+            client.pending_buffers_gbm_bo.putAssumeCapacityNoClobber(e.request_id(), e);
         },
 
         .texture_created_d3d => |e, tag| {
             if (!constants.os_has_d3d) {
                 @panic("Received invalid message on os " ++ @tagName(tag));
             }
-            client.pending_textures_d3d.appendAssumeCapacity(e);
+            client.pending_textures_d3d.putAssumeCapacityNoClobber(e.request_id(), e);
         },
 
         .viewport_created => |e| {
-            const vp = client.viewports.get(e.viewport_id) orelse return;
-            std.debug.assert(vp.status == .pending);
-            switch (e.status) {
-                .success => vp.status = .created,
-                .failure => vp.status = .failed,
-            }
+            client.pending_viewports.putAssumeCapacityNoClobber(e.request_id(), e);
         },
 
         .buffer_released => |e| {
@@ -414,56 +415,67 @@ pub fn viewport_create_with_id(
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
 
-    const vp = blk: {
-        const vp = try client.gpa.create(Viewport);
-        vp.* = .init(
-            id,
-            client,
-            requested_size,
-            .argb8888,
-            throttle,
-            renderer,
-        );
-        break :blk vp;
-    };
-    client.viewports.putAssumeCapacityNoClobber(vp.id, vp);
+    const vp = try client.gpa.create(Viewport);
+    vp.* = .init(
+        id,
+        client,
+        requested_size,
+        .argb8888,
+        throttle,
+        renderer,
+    );
 
     errdefer {
-        _ = client.viewports.orderedRemove(vp.id);
         vp.deinit();
         client.gpa.destroy(vp);
     }
-
-    const request = 2;
 
     const buffer_type = vp.renderer.buffer_type();
     const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
     const buffer_size: ptypes.Size = .{ .width = width, .height = height };
 
-    try client.send_viewport_create(id, requested_size);
-    for (0..request) |_| {
-        try client.send_buffer_create(vp.id, vp.format, buffer_size, buffer_type);
-    }
+    const viewport_rid = client.next_request_id.increment();
+    const buffer_request_ids: []const ptypes.RequestID = &.{
+        client.next_request_id.increment(),
+        client.next_request_id.increment(),
+    };
 
-    while (vp.buffers.count(vp.renderer) != request) {
+    try client.send_viewport_create(viewport_rid, id, requested_size, vp.format, vp.renderer);
+    try client.send_buffer_create(buffer_request_ids[0], vp.format, buffer_size, buffer_type);
+    try client.send_buffer_create(buffer_request_ids[1], vp.format, buffer_size, buffer_type);
+
+    while (true) {
         try client.poll(.none);
-        try client.buffers_create_from_pending_into(
+
+        // TODO: On failure destory buffers
+        const maybe_failed = try client.buffers_create_from_pending_into(
             buffer_type,
             &vp.buffers,
-            vp.id,
+            buffer_request_ids,
         );
-    }
 
-    while (vp.status == .pending) {
-        try client.poll(.none);
+        if (maybe_failed) |reason| {
+            log.err("Failed to create buffer for viewport: error.{s}", .{reason.tag_name()});
+            return error.ViewportCreateFailed;
+        }
 
-        switch (vp.status) {
-            .pending => continue,
-            .created => break,
-            .failed => return error.ViewportCreateFailed,
+        const vp_status = client.pending_viewports.get(viewport_rid) orelse continue;
+
+        switch (vp_status) {
+            .success => {
+                if (vp.buffers.count(vp.renderer) == buffer_request_ids.len) {
+                    _ = client.pending_viewports.orderedRemove(viewport_rid);
+                    break;
+                }
+            },
+            .failure => |f| {
+                log.err("Failed to create viewport: error.{s}", .{@tagName(f.reason)});
+                return error.ViewportCreateFailed;
+            },
         }
     }
 
+    client.viewports.putAssumeCapacityNoClobber(vp.id, vp);
     return vp;
 }
 
@@ -482,16 +494,20 @@ pub fn throttle_frames(client: *Client, vp: *Viewport) !void {
 
 pub fn send_viewport_create(
     client: *Client,
+    request_id: ptypes.RequestID,
     viewport_id: ViewportID,
     size: ptypes.Size,
+    format: ptypes.BufferFormat,
+    renderer: Viewport.Renderer,
 ) !void {
-    const vp = client.viewports.get(viewport_id).?;
+    std.debug.assert(!client.viewports.contains(viewport_id));
 
     try client.connection.send_viewport_create(client.io, client.gpa, .{
+        .request_id = request_id,
         .viewport_id = viewport_id,
         .size = size,
-        .format = vp.format,
-        .buffer_type = switch (vp.renderer) {
+        .format = format,
+        .buffer_type = switch (renderer) {
             .cpu => .cpu,
             .gl => .gbm_bo,
             .d11 => .d11,
@@ -501,7 +517,7 @@ pub fn send_viewport_create(
 
 pub fn send_buffer_create(
     client: *Client,
-    viewport_id: ptypes.ViewportID,
+    request_id: ptypes.RequestID,
     format: ptypes.BufferFormat,
     size: ptypes.Size,
     buffer_type: ptypes.BufferType,
@@ -512,7 +528,7 @@ pub fn send_buffer_create(
                 client.io,
                 client.gpa,
                 .{
-                    .viewport_id = viewport_id,
+                    .request_id = request_id,
                     .format = format,
                     .size = size,
                 },
@@ -525,7 +541,7 @@ pub fn send_buffer_create(
                 client.io,
                 client.gpa,
                 .{
-                    .viewport_id = viewport_id,
+                    .request_id = request_id,
                     .format = format,
                     .size = size,
                 },
@@ -538,7 +554,7 @@ pub fn send_buffer_create(
                 client.io,
                 client.gpa,
                 .{
-                    .viewport_id = viewport_id,
+                    .request_id = request_id,
                     .format = format,
                     .size = size,
                     .version = .d3d11,
@@ -548,43 +564,81 @@ pub fn send_buffer_create(
     }
 }
 
+const BuffersCreateRequestFailed = union(ptypes.BufferType) {
+    cpu: BufferCreatedCpu.FailureReason,
+    gbm_bo: BufferCreatedGbmBo.FailureReason,
+    d11: TextureCreatedD3D.FailureReason,
+
+    pub fn tag_name(u: @This()) [:0]const u8 {
+        return switch (u) {
+            inline else => |t| @tagName(t),
+        };
+    }
+};
+
 pub fn buffers_create_from_pending_into(
     client: *Client,
     buffer_type: ptypes.BufferType,
     buffers: *Buffers,
-    viewport_id: ptypes.ViewportID,
-) !void {
-    try buffers.cpu.ensureUnusedCapacity(client.gpa, client.pending_buffers_cpu.items.len);
-    try buffers.gl_linux.ensureUnusedCapacity(client.gpa, client.pending_buffers_gbm_bo.items.len);
-    try buffers.d11.ensureUnusedCapacity(client.gpa, client.pending_textures_d3d.items.len);
+    request_ids_of_buffers: []const ptypes.RequestID,
+) !?BuffersCreateRequestFailed {
+    try buffers.cpu.ensureUnusedCapacity(client.gpa, request_ids_of_buffers.len);
+    try buffers.gl_linux.ensureUnusedCapacity(client.gpa, request_ids_of_buffers.len);
+    try buffers.d11.ensureUnusedCapacity(client.gpa, request_ids_of_buffers.len);
 
     switch (buffer_type) {
-        .cpu => {
-            while (client.pending_buffers_cpu.pop()) |created| {
-                if (created.viewport_id != viewport_id) continue;
-                const cpu = try Buffers.Cpu.init(created);
-                buffers.cpu.putAssumeCapacityNoClobber(cpu.id, cpu);
-            }
-        },
-        .gbm_bo => {
-            if (!constants.os_has_gbm) @panic("OS does not support gbm");
+        inline else => |tag| {
+            const Created = switch (tag) {
+                .cpu => BufferCreatedCpu,
+                .gbm_bo => BufferCreatedGbmBo,
+                .d11 => TextureCreatedD3D,
+            };
 
-            while (client.pending_buffers_gbm_bo.pop()) |created| {
-                if (created.viewport_id != viewport_id) continue;
-                const gl = try Buffers.GlLinux.init(client.gbm.?, client.gl_context.?, created);
-                buffers.gl_linux.putAssumeCapacityNoClobber(gl.id, gl);
-            }
-        },
+            const Buffer = switch (tag) {
+                .cpu => Buffers.Cpu,
+                .gbm_bo => Buffers.GlLinux,
+                .d11 => Buffers.D11,
+            };
 
-        .d11 => {
-            if (!constants.os_has_d3d) @panic("OS does not support d3d");
-            while (client.pending_textures_d3d.pop()) |created| {
-                if (created.viewport_id != viewport_id) continue;
-                const texture = try Buffers.D11.init(client.d11_device.?, created);
-                buffers.d11.putAssumeCapacityNoClobber(texture.id, texture);
+            const from: *std.array_hash_map.Auto(ptypes.RequestID, Created) = switch (tag) {
+                .cpu => &client.pending_buffers_cpu,
+                .gbm_bo => &client.pending_buffers_gbm_bo,
+                .d11 => &client.pending_textures_d3d,
+            };
+
+            const to = switch (tag) {
+                .cpu => &buffers.cpu,
+                .gbm_bo => &buffers.gl_linux,
+                .d11 => &buffers.d11,
+            };
+
+            var i = from.count();
+            while (i > 0) {
+                i -= 1;
+                const item = from.values()[i];
+                for (request_ids_of_buffers) |rid| {
+                    if (item.request_id() == rid) {
+                        defer _ = from.orderedRemove(item.request_id());
+                        switch (item) {
+                            .success => |s| {
+                                const buffer: Buffer = try .init(client, s);
+                                to.putAssumeCapacityNoClobber(buffer.id, buffer);
+                            },
+                            .failure => |f| {
+                                return @unionInit(
+                                    BuffersCreateRequestFailed,
+                                    @tagName(tag),
+                                    f.reason,
+                                );
+                            },
+                        }
+                    }
+                }
             }
         },
     }
+
+    return null;
 }
 
 pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
@@ -856,6 +910,12 @@ pub const MessagesQueue = struct {
     }
 };
 
+const RequestStatus = union(enum) {
+    pending,
+    success,
+    failure: ptypes.RequestFailureReason,
+};
+
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -885,3 +945,4 @@ const Buffers = @import("Buffers.zig");
 const BufferCreatedCpu = server_to_client.BufferCreatedCpu;
 const BufferCreatedGbmBo = server_to_client.BufferCreatedGbmBo;
 const TextureCreatedD3D = server_to_client.TextureCreatedD3D;
+const ViewportCreated = server_to_client.ViewportCreated;

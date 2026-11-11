@@ -304,11 +304,9 @@ pub fn handle_event(
             log.info("Unknown client connected", .{});
         },
         .buffer_created_cpu => |e| {
-            defer {
-                if (constants.os_supports_fd) {
-                    e.payload.handle.close();
-                }
-            }
+            defer if (constants.os_supports_fd and e.payload == .success) {
+                e.payload.success.handle.close();
+            };
 
             const client = server.clients.remote.get(e.client_uuid) orelse return;
             client.connection.send_buffer_created_cpu(
@@ -323,29 +321,30 @@ pub fn handle_event(
                         => error.FailedToSendHandle,
                         else => return error.ConnectionClosed,
                     };
-                } else return err;
+                } else return error.ConnectionClosed;
             };
         },
         .buffer_created_gbm_bo => |e| {
             if (!constants.os_has_gbm) {
                 @panic("OS does not support gbm");
             }
-            defer {
-                e.payload.fds.buffer.close();
-                e.payload.fds.acquire_timeline.close();
-                e.payload.fds.release_timeline.close();
-            }
+            defer if (e.payload == .success) {
+                e.payload.success.fds.buffer.close();
+                e.payload.success.fds.acquire_timeline.close();
+                e.payload.success.fds.release_timeline.close();
+            };
 
             const client = server.clients.remote.get(e.client_uuid) orelse return;
-            try client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload);
+            client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload) catch
+                return error.ConnectionClosed;
         },
         .texture_created_d3d => |e| {
             if (!constants.os_has_d3d) @panic("OS does not support d3d");
-            defer {
-                e.payload.texture_handle.close();
-                e.payload.acquire_fence_handle.close();
-                e.payload.release_fence_handle.close();
-            }
+            defer if (e.payload == .success) {
+                e.payload.success.texture_handle.close();
+                e.payload.success.acquire_fence_handle.close();
+                e.payload.success.release_fence_handle.close();
+            };
 
             const client = server.clients.remote.get(e.client_uuid) orelse return;
             client.connection.send_texture_created_d3d(server.io, server.gpa, e.payload) catch |err|

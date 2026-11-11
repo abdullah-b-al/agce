@@ -149,26 +149,48 @@ pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Alloca
     switch (os) {
         .linux => {
             const message = try c.stringify(gpa, .{ .buffer_created_cpu = const_payload });
-            try c.send_with_fd(ptypes.CpuBufferHandle, const_payload.handle, gpa, message);
+            switch (const_payload) {
+                .success => |s| {
+                    try c.send_with_fd(ptypes.CpuBufferHandle, s.handle, gpa, message);
+                },
+                .failure => {
+                    try c.send(io, gpa, message);
+                },
+            }
         },
         .windows => {
-            const duplicate = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.handle)));
-            errdefer _ = win32.foundation.CloseHandle(duplicate);
-
             var payload = const_payload;
-            payload.handle = .from_HANDLE(duplicate);
-            const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
-            try c.send(io, gpa, message);
+            switch (payload) {
+                .success => |s| {
+                    const duplicate = try c.duplicate_handle(s.handle.to_HANDLE());
+                    errdefer _ = win32.foundation.CloseHandle(duplicate);
+
+                    payload.success.handle = .from_HANDLE(duplicate);
+                    const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
+                    try c.send(io, gpa, message);
+                },
+                .failure => {
+                    const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
+                    try c.send(io, gpa, message);
+                },
+            }
         },
         else => comptime unreachable,
     }
 }
 
-pub fn send_buffer_created_gbm_bo(c: *ClientConnection, _: Io, gpa: std.mem.Allocator, payload: server_to_client.BufferCreatedGbmBo) !void {
+pub fn send_buffer_created_gbm_bo(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.BufferCreatedGbmBo) !void {
     if (!constants.os_has_gbm) @compileError("OS does not support gbm");
 
     const message = try c.stringify(gpa, .{ .buffer_created_gbm_bo = payload });
-    try c.send_with_fd(ptypes.BufferAndTimelineFds, payload.fds, gpa, message);
+    switch (payload) {
+        .success => |s| {
+            try c.send_with_fd(ptypes.BufferAndTimelineFds, s.fds, gpa, message);
+        },
+        .failure => {
+            try c.send(io, gpa, message);
+        },
+    }
 }
 
 pub fn send_texture_created_d3d(
@@ -179,21 +201,30 @@ pub fn send_texture_created_d3d(
 ) !void {
     if (!constants.os_has_d3d) @compileError("OS does not support d3d");
 
-    const duplicate_texture = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.texture_handle)));
-    errdefer _ = win32.foundation.CloseHandle(duplicate_texture);
-
-    const duplicate_acquire = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.acquire_fence_handle)));
-    errdefer _ = win32.foundation.CloseHandle(duplicate_acquire);
-
-    const duplicate_release = try c.duplicate_handle(@ptrFromInt(@intFromEnum(const_payload.release_fence_handle)));
-    errdefer _ = win32.foundation.CloseHandle(duplicate_release);
-
     var payload = const_payload;
-    payload.texture_handle = .from_HANDLE(duplicate_texture);
-    payload.acquire_fence_handle = .from_HANDLE(duplicate_acquire);
-    payload.release_fence_handle = .from_HANDLE(duplicate_release);
-    const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
-    try c.send(io, gpa, message);
+    switch (payload) {
+        .success => |s| {
+            const duplicate_texture = try c.duplicate_handle(s.texture_handle.to_HANDLE());
+            errdefer _ = win32.foundation.CloseHandle(duplicate_texture);
+
+            const duplicate_acquire = try c.duplicate_handle(s.acquire_fence_handle.to_HANDLE());
+            errdefer _ = win32.foundation.CloseHandle(duplicate_acquire);
+
+            const duplicate_release = try c.duplicate_handle(s.release_fence_handle.to_HANDLE());
+            errdefer _ = win32.foundation.CloseHandle(duplicate_release);
+
+            payload.success.texture_handle = .from_HANDLE(duplicate_texture);
+            payload.success.acquire_fence_handle = .from_HANDLE(duplicate_acquire);
+            payload.success.release_fence_handle = .from_HANDLE(duplicate_release);
+
+            const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
+            try c.send(io, gpa, message);
+        },
+        .failure => {
+            const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
+            try c.send(io, gpa, message);
+        },
+    }
 }
 
 pub fn send_frame_render(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.FrameRender) !void {
@@ -251,15 +282,7 @@ fn stringify(c: *ClientConnection, gpa: std.mem.Allocator, payload: server_to_cl
 
     const json = blk: switch (payload) {
         inline else => |_, tag| {
-            var p = @field(payload, @tagName(tag));
-
-            // The fd that's part of the json is wrong.
-            // Set them to .invalid to invalidate their use
-            const T = @TypeOf(p);
-            if (comptime utils.contains_a_fd(T)) |name| {
-                @field(p, name) = .invalid;
-            }
-
+            const p = @field(payload, @tagName(tag));
             break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
         },
     };

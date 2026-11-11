@@ -207,6 +207,7 @@ pub fn events_handle(com: *Compositor, events: []const Event) void {
 
 pub fn event_handle(com: *Compositor, event: Event) !void {
     switch (event) {
+        .texture_create_d3d => |args| try com.texture_create_d3d(args),
         .buffer_create_cpu => |args| try com.buffer_create_cpu(args),
         .buffer_create_gbm_bo => |args| try com.buffer_create_gbm_bo(args),
 
@@ -214,8 +215,6 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
         .buffer_present_with_sync => |args| try com.present_queue_push(.{ .sync = args }),
 
         .buffer_destroy => |args| try com.buffer_destroy(args),
-
-        .texture_create_d3d => |args| try com.texture_create_d3d(args),
 
         .viewport_create => |args| try com.viewport_create(args),
         .viewport_destroy => |args| com.viewport_destroy(args.client_uuid.viewport_key(args.payload.viewport_id)),
@@ -332,13 +331,13 @@ fn buffer_create_cpu(com: *Compositor, args: @FieldType(Event, "buffer_create_cp
     com.server_events.push_assume_capacity(.{
         .buffer_created_cpu = .{
             .client_uuid = args.client_uuid,
-            .payload = .{
+            .payload = .ok(.{
+                .request_id = args.payload.request_id,
                 .handle = buffer.handle,
-                .viewport_id = args.payload.viewport_id,
                 .buffer_id = buffer.buffer_id,
                 .size = args.payload.size,
                 .format = args.payload.format,
-            },
+            }),
         },
     });
 }
@@ -465,7 +464,7 @@ fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create
             const id = try wl.buffer_create_and_register_gpu_async(
                 rs,
                 com,
-                args.payload.viewport_id,
+                args.payload.request_id,
                 &bo,
                 size,
                 args.payload.format,
@@ -538,8 +537,8 @@ fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_
     com.server_events.push_assume_capacity(.{
         .texture_created_d3d = .{
             .client_uuid = args.client_uuid,
-            .payload = .{
-                .viewport_id = args.payload.viewport_id,
+            .payload = .ok(.{
+                .request_id = args.payload.request_id,
                 .buffer_id = buffer_id,
                 .texture_handle = texture_shared_handle,
                 .acquire_fence_handle = acquire_shared_handle,
@@ -547,7 +546,7 @@ fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_
                 .size = args.payload.size,
                 .format = args.payload.format,
                 .version = .d3d11,
-            },
+            }),
         },
     });
 }
@@ -666,10 +665,10 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
             com.server_events.push_assume_capacity(.{
                 .viewport_created = .{
                     .client_uuid = key.client_uuid,
-                    .payload = .{
+                    .payload = .ok(.{
+                        .request_id = args.payload.request_id,
                         .viewport_id = key.viewport_id,
-                        .status = .success,
-                    },
+                    }),
                 },
             });
         },
@@ -677,10 +676,10 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
             com.server_events.push_assume_capacity(.{
                 .viewport_created = .{
                     .client_uuid = v.embedded.client_uuid,
-                    .payload = .{
+                    .payload = .ok(.{
+                        .request_id = args.payload.request_id,
                         .viewport_id = v.embedded.viewport_id,
-                        .status = .success,
-                    },
+                    }),
                 },
             });
 

@@ -598,7 +598,7 @@ pub fn buffer_create_and_register_gpu_async(
     wl: *Wayland,
     rs: *ClientResources,
     com: *Compositor,
-    viewport_id: ptypes.ViewportID,
+    request_id: ptypes.RequestID,
     buffer: *const ClientResources.GbmBo,
     size: ptypes.Size,
     b_format: BufferFormat,
@@ -666,7 +666,7 @@ pub fn buffer_create_and_register_gpu_async(
     data.* = .{
         .buffer_id = buffer_id,
         .client_uuid = rs.client_uuid,
-        .viewport_id = viewport_id,
+        .request_id = request_id,
         .wl = wl,
         .com = com,
         .buffer_fd = @enumFromInt(buffer_fd),
@@ -881,7 +881,7 @@ pub const RegisterGpuBuffer = struct {
 
     client_uuid: ClientUUID,
     buffer_id: BufferID,
-    viewport_id: ptypes.ViewportID,
+    request_id: ptypes.RequestID,
 
     buffer_fd: ptypes.GbmBoFd,
     acquire_timeline: ptypes.DrmSyncobjAcquireTimelineFd,
@@ -938,8 +938,8 @@ pub const RegisterGpuBuffer = struct {
                 data.com.server_events.push(data.node, .{
                     .buffer_created_gbm_bo = .{
                         .client_uuid = data.client_uuid,
-                        .payload = .{
-                            .viewport_id = data.viewport_id,
+                        .payload = .ok(.{
+                            .request_id = data.request_id,
                             .buffer_id = data.buffer_id,
                             .size = data.size,
                             .fds = .{
@@ -949,7 +949,7 @@ pub const RegisterGpuBuffer = struct {
                             },
                             .stride = data.stride,
                             .format = data.format,
-                        },
+                        }),
                     },
                 });
             },

@@ -174,12 +174,15 @@ pub const GlLinux = if (!constants.os_has_gbm) UnreachableBuffer else struct {
     acquire: AcquireTimeline,
     release: ReleaseTimeline,
 
-    pub fn init(gbm: Client.Gbm, gl_context: opengl.ContextLinux, created: BufferCreatedGbmBo) !GlLinux {
+    pub fn init(client: *Client, created: BufferCreatedGbmBo.Success) !GlLinux {
         defer {
             created.fds.acquire_timeline.close();
             created.fds.release_timeline.close();
             created.fds.buffer.close();
         }
+
+        const gbm = client.gbm.?;
+        const gl_context = client.gl_context.?;
 
         var import_data: c_linux.gbm_import_fd_data = .{
             .fd = @intFromEnum(created.fds.buffer),
@@ -361,13 +364,15 @@ pub const D11 = if (!constants.os_has_d3d) UnreachableBuffer else struct {
     texture: *d3d11.ID3D11Texture2D,
     rtv: *d3d11.ID3D11RenderTargetView,
 
-    pub fn init(device: D11Device, created: server_to_client.TextureCreatedD3D) !D11 {
+    pub fn init(client: *Client, created: server_to_client.TextureCreatedD3D.Success) !D11 {
         std.debug.assert(created.version == .d3d11);
         defer {
             created.acquire_fence_handle.close();
             created.release_fence_handle.close();
             created.texture_handle.close();
         }
+
+        const device = client.d11_device.?;
 
         const release_event = win32_threading.CreateEventA(
             null,
@@ -468,7 +473,7 @@ const CpuLinux = struct {
     size: ptypes.Size,
     format: ptypes.BufferFormat,
 
-    pub fn init(created: BufferCreatedCpu) !CpuLinux {
+    pub fn init(_: *Client, created: BufferCreatedCpu.Success) !CpuLinux {
         defer created.handle.close();
 
         const s = created.size.width * created.size.height * created.format.bytes_per_pixel();
@@ -503,7 +508,7 @@ const CpuWindows = struct {
     size: ptypes.Size,
     format: ptypes.BufferFormat,
 
-    pub fn init(created: BufferCreatedCpu) !CpuWindows {
+    pub fn init(_: *Client, created: BufferCreatedCpu.Success) !CpuWindows {
         defer created.handle.close();
 
         const size_bytes = created.size.width * created.size.height * created.format.bytes_per_pixel();
@@ -538,6 +543,9 @@ const UnreachableBuffer = struct {
     id: ptypes.BufferID,
     size: ptypes.Size,
 
+    pub fn init(_: *Client, _: anytype) noreturn {
+        unreachable;
+    }
     pub fn deinit(_: *UnreachableBuffer) void {
         unreachable;
     }

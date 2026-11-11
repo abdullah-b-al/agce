@@ -52,6 +52,18 @@ pub const PID = enum(u32) {
     }
 };
 
+pub const RequestID = enum(u32) {
+    pub const first: @This() = @enumFromInt(1);
+
+    _,
+
+    pub fn increment(id: *RequestID) RequestID {
+        const int = @intFromEnum(id.*);
+        id.* = @enumFromInt(int + 1);
+        return @enumFromInt(int);
+    }
+};
+
 pub const ViewportID = enum(u32) {
     first_for_client = 1,
     first_for_server = std.math.maxInt(u16) + 1,
@@ -121,6 +133,10 @@ pub const ViewportKey = struct {
 };
 
 pub const Status = enum { success, failure };
+
+pub const RequestFailureReason = enum {
+    unknown,
+};
 
 pub const AcquireTimelinePoint = enum(u64) {
     _,

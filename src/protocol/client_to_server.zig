@@ -52,6 +52,7 @@ pub const ViewportDisplayStateSet = struct {
 };
 
 pub const ViewportCreate = struct {
+    request_id: types.RequestID,
     viewport_id: types.ViewportID,
     format: types.BufferFormat,
     buffer_type: types.BufferType,
@@ -94,19 +95,19 @@ pub const BufferCreateCpuWithFd = struct {
 };
 
 pub const BufferCreateCpu = struct {
-    viewport_id: types.ViewportID,
+    request_id: types.RequestID,
     size: types.Size,
     format: types.BufferFormat,
 };
 
 pub const BufferCreateGbmBo = struct {
-    viewport_id: types.ViewportID,
+    request_id: types.RequestID,
     size: types.Size,
     format: types.BufferFormat,
 };
 
 pub const TextureCreateD3D = struct {
-    viewport_id: types.ViewportID,
+    request_id: types.RequestID,
     size: types.Size,
     format: types.BufferFormat,
     version: types.D3DVersion,

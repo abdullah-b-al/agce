@@ -12,8 +12,6 @@ refresh_cycle: u32,
 frame_number: usize,
 current_buffer: ?BufferID,
 
-status: Client.CreateStatus,
-
 buffers: Buffers,
 
 events: std.ArrayList(Client.Event),
@@ -45,7 +43,6 @@ pub fn init(
 
         .events = .empty,
 
-        .status = .pending,
         .renderer = renderer,
     };
 }
@@ -78,6 +75,7 @@ fn buffers_resize(vp: *Viewport, requested_size: ptypes.Size) !void {
         break :blk .{ .width = width, .height = height };
     };
 
+    const client = vp.client;
     switch (vp.renderer) {
         inline else => |tag| {
             const map = vp.buffers.map(tag);
@@ -89,21 +87,36 @@ fn buffers_resize(vp: *Viewport, requested_size: ptypes.Size) !void {
             }
 
             const buffer_type = vp.renderer.buffer_type();
-            const request = 2;
 
-            for (0..request) |_| {
-                try vp.client.send_buffer_create(vp.id, vp.format, new_size, buffer_type);
-            }
+            const buffer_request_ids: []const ptypes.RequestID = &.{
+                client.next_request_id.increment(),
+                client.next_request_id.increment(),
+            };
 
-            const expected_size = vp.buffers.count(tag) + request;
+            try client.send_buffer_create(buffer_request_ids[0], vp.format, new_size, buffer_type);
+            try client.send_buffer_create(buffer_request_ids[1], vp.format, new_size, buffer_type);
+            const old_buffer_count = vp.buffers.count(vp.renderer);
 
-            while (vp.buffers.count(tag) != expected_size) {
+            while (true) {
                 try vp.client.poll(.none);
-                try vp.client.buffers_create_from_pending_into(
+
+                // TODO: On failure destory buffers
+                const maybe_failed = try vp.client.buffers_create_from_pending_into(
                     buffer_type,
                     &vp.buffers,
-                    vp.id,
+                    buffer_request_ids,
                 );
+
+                if (maybe_failed) |reason| {
+                    log.warn(
+                        "Could not resize due to buffer creation failing. error.{s}",
+                        .{reason.tag_name()},
+                    );
+                }
+
+                if (vp.buffers.count(vp.renderer) == old_buffer_count + buffer_request_ids.len) {
+                    break;
+                }
             }
 
             var i = map.count();
