@@ -962,7 +962,7 @@ pub const RegisterGpuBuffer = struct {
                 data.com.server_events.push(data.node, .{
                     .buffer_created_gbm_bo = .{
                         .client_uuid = data.client_uuid,
-                        .payload = .failed(data.request_id, .unknown),
+                        .payload = .failed(data.request_id, .failed_to_create_system_resources),
                     },
                 });
             },

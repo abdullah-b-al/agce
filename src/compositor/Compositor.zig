@@ -484,6 +484,29 @@ fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create
         return error.MessageUnsupportedByOS;
     }
 
+    try com.server_events.ensure_unused_capacity(1);
+    if (com.buffer_create_gbm_bo_inner(args)) |_| {
+        //
+    } else |err| {
+        const reason: server_to_client.BufferCreatedGbmBo.FailureReason = switch (err) {
+            error.OutOfMemory => |e| return e,
+
+            error.InvalidSize => .invalid_size,
+
+            error.FailedToGbmBoCreate,
+            error.FailedToCreateSyncobj,
+            => .failed_to_create_system_resources,
+        };
+
+        com.server_events.push_assume_capacity(.{ .buffer_created_gbm_bo = .{
+            .client_uuid = args.client_uuid,
+            .payload = .failed(args.payload.request_id, reason),
+        } });
+    }
+}
+fn buffer_create_gbm_bo_inner(com: *Compositor, args: @FieldType(Event, "buffer_create_gbm_bo")) !void {
+    if (!constants.os_has_gbm) @compileError("OS does not support gbm");
+
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
 
     const size = args.payload.size;

@@ -103,7 +103,10 @@ pub const BufferCreatedGbmBo = MayFail(struct {
     size: types.Size,
     stride: u32,
     format: types.BufferFormat,
-}, enum { unknown });
+}, enum {
+    invalid_size,
+    failed_to_create_system_resources,
+});
 
 pub const TextureCreatedD3D = MayFail(struct {
     request_id: types.RequestID,
