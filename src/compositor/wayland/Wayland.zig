@@ -959,7 +959,12 @@ pub const RegisterGpuBuffer = struct {
                 data.release_timeline.close();
                 data.com.server_events.destroy(data.node);
                 data.com.linux.wayland.buffer_listener_pool.destroy(data.buffer_listener);
-                @panic("TODO: Send failure message");
+                data.com.server_events.push(data.node, .{
+                    .buffer_created_gbm_bo = .{
+                        .client_uuid = data.client_uuid,
+                        .payload = .failed(data.request_id, .unknown),
+                    },
+                });
             },
         }
     }
