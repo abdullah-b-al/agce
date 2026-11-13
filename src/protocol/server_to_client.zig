@@ -114,7 +114,10 @@ pub const TextureCreatedD3D = MayFail(struct {
     size: types.Size,
     format: types.BufferFormat,
     version: types.D3DVersion,
-}, enum { unknown });
+}, enum {
+    invalid_size,
+    failed_to_create_system_resources,
+});
 
 pub const ViewportResize = struct {
     viewport_id: types.ViewportID,

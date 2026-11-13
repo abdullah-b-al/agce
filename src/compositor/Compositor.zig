@@ -515,13 +515,40 @@ fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create
 }
 
 fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_d3d")) !void {
-    std.debug.assert(args.payload.version == .d3d11);
     try com.server_events.ensure_unused_capacity(1);
 
     const win32 = switch (com.native_tag()) {
         .win32 => |tag| tag.compositor(com),
         else => return error.MessageUnsupportedByOS,
     };
+
+    if (com.texture_create_d3d_inner(win32, args)) |payload| {
+        com.server_events.push_assume_capacity(.{
+            .texture_created_d3d = .{
+                .client_uuid = args.client_uuid,
+                .payload = .ok(payload),
+            },
+        });
+    } else |err| {
+        const reason: server_to_client.TextureCreatedD3D.FailureReason = switch (err) {
+            error.OutOfMemory => |e| return e,
+
+            error.InvalidSize => .invalid_size,
+            error.FailedToCreateD3DTexture,
+            error.FailedToCreateFence,
+            error.FailedToCreateSharedHandleForFence,
+            => .failed_to_create_system_resources,
+        };
+
+        com.server_events.push_assume_capacity(.{ .texture_created_d3d = .{
+            .client_uuid = args.client_uuid,
+            .payload = .failed(args.payload.request_id, reason),
+        } });
+    }
+}
+fn texture_create_d3d_inner(com: *Compositor, win32: *Win32, args: @FieldType(Event, "texture_create_d3d")) !server_to_client.TextureCreatedD3D.Success {
+    std.debug.assert(args.payload.version == .d3d11);
+    std.debug.assert(com.server_events.capacity >= 1);
 
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
 
@@ -573,21 +600,16 @@ fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_
         },
     }));
 
-    com.server_events.push_assume_capacity(.{
-        .texture_created_d3d = .{
-            .client_uuid = args.client_uuid,
-            .payload = .ok(.{
-                .request_id = args.payload.request_id,
-                .buffer_id = buffer_id,
-                .texture_handle = texture_shared_handle,
-                .acquire_fence_handle = acquire_shared_handle,
-                .release_fence_handle = release_shared_handle,
-                .size = args.payload.size,
-                .format = args.payload.format,
-                .version = .d3d11,
-            }),
-        },
-    });
+    return .{
+        .request_id = args.payload.request_id,
+        .buffer_id = buffer_id,
+        .texture_handle = texture_shared_handle,
+        .acquire_fence_handle = acquire_shared_handle,
+        .release_fence_handle = release_shared_handle,
+        .size = args.payload.size,
+        .format = args.payload.format,
+        .version = .d3d11,
+    };
 }
 
 const BufferQueuePresent = union(enum) {
