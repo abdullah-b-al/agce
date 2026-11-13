@@ -322,24 +322,46 @@ fn buffer_create_cpu(com: *Compositor, args: @FieldType(Event, "buffer_create_cp
     try com.server_events.ensure_unused_capacity(1);
     const rs = com.resources.getPtr(args.client_uuid).?;
 
-    const buffer = try com.buffer_create_cpu_inner(
+    if (com.buffer_create_cpu_inner(
         rs,
         args.payload.size,
         args.payload.format,
-    );
+    )) |buffer| {
+        com.server_events.push_assume_capacity(.{
+            .buffer_created_cpu = .{
+                .client_uuid = args.client_uuid,
+                .payload = .ok(.{
+                    .request_id = args.payload.request_id,
+                    .handle = buffer.handle,
+                    .buffer_id = buffer.buffer_id,
+                    .size = args.payload.size,
+                    .format = args.payload.format,
+                }),
+            },
+        });
+    } else |err| {
+        const reason: server_to_client.BufferCreatedCpu.FailureReason = switch (err) {
+            error.OutOfMemory => |e| return e,
 
-    com.server_events.push_assume_capacity(.{
-        .buffer_created_cpu = .{
-            .client_uuid = args.client_uuid,
-            .payload = .ok(.{
-                .request_id = args.payload.request_id,
-                .handle = buffer.handle,
-                .buffer_id = buffer.buffer_id,
-                .size = args.payload.size,
-                .format = args.payload.format,
-            }),
-        },
-    });
+            error.Unexpected,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            error.NameTooLong,
+            error.SystemOutdated,
+            error.FtruncateFailed,
+            error.FailedToCreateFileMapping,
+            error.FailedToCreateDIBSection,
+            error.FailedToSelectObject,
+            => .failed_to_create_system_resources,
+        };
+
+        com.server_events.push_assume_capacity(.{
+            .buffer_created_cpu = .{
+                .client_uuid = args.client_uuid,
+                .payload = .failed(args.payload.request_id, reason),
+            },
+        });
+    }
 }
 
 const BufferCreateCpu = struct {
@@ -347,7 +369,20 @@ const BufferCreateCpu = struct {
     buffer_id: BufferID,
 };
 
-fn buffer_create_cpu_inner(com: *Compositor, rs: *ClientResources, size: ptypes.Size, format: ptypes.BufferFormat) !BufferCreateCpu {
+const BufferCreateCpuInnerError =
+    std.posix.MemFdCreateError || error{
+        FtruncateFailed,
+        FailedToCreateFileMapping,
+        FailedToCreateDIBSection,
+        FailedToSelectObject,
+    };
+
+fn buffer_create_cpu_inner(
+    com: *Compositor,
+    rs: *ClientResources,
+    size: ptypes.Size,
+    format: ptypes.BufferFormat,
+) BufferCreateCpuInnerError!BufferCreateCpu {
     try rs.buffers.ensureUnusedCapacity(com.gpa, 1);
 
     const size_bytes = size.width * size.height * format.bytes_per_pixel();
@@ -355,11 +390,15 @@ fn buffer_create_cpu_inner(com: *Compositor, rs: *ClientResources, size: ptypes.
     switch (com.native_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
-            const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-buffer", 0));
+            const fd: ptypes.CpuBufferHandle =
+                @enumFromInt(try std.posix.memfd_createZ("agce-buffer", 0));
             errdefer fd.close();
 
-            if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), @intCast(size_bytes))) != .SUCCESS)
+            const ftruncate = std.posix.system.ftruncate(@intFromEnum(fd), @intCast(size_bytes));
+            if (std.posix.errno(ftruncate) != .SUCCESS) {
+                log.err("ftruncate failed {}", .{std.posix.errno(ftruncate)});
                 return error.FtruncateFailed;
+            }
 
             const buffer_id = rs.next_buffer_id.increment();
             try wl.buffer_create_and_register_cpu(
@@ -703,7 +742,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
 
             error.FailedToCreateChildWindow,
             error.FailedToCreateDXGISwapChain1,
-            => .failed_to_create_native_resources,
+            => .failed_to_create_system_resources,
 
             error.InvalidSize => .invalid_size,
         };

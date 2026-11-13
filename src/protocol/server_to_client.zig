@@ -94,7 +94,7 @@ pub const BufferCreatedCpu = MayFail(struct {
     handle: types.CpuBufferHandle,
     size: types.Size,
     format: types.BufferFormat,
-}, enum { unknown });
+}, enum { failed_to_create_system_resources });
 
 pub const BufferCreatedGbmBo = MayFail(struct {
     request_id: types.RequestID,
@@ -152,7 +152,7 @@ pub const ViewportCreated = MayFail(struct {
     parent_viewport_does_not_exist,
     invalid_viewport_id,
     failed_to_create_window,
-    failed_to_create_native_resources,
+    failed_to_create_system_resources,
     invalid_size,
 });
 
