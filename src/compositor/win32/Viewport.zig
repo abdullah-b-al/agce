@@ -8,13 +8,17 @@ swap_chain: ?*dxgi.IDXGISwapChain1,
 
 mouse_tracking: bool = false,
 
+pub const InitError = error{
+    FailedToCreateChildWindow,
+    FailedToCreateDXGISwapChain1,
+};
 pub fn init(
     com: *Compositor,
     win32: *Win32,
     base: *const Compositor.Viewport,
     parent: ParentOfViewport,
     client_uuid: ClientUUID,
-) !Viewport {
+) InitError!Viewport {
     _ = client_uuid;
 
     const parent_handle = switch (parent) {

@@ -9,6 +9,9 @@ subsurface: Subsurface,
 viewport: *wp.Viewport,
 sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 
+pub const InitError = error{
+    OutOfMemory,
+};
 pub fn init(
     com: *Compositor,
     wl: *Wayland,

@@ -71,6 +71,10 @@ pub fn MayFail(comptime T: type, comptime R: type) type {
             return .{ .success = v };
         }
 
+        pub fn failed(rid: types.RequestID, v: FailureReason) @This() {
+            return .{ .failure = .{ .request_id = rid, .reason = v } };
+        }
+
         pub fn request_id(self: @This()) types.RequestID {
             return switch (self) {
                 inline else => |v| v.request_id,
@@ -144,7 +148,13 @@ pub const ViewportCreate = struct {
 pub const ViewportCreated = MayFail(struct {
     request_id: types.RequestID,
     viewport_id: types.ViewportID,
-}, enum { unknown });
+}, enum {
+    parent_viewport_does_not_exist,
+    invalid_viewport_id,
+    failed_to_create_window,
+    failed_to_create_native_resources,
+    invalid_size,
+});
 
 pub const BufferReleased = struct {
     viewport_id: types.ViewportID,

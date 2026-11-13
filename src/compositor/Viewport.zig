@@ -16,7 +16,9 @@ linux: if (os == .linux) Linux else void,
 
 memory_reserve_for_destroy: MemoryReserveForDestroy,
 
-pub fn create(args: CreateArgs) !*Viewport {
+pub const CreateError = Wayland.Viewport.InitError || Win32.Viewport.InitError;
+
+pub fn create(args: CreateArgs) CreateError!*Viewport {
     const vp = try args.com.gpa.create(Viewport);
     errdefer args.com.gpa.destroy(vp);
 

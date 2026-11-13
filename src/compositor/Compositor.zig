@@ -643,58 +643,92 @@ fn buffer_destroy(com: *Compositor, args: @FieldType(Event, "buffer_destroy")) !
 }
 
 pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_create")) !void {
+    var reserve: Viewport.MemoryReserveForDestroy = try .init(com);
+    errdefer reserve.release(com);
+
+    try com.server_events.ensure_unused_capacity(2);
+
+    if (com.viewport_create_inner(reserve, args)) |result| {
+        switch (result) {
+            .create_with_window => |key| {
+                com.server_events.push_assume_capacity(.{
+                    .viewport_created = .{
+                        .client_uuid = key.client_uuid,
+                        .payload = .ok(.{
+                            .request_id = args.payload.request_id,
+                            .viewport_id = key.viewport_id,
+                        }),
+                    },
+                });
+            },
+            .create_with_remote_viewport => |v| {
+                com.server_events.push_assume_capacity(.{
+                    .viewport_created = .{
+                        .client_uuid = v.embedded.client_uuid,
+                        .payload = .ok(.{
+                            .request_id = args.payload.request_id,
+                            .viewport_id = v.embedded.viewport_id,
+                        }),
+                    },
+                });
+
+                com.server_events.push_assume_capacity(.{
+                    .remote_viewport_embedded = .{
+                        .client_uuid = v.embeder.key.client_uuid,
+                        .payload = .{
+                            .remote_viewport_id = v.embeder.key.remote_viewport_id,
+                            .status = .success,
+                            .render_size = v.embeder.render_size,
+                            .viewport_key = v.embedded,
+                        },
+                    },
+                });
+            },
+        }
+    } else |err| {
+        const reason: server_to_client.ViewportCreated.FailureReason = switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.ClientDoesNotExist => return,
+
+            error.EmbederViewportDoesNotExist,
+            error.EmbederClientDoesNotExist,
+            => .parent_viewport_does_not_exist,
+
+            error.InvalidEmbededViewportKey => .invalid_viewport_id,
+
+            error.WindowDoesNotExist,
+            error.FailedToGetWindowHandle,
+            error.FailedToGetWindowID,
+            => .failed_to_create_window,
+
+            error.FailedToCreateChildWindow,
+            error.FailedToCreateDXGISwapChain1,
+            => .failed_to_create_native_resources,
+
+            error.InvalidSize => .invalid_size,
+        };
+
+        com.server_events.push_assume_capacity(.{ .viewport_created = .{
+            .client_uuid = args.client_uuid,
+            .payload = .failed(args.payload.request_id, reason),
+        } });
+    }
+}
+
+pub fn viewport_create_inner(
+    com: *Compositor,
+    reserve: Viewport.MemoryReserveForDestroy,
+    args: @FieldType(Event, "viewport_create"),
+) !ViewportCreateResult {
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) {
         return error.InvalidSize;
     }
 
-    var reserve: Viewport.MemoryReserveForDestroy = try .init(com);
-    errdefer reserve.release(com);
-    try com.server_events.ensure_unused_capacity(2);
-
-    const result: ViewportCreateResult = blk: {
-        if (args.payload.viewport_id.is_server_id()) {
-            break :blk try com.viewport_create_with_remote_viewport(reserve, args);
-        } else {
-            const key = try com.viewport_create_with_mux_window(reserve, args);
-            break :blk .{ .create_with_window = key };
-        }
-    };
-
-    switch (result) {
-        .create_with_window => |key| {
-            com.server_events.push_assume_capacity(.{
-                .viewport_created = .{
-                    .client_uuid = key.client_uuid,
-                    .payload = .ok(.{
-                        .request_id = args.payload.request_id,
-                        .viewport_id = key.viewport_id,
-                    }),
-                },
-            });
-        },
-        .create_with_remote_viewport => |v| {
-            com.server_events.push_assume_capacity(.{
-                .viewport_created = .{
-                    .client_uuid = v.embedded.client_uuid,
-                    .payload = .ok(.{
-                        .request_id = args.payload.request_id,
-                        .viewport_id = v.embedded.viewport_id,
-                    }),
-                },
-            });
-
-            com.server_events.push_assume_capacity(.{
-                .remote_viewport_embedded = .{
-                    .client_uuid = v.embeder.key.client_uuid,
-                    .payload = .{
-                        .remote_viewport_id = v.embeder.key.remote_viewport_id,
-                        .status = .success,
-                        .render_size = v.embeder.render_size,
-                        .viewport_key = v.embedded,
-                    },
-                },
-            });
-        },
+    if (args.payload.viewport_id.is_server_id()) {
+        return try com.viewport_create_with_remote_viewport(reserve, args);
+    } else {
+        const key = try com.viewport_create_with_mux_window(reserve, args);
+        return .{ .create_with_window = key };
     }
 }
 
@@ -715,12 +749,12 @@ fn viewport_create_with_remote_viewport(
     const embeder = try com.resources_of_embeder_get(embedded_key);
     const remote_viewport_data =
         embeder.remote_viewports_pending_fetch_remove_by_embedded_key(embedded_key) orelse
-        return error.RemoteViewportDoesNotExist;
+        return error.InvalidEmbededViewportKey;
 
     switch (remote_viewport_data.embed_in) {
         .viewport => |id| {
             const embeder_viewport = embeder.viewports.get(id) orelse
-                return error.ViewportDoesNotExist;
+                return error.EmbederViewportDoesNotExist;
 
             try embeder_viewport.remote_viewports.ensureUnusedCapacity(com.gpa, 1);
 
@@ -1690,6 +1724,7 @@ const win32_win = @import("win32").ui.windows_and_messaging;
 const c_linux = @import("c_linux");
 const constants = @import("constants");
 const client_to_server = @import("protocol").client_to_server;
+const server_to_client = @import("protocol").server_to_client;
 const utils = @import("utils");
 const pinput = @import("protocol").input;
 const Server = @import("server/Server.zig");
