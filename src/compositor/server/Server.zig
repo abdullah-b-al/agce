@@ -415,9 +415,8 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     };
 
     if (register.is_local) {
-        std.debug.assert(register.uuid != null);
-        server.clients.promote_client_to_local(server.gpa, index, register.uuid.?);
-        const client = server.clients.local.get(register.uuid.?).?;
+        server.clients.promote_client_to_local(server.gpa, index, register.uuid);
+        const client = server.clients.local.get(register.uuid).?;
 
         client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
             error.OutOfMemory => error.OutOfMemoryDuringRegister,
@@ -426,19 +425,18 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 
         log.debug("Promoted unknown client to local {f}", .{client.id});
     } else {
-        const id: ClientUUID = register.uuid orelse .new(server.io);
-        if (server.clients.remote.contains(id)) {
+        if (server.clients.remote.contains(register.uuid)) {
             return error.ClientUUIDAlreadyExists;
         }
 
-        server.clients.promote_client_to_known(server.gpa, index, id, register.pid);
-        log.debug("Promoted unknown client to {f}", .{id});
+        server.clients.promote_client_to_known(server.gpa, index, register.uuid, register.pid);
+        log.debug("Promoted unknown client to {f}", .{register.uuid});
 
         //
         // Finalize registration
         //
 
-        const client = server.clients.remote.get(id).?;
+        const client = server.clients.remote.get(register.uuid).?;
 
         client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
             error.OutOfMemory => error.OutOfMemoryDuringRegister,

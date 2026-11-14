@@ -38,7 +38,7 @@ pub fn send_register(
     c: *ServerConnection,
     io: Io,
     gpa: std.mem.Allocator,
-    uuid: ?ptypes.ClientUUID,
+    uuid: ptypes.ClientUUID,
     pid: ?ptypes.PID,
 ) !void {
     const message = try c.stringify(gpa, .{

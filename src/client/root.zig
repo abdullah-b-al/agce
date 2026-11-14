@@ -39,7 +39,7 @@ pub fn init(
     try client.connection.send_register(
         io,
         gpa,
-        client.env.client_uuid,
+        client.uuid,
         pid,
     );
 

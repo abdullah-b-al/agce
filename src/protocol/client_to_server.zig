@@ -39,7 +39,7 @@ pub const MessagePayload = union(enum(u32)) {
 };
 
 pub const Register = struct {
-    uuid: ?types.ClientUUID,
+    uuid: types.ClientUUID,
     pid: ?types.PID,
     is_local: bool,
 };

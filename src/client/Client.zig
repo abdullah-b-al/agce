@@ -2,6 +2,8 @@ const Client = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
+uuid: ptypes.ClientUUID,
+
 environ_map: std.process.Environ.Map,
 connection: ServerConnection,
 registered: bool,
@@ -72,6 +74,7 @@ pub fn init(
     return .{
         .io = io,
         .gpa = gpa,
+        .uuid = env.client_uuid orelse .new(io),
         .environ_map = map,
         .connection = .{
             .format = .json,
