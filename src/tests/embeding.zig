@@ -117,15 +117,42 @@ pub fn set_a_parent_for_a_viewport(init: std.process.Init) !void {
     const child = try handle.viewport_create(.cpu, vp, .{ .x = 64, .y = 64, .width = 64, .height = 64 }, false);
 
     var exit = false;
+    var mx: i32 = 0;
+    var my: i32 = 0;
     while (!exit) {
         try handle.poll(0);
 
-        while (vp.event_pop()) |e| {
-            if (e == .viewport_close) exit = true;
+        var left_click = false;
+        var right_click = false;
+        while (vp.event_pop()) |event| {
+            switch (event) {
+                .viewport_close => exit = true,
+                .mouse_motion => |e| {
+                    mx = @trunc(e.x);
+                    my = @trunc(e.y);
+                },
+                .mouse_button => |e| {
+                    if (e.state == .pressed) {
+                        left_click = e.button == .left;
+                        right_click = e.button == .right;
+                    }
+                },
+                else => {},
+            }
+        }
+
+        if (left_click) {
+            try child.pos_set(.{ .x = mx, .y = my });
+        }
+
+        if (right_click) {
+            const int: i32 = if (child.size().width == 32) 64 else 32;
+            try child.size_set(.{ .width = int, .height = int });
         }
 
         try shared.render_cpu(vp, 0);
         try shared.render_cpu(child, 0xFFFFFFFF);
+
         try init.io.sleep(.fromMilliseconds(16), .awake);
     }
 

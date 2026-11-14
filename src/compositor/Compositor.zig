@@ -1005,11 +1005,15 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
 }
 
 pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_set")) !void {
-    std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
+    const vp = if (args.client_uuid == args.payload.viewport_key.client_uuid) blk: {
+        break :blk com.viewport_from_key(args.payload.viewport_key) orelse return;
+    } else blk: {
+        break :blk try com.remote_viewport_from_key(args.payload.viewport_key, args.client_uuid);
+    };
 
-    const vp = try com.remote_viewport_from_key(args.payload.viewport_key, args.client_uuid);
-
-    std.debug.assert(vp.id.is_server_id());
+    if (vp.parent_key == null) {
+        return;
+    }
 
     const pos = args.payload.pos;
 
@@ -1049,13 +1053,19 @@ pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_
 }
 
 pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_size_set")) !void {
-    std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
+    const vp = if (args.client_uuid == args.payload.viewport_key.client_uuid) blk: {
+        break :blk com.viewport_from_key(args.payload.viewport_key) orelse return;
+    } else blk: {
+        break :blk try com.remote_viewport_from_key(args.payload.viewport_key, args.client_uuid);
+    };
+
+    if (vp.parent_key == null) {
+        return;
+    }
+
     try com.server_events.ensure_unused_capacity(1);
 
     const key = args.payload.viewport_key;
-    const vp = try com.remote_viewport_from_key(key, args.client_uuid);
-
-    std.debug.assert(vp.id.is_server_id());
 
     const size = args.payload.size;
     const window_size = com.muxi.window_size(vp.window_id) orelse return error.ViewportHasNoWindow;

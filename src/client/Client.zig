@@ -430,7 +430,7 @@ pub fn viewport_create_with_id(
     vp.* = .init(
         id,
         client,
-        rect.size(),
+        rect,
         .argb8888,
         throttle,
         renderer,

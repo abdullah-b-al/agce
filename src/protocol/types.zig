@@ -174,6 +174,10 @@ pub const Rect = struct {
         return .{ .x = p.x, .y = p.y, .width = s.width, .height = s.height };
     }
 
+    pub fn pos(r: Rect) Pos {
+        return .{ .x = r.x, .y = r.y };
+    }
+
     pub fn size(r: Rect) Size {
         return .{ .width = r.width, .height = r.height };
     }

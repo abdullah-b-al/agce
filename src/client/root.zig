@@ -303,6 +303,41 @@ pub const ViewportHandle = opaque {
         try handle.cast().resize(s);
     }
 
+    pub fn pos_set(handle: *ViewportHandle, pos: Pos) !void {
+        const vp = handle.cast();
+        const key = vp.client.uuid.viewport_key(vp.id);
+
+        if (pos.x != vp.pos.x or pos.y != vp.pos.y) {
+            try vp.client.connection.send_viewport_pos_set(
+                vp.client.io,
+                vp.client.gpa,
+                .{ .pos = pos, .viewport_key = key },
+            );
+        }
+
+        vp.pos = pos;
+    }
+
+    pub fn size_set(handle: *ViewportHandle, s: Size) !void {
+        const vp = handle.cast();
+        const key = vp.client.uuid.viewport_key(vp.id);
+
+        if (s.width != vp.size.width or s.height != vp.size.height) {
+            try vp.client.connection.send_viewport_size_set(
+                vp.client.io,
+                vp.client.gpa,
+                .{ .size = s, .viewport_key = key },
+            );
+        }
+
+        vp.size = s;
+    }
+
+    pub fn rect_set(handle: *ViewportHandle, rect: Rect) !void {
+        try handle.pos_set(.from_rect(rect));
+        try handle.size_set(.from_rect(rect));
+    }
+
     pub fn gl_buffer_get(handle: *ViewportHandle) !GlBuffer {
         std.debug.assert(!handle.destroyed());
 

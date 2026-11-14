@@ -1,16 +1,16 @@
 pub fn environ_map_create(src: std.builtin.SourceLocation, init: std.process.Init) !std.process.Environ.Map {
     var environ_map = try init.environ_map.clone(init.gpa);
 
-    var buf: [constants.socket_max_path]u8 = undefined;
-    const testing_path_len = try std.process.executableDirPath(
+    const testing_path = try std.process.executableDirPathAlloc(
         init.io,
-        &buf,
+        init.gpa,
     );
+    defer init.gpa.free(testing_path);
 
-    const path = try std.fs.path.join(init.gpa, &.{
-        buf[0..testing_path_len],
-        src.fn_name,
-    });
+    const name = try std.mem.concat(init.gpa, u8, &.{ src.fn_name, ".", constants.socket_extension });
+    defer init.gpa.free(name);
+
+    const path = try std.fs.path.join(init.gpa, &.{ testing_path, name });
     defer init.gpa.free(path);
 
     try environ_map.put(constants.env_agce_socket_path, path);
