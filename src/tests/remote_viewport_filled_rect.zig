@@ -6,20 +6,12 @@ pub fn main(init: std.process.Init) !void {
     );
     defer handle.deinit();
 
-    std.debug.assert(handle.expect_viewport());
-    const viewport: *agce.ViewportHandle = blk: while (true) {
-        try handle.poll(std.math.maxInt(u64));
-
-        if (handle.viewport_pending_peek()) |result| {
-            break :blk try handle.viewport_create_from_pending(
-                .cpu,
-                result.id,
-                result.requsted_size,
-                false,
-            );
-        }
-        return;
-    };
+    const viewport: *agce.ViewportHandle = try handle.viewport_create(
+        .cpu,
+        null,
+        .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+        false,
+    );
     defer viewport.destroy();
 
     const time = Io.Timestamp.now(init.io, .awake);

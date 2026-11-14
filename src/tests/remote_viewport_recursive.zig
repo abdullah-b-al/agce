@@ -20,26 +20,8 @@ pub fn main(init: std.process.Init) !void {
     std.log.debug("depth {} connected", .{depth});
 
     const viewport: *agce.ViewportHandle =
-        blk: while (handle.expect_viewport()) {
-            std.log.debug("depth {} expect_viewport", .{depth});
-            std.debug.assert(depth > 0);
+        try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = 720, .height = 720 }, false);
 
-            try handle.poll(std.math.maxInt(u64));
-
-            if (handle.viewport_pending_peek()) |result| {
-                break :blk try handle.viewport_create_from_pending(
-                    .cpu,
-                    result.id,
-                    result.requsted_size,
-                    false,
-                );
-            }
-            return;
-        } else {
-            std.debug.assert(depth == 0);
-            std.log.debug("depth {} viewport_create", .{depth});
-            break :blk try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = 720, .height = 720 }, false);
-        };
     defer viewport.destroy();
 
     std.log.debug("viewport created for depth {}", .{depth});

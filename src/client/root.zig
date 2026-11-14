@@ -123,29 +123,39 @@ pub const ClientHandle = opaque {
         rect: Rect,
         throttle: bool,
     ) !*ViewportHandle {
-        const vp = try handle.cast().viewport_create(
-            renderer,
-            if (parent) |p| p.id() else null,
-            rect,
-            throttle,
-        );
-        return @ptrCast(vp);
-    }
+        const client = handle.cast();
 
-    pub fn viewport_create_from_pending(
-        handle: *ClientHandle,
-        renderer: Renderer,
-        viewport_id: ViewportID,
-        s: Size,
-        throttle: bool,
-    ) !*ViewportHandle {
-        const vp = try handle.cast().viewport_create_from_pending(
-            renderer,
-            viewport_id,
-            throttle,
-            s,
-        );
-        return @ptrCast(vp);
+        if (client.env.client_uuid != null and
+            client.viewports.values().len == 0)
+        {
+            std.debug.assert(parent == null);
+
+            while (true) {
+                try client.poll(.none);
+
+                if (client.viewport_pending_peek()) |result| {
+                    const vp = try client.viewport_create_from_pending(
+                        renderer,
+                        result.id,
+                        false,
+                        result.requsted_size,
+                    );
+
+                    vp.size = rect.size();
+
+                    return @ptrCast(vp);
+                }
+            }
+        } else {
+            const vp = try client.viewport_create(
+                renderer,
+                if (parent) |p| p.id() else null,
+                rect,
+                throttle,
+            );
+
+            return @ptrCast(vp);
+        }
     }
 
     pub fn remote_client_create(handle: *ClientHandle) !*RemoteClient {
@@ -193,24 +203,6 @@ pub const ClientHandle = opaque {
         return @ptrCast(
             try client.remote_viewport_embed(vp.id, remote.uuid, rect),
         );
-    }
-
-    pub const ViewportPendingPeek = struct {
-        id: ViewportID,
-        requsted_size: Size,
-    };
-    pub fn viewport_pending_peek(handle: *ClientHandle) ?ViewportPendingPeek {
-        const client = handle.cast();
-        if (client.viewports_from_server.count() == 0)
-            return null;
-
-        const id = client.viewports_from_server.keys()[0];
-        const size = client.viewports_from_server.values()[0];
-        return .{ .id = id, .requsted_size = size };
-    }
-
-    pub fn expect_viewport(handle: *ClientHandle) bool {
-        return handle.cast().env.expect_viewport;
     }
 
     pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {

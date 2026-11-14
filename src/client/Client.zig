@@ -416,6 +416,19 @@ pub fn viewport_create_from_pending(
     return vp;
 }
 
+pub const ViewportPendingPeek = struct {
+    id: ViewportID,
+    requsted_size: ptypes.Size,
+};
+pub fn viewport_pending_peek(client: *Client) ?ViewportPendingPeek {
+    if (client.viewports_from_server.count() == 0)
+        return null;
+
+    const id = client.viewports_from_server.keys()[0];
+    const size = client.viewports_from_server.values()[0];
+    return .{ .id = id, .requsted_size = size };
+}
+
 pub fn viewport_create_with_id(
     client: *Client,
     parent_id: ?ptypes.ViewportID,
@@ -876,23 +889,17 @@ pub const CreateStatus = enum {
 };
 
 const Env = struct {
-    expect_viewport: bool,
     client_uuid: ?ptypes.ClientUUID,
 
     pub fn extract(map: *std.process.Environ.Map) Env {
         defer {
             _ = map.swapRemove(constants.env_client_uuid);
-            _ = map.swapRemove(constants.env_expect_viewport_key);
         }
 
         return .{
-            .expect_viewport = if (map.get(constants.env_expect_viewport_key)) |value|
-                std.mem.eql(u8, value, constants.env_expect_viewport_true)
-            else
-                false,
-
             .client_uuid = if (map.get(constants.env_client_uuid)) |value|
                 ptypes.ClientUUID.deserialize(value) catch |err| blk: {
+                    // TODO: Return an error
                     log.err("ClientUUID parse failed {}", .{err});
 
                     break :blk null;

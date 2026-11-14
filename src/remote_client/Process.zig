@@ -23,7 +23,6 @@ pub fn init(
 
     var environ = try environ_to_clone.clone(gpa);
     _ = environ.swapRemove(constants.env_client_uuid);
-    _ = environ.swapRemove(constants.env_expect_viewport_key);
 
     if (sockt_path) |path| {
         try environ.put(constants.env_agce_socket_path, path);
@@ -67,11 +66,9 @@ pub fn spawn(
     std.debug.assert(remote.status == .pending);
 
     std.debug.assert(!process.environ.contains(constants.env_client_uuid));
-    std.debug.assert(!process.environ.contains(constants.env_expect_viewport_key));
 
     const string = remote.uuid.serialize();
     try process.environ.put(constants.env_client_uuid, &string);
-    try process.environ.put(constants.env_expect_viewport_key, constants.env_expect_viewport_true);
 
     process.child = try std.process.spawn(process.io, .{
         .argv = process.argv,
