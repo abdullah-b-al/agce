@@ -10,7 +10,7 @@ fn create_a_viewport(init: std.process.Init) !void {
     const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
 
     try init.io.sleep(.fromSeconds(1), .awake);
 
@@ -25,7 +25,7 @@ fn render_few_frames_cpu(init: std.process.Init) !void {
     const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
 
     for (0..60) |_| {
         try shared.render_cpu(vp, 0xFFFFFFFF);
@@ -44,7 +44,7 @@ fn render_text(init: std.process.Init) !void {
     const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, .{ .width = 750, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 750, .height = 512 }, false);
 
     for (0..5) |_| {
         try handle.poll(0);

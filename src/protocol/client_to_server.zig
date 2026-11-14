@@ -52,6 +52,7 @@ pub const ViewportDisplayStateSet = struct {
 };
 
 pub const ViewportCreate = struct {
+    parent_id: ?types.ViewportID,
     request_id: types.RequestID,
     viewport_id: types.ViewportID,
     format: types.BufferFormat,

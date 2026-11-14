@@ -374,13 +374,14 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
 pub fn viewport_create(
     client: *Client,
     tag: Viewport.Renderer,
+    parent_id: ?ptypes.ViewportID,
     size: ptypes.Size,
     throttle: bool,
 ) !*Viewport {
     const id = client.next_viewport_id.increment_for_client();
 
     const vp = switch (tag) {
-        inline else => |t| try client.viewport_create_with_id(t, id, size, throttle),
+        inline else => |t| try client.viewport_create_with_id(parent_id, t, id, size, throttle),
     };
 
     return vp;
@@ -398,7 +399,7 @@ pub fn viewport_create_from_pending(
     );
 
     const vp = switch (tag) {
-        inline else => |t| try client.viewport_create_with_id(t, id, size, throttle),
+        inline else => |t| try client.viewport_create_with_id(null, t, id, size, throttle),
     };
 
     _ = client.viewports_from_server.orderedRemove(id);
@@ -408,6 +409,7 @@ pub fn viewport_create_from_pending(
 
 pub fn viewport_create_with_id(
     client: *Client,
+    parent_id: ?ptypes.ViewportID,
     comptime renderer: Viewport.Renderer,
     id: ViewportID,
     requested_size: ptypes.Size,
@@ -440,7 +442,7 @@ pub fn viewport_create_with_id(
         client.next_request_id.increment(),
     };
 
-    try client.send_viewport_create(viewport_rid, id, requested_size, vp.format, vp.renderer);
+    try client.send_viewport_create(parent_id, viewport_rid, id, requested_size, vp.format, vp.renderer);
     try client.send_buffer_create(buffer_request_ids[0], vp.format, buffer_size, buffer_type);
     try client.send_buffer_create(buffer_request_ids[1], vp.format, buffer_size, buffer_type);
 
@@ -494,6 +496,7 @@ pub fn throttle_frames(client: *Client, vp: *Viewport) !void {
 
 pub fn send_viewport_create(
     client: *Client,
+    parent_id: ?ptypes.ViewportID,
     request_id: ptypes.RequestID,
     viewport_id: ViewportID,
     size: ptypes.Size,
@@ -501,8 +504,10 @@ pub fn send_viewport_create(
     renderer: Viewport.Renderer,
 ) !void {
     std.debug.assert(!client.viewports.contains(viewport_id));
+    std.debug.assert(parent_id != viewport_id);
 
     try client.connection.send_viewport_create(client.io, client.gpa, .{
+        .parent_id = parent_id,
         .request_id = request_id,
         .viewport_id = viewport_id,
         .size = size,

@@ -13,7 +13,7 @@ pub fn events_resize(init: std.process.Init) !void {
         resize_to_900,
     };
 
-    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
 
     var events: std.ArrayList(client.Event) = .empty;
     defer events.deinit(gpa);
@@ -73,7 +73,7 @@ pub fn events_mouse(init: std.process.Init) !void {
         mouse_right_pressed,
         mouse_right_released,
     };
-    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
@@ -124,7 +124,7 @@ pub fn events_keys(init: std.process.Init) !void {
         key_a_released,
         key_a_repeat,
     };
-    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;
@@ -169,7 +169,7 @@ pub fn events_cursor_shape(init: std.process.Init) !void {
     const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
     defer vp.destroy();
 
     var events: std.ArrayList(client.Event) = .empty;

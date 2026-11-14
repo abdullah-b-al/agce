@@ -23,7 +23,13 @@ pub fn create(args: CreateArgs) CreateError!*Viewport {
     errdefer args.com.gpa.destroy(vp);
 
     if (args.parent_key) |p| {
-        std.debug.assert(args.key.viewport_id.is_server_id());
+        const is_server_id = args.key.viewport_id.is_server_id();
+        const is_same_client = p.client_uuid == args.key.client_uuid;
+
+        std.debug.assert(
+            is_server_id or is_same_client,
+        );
+
         std.debug.assert(!std.meta.eql(p, args.key));
     }
 

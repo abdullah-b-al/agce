@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
         } else {
             std.debug.assert(depth == 0);
             std.log.debug("depth {} viewport_create", .{depth});
-            break :blk try handle.viewport_create(.cpu, .{ .width = 720, .height = 720 }, false);
+            break :blk try handle.viewport_create(.cpu, null, .{ .width = 720, .height = 720 }, false);
         };
     defer viewport.destroy();
 

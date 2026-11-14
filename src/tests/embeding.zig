@@ -57,7 +57,7 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
     );
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, .{ .width = 720, .height = 720 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 720, .height = 720 }, false);
 
     const remote = try handle.remote_client_create();
     var child = try handle.process_init(&.{path});
@@ -102,6 +102,37 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
 
     remote_viewport.destroy();
     child.kill();
+
+    try server.await(init);
+}
+
+pub fn set_a_parent_for_a_viewport(init: std.process.Init) !void {
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
+
+    const handle = try shared.client_init(@src(), init);
+    defer handle.deinit();
+
+    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
+    const child = try handle.viewport_create(.cpu, vp, .{ .width = 64, .height = 64 }, false);
+
+    var exit = false;
+    while (!exit) {
+        try handle.poll(0);
+
+        while (vp.event_pop()) |e| {
+            if (e == .viewport_close) exit = true;
+        }
+
+        try shared.render_cpu(vp, 0);
+        try shared.render_cpu(child, 0xFFFFFFFF);
+        try init.io.sleep(.fromMilliseconds(16), .awake);
+    }
+
+    child.destroy();
+    vp.destroy();
+
+    try init.io.sleep(.fromSeconds(1), .awake);
 
     try server.await(init);
 }

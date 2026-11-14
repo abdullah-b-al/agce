@@ -734,7 +734,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
 
     if (com.viewport_create_inner(reserve, args)) |result| {
         switch (result) {
-            .create_with_window => |key| {
+            .create_with_parent => |key| {
                 com.server_events.push_assume_capacity(.{
                     .viewport_created = .{
                         .client_uuid = key.client_uuid,
@@ -774,6 +774,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
             error.OutOfMemory => |e| return e,
             error.ClientDoesNotExist => return,
 
+            error.ParentViewportDoesNotExist,
             error.EmbederViewportDoesNotExist,
             error.EmbederClientDoesNotExist,
             => .parent_viewport_does_not_exist,
@@ -810,10 +811,45 @@ pub fn viewport_create_inner(
 
     if (args.payload.viewport_id.is_server_id()) {
         return try com.viewport_create_with_remote_viewport(reserve, args);
+    } else if (args.payload.parent_id != null) {
+        return try com.viewport_create_with_viewport_parent(reserve, args);
     } else {
         const key = try com.viewport_create_with_mux_window(reserve, args);
-        return .{ .create_with_window = key };
+        return .{ .create_with_parent = key };
     }
+}
+
+fn viewport_create_with_viewport_parent(
+    com: *Compositor,
+    reserve: Viewport.MemoryReserveForDestroy,
+    args: @FieldType(Event, "viewport_create"),
+) !Compositor.ViewportCreateResult {
+    std.debug.assert(args.payload.parent_id != null);
+    const parent_id = args.payload.parent_id.?;
+
+    const rs = com.resources.getPtr(args.client_uuid) orelse return error.ClientDoesNotExist;
+    const parent = rs.viewports.get(parent_id) orelse return error.ParentViewportDoesNotExist;
+
+    const key = args.client_uuid.viewport_key(args.payload.viewport_id);
+    try rs.viewport_create(.{
+        .com = com,
+        .parent = .{ .viewport = parent },
+        .key = key,
+        .window_id = parent.window_id,
+        .clipping_rect = .{
+            .x = 0,
+            .y = 0,
+            .width = args.payload.size.width,
+            .height = args.payload.size.height,
+        },
+        .render_size = args.payload.size,
+        .parent_key = args.client_uuid.viewport_key(parent_id),
+        .format = args.payload.format,
+        .buffer_type = args.payload.buffer_type,
+        .reserve = reserve,
+    });
+
+    return .{ .create_with_parent = key };
 }
 
 fn viewport_create_with_remote_viewport(
@@ -905,6 +941,7 @@ fn viewport_create_with_mux_window(
     args: @FieldType(Event, "viewport_create"),
 ) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
+    std.debug.assert(args.payload.parent_id == null);
 
     const key: ViewportKey = .{
         .client_uuid = args.client_uuid,
@@ -1473,7 +1510,7 @@ pub const WindowID = enum(u32) {
 };
 
 pub const ViewportCreateResult = union(enum) {
-    create_with_window: ViewportKey,
+    create_with_parent: ViewportKey,
     create_with_remote_viewport: struct {
         embeder: struct {
             key: RemoteViewportKey,

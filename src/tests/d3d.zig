@@ -9,7 +9,7 @@ pub fn d3d11_share_texture(init: std.process.Init) !void {
 
     try handle.init_d3d11();
 
-    const vp = try handle.viewport_create(.d11, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.d11, null, .{ .width = 512, .height = 512 }, false);
     try init.io.sleep(.fromSeconds(1), .awake);
 
     vp.destroy();
@@ -29,7 +29,7 @@ pub fn d3d11_clear_screen(init: std.process.Init) !void {
 
     try handle.init_d3d11();
 
-    const vp = try handle.viewport_create(.d11, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.d11, null, .{ .width = 512, .height = 512 }, false);
 
     const red: [4]f32 = .{ 1, 0, 0, 1 };
     const green: [4]f32 = .{ 0, 1, 0, 1 };
