@@ -375,13 +375,13 @@ pub fn viewport_create(
     client: *Client,
     tag: Viewport.Renderer,
     parent_id: ?ptypes.ViewportID,
-    size: ptypes.Size,
+    rect: ptypes.Rect,
     throttle: bool,
 ) !*Viewport {
     const id = client.next_viewport_id.increment_for_client();
 
     const vp = switch (tag) {
-        inline else => |t| try client.viewport_create_with_id(parent_id, t, id, size, throttle),
+        inline else => |t| try client.viewport_create_with_id(parent_id, t, id, rect, throttle),
     };
 
     return vp;
@@ -399,7 +399,13 @@ pub fn viewport_create_from_pending(
     );
 
     const vp = switch (tag) {
-        inline else => |t| try client.viewport_create_with_id(null, t, id, size, throttle),
+        inline else => |t| try client.viewport_create_with_id(
+            null,
+            t,
+            id,
+            .init(.{ .x = 0, .y = 0 }, size),
+            throttle,
+        ),
     };
 
     _ = client.viewports_from_server.orderedRemove(id);
@@ -412,7 +418,7 @@ pub fn viewport_create_with_id(
     parent_id: ?ptypes.ViewportID,
     comptime renderer: Viewport.Renderer,
     id: ViewportID,
-    requested_size: ptypes.Size,
+    rect: ptypes.Rect,
     throttle: bool,
 ) !*Viewport {
     try client.viewports.ensureUnusedCapacity(client.gpa, 1);
@@ -421,7 +427,7 @@ pub fn viewport_create_with_id(
     vp.* = .init(
         id,
         client,
-        requested_size,
+        rect.size(),
         .argb8888,
         throttle,
         renderer,
@@ -433,7 +439,7 @@ pub fn viewport_create_with_id(
     }
 
     const buffer_type = vp.renderer.buffer_type();
-    const width, const height = utils.new_dimensions(requested_size.width, requested_size.height);
+    const width, const height = utils.new_dimensions(rect.width, rect.height);
     const buffer_size: ptypes.Size = .{ .width = width, .height = height };
 
     const viewport_rid = client.next_request_id.increment();
@@ -442,7 +448,7 @@ pub fn viewport_create_with_id(
         client.next_request_id.increment(),
     };
 
-    try client.send_viewport_create(parent_id, viewport_rid, id, requested_size, vp.format, vp.renderer);
+    try client.send_viewport_create(parent_id, viewport_rid, id, rect, vp.format, vp.renderer);
     try client.send_buffer_create(buffer_request_ids[0], vp.format, buffer_size, buffer_type);
     try client.send_buffer_create(buffer_request_ids[1], vp.format, buffer_size, buffer_type);
 
@@ -499,7 +505,7 @@ pub fn send_viewport_create(
     parent_id: ?ptypes.ViewportID,
     request_id: ptypes.RequestID,
     viewport_id: ViewportID,
-    size: ptypes.Size,
+    rect: ptypes.Rect,
     format: ptypes.BufferFormat,
     renderer: Viewport.Renderer,
 ) !void {
@@ -510,7 +516,7 @@ pub fn send_viewport_create(
         .parent_id = parent_id,
         .request_id = request_id,
         .viewport_id = viewport_id,
-        .size = size,
+        .rect = rect,
         .format = format,
         .buffer_type = switch (renderer) {
             .cpu => .cpu,

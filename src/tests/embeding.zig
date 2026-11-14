@@ -57,7 +57,7 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
     );
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, null, .{ .width = 720, .height = 720 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = 720, .height = 720 }, false);
 
     const remote = try handle.remote_client_create();
     var child = try handle.process_init(&.{path});
@@ -113,8 +113,8 @@ pub fn set_a_parent_for_a_viewport(init: std.process.Init) !void {
     const handle = try shared.client_init(@src(), init);
     defer handle.deinit();
 
-    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
-    const child = try handle.viewport_create(.cpu, vp, .{ .width = 64, .height = 64 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = 512, .height = 512 }, false);
+    const child = try handle.viewport_create(.cpu, vp, .{ .x = 64, .y = 64, .width = 64, .height = 64 }, false);
 
     var exit = false;
     while (!exit) {

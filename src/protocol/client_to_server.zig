@@ -58,7 +58,7 @@ pub const ViewportCreate = struct {
     format: types.BufferFormat,
     buffer_type: types.BufferType,
 
-    size: types.Size,
+    rect: types.Rect,
 };
 
 pub const ViewportDestroy = struct {

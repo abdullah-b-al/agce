@@ -120,13 +120,13 @@ pub const ClientHandle = opaque {
         handle: *ClientHandle,
         renderer: Renderer,
         parent: ?*ViewportHandle,
-        s: Size,
+        rect: Rect,
         throttle: bool,
     ) !*ViewportHandle {
         const vp = try handle.cast().viewport_create(
             renderer,
             if (parent) |p| p.id() else null,
-            s,
+            rect,
             throttle,
         );
         return @ptrCast(vp);

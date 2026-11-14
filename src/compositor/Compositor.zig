@@ -805,7 +805,7 @@ pub fn viewport_create_inner(
     reserve: Viewport.MemoryReserveForDestroy,
     args: @FieldType(Event, "viewport_create"),
 ) !ViewportCreateResult {
-    if (args.payload.size.width <= 0 or args.payload.size.height <= 0) {
+    if (args.payload.rect.width <= 0 or args.payload.rect.height <= 0) {
         return error.InvalidSize;
     }
 
@@ -836,13 +836,8 @@ fn viewport_create_with_viewport_parent(
         .parent = .{ .viewport = parent },
         .key = key,
         .window_id = parent.window_id,
-        .clipping_rect = .{
-            .x = 0,
-            .y = 0,
-            .width = args.payload.size.width,
-            .height = args.payload.size.height,
-        },
-        .render_size = args.payload.size,
+        .clipping_rect = args.payload.rect,
+        .render_size = args.payload.rect.size(),
         .parent_key = args.client_uuid.viewport_key(parent_id),
         .format = args.payload.format,
         .buffer_type = args.payload.buffer_type,
@@ -884,7 +879,7 @@ fn viewport_create_with_remote_viewport(
                 .key = embedded_key,
                 .window_id = embeder_viewport.window_id,
                 .clipping_rect = remote_viewport_data.clip_rect,
-                .render_size = args.payload.size,
+                .render_size = args.payload.rect.size(),
                 .parent_key = .{ .client_uuid = embeder.client_uuid, .viewport_id = embeder_viewport.id },
                 .format = args.payload.format,
                 .buffer_type = args.payload.buffer_type,
@@ -903,7 +898,7 @@ fn viewport_create_with_remote_viewport(
                 .key = embedded_key,
                 .window_id = id,
                 .clipping_rect = remote_viewport_data.clip_rect,
-                .render_size = args.payload.size,
+                .render_size = args.payload.rect.size(),
                 .parent_key = null,
                 .format = args.payload.format,
                 .buffer_type = args.payload.buffer_type,
@@ -927,7 +922,7 @@ fn viewport_create_with_remote_viewport(
                     .client_uuid = embeder.client_uuid,
                     .remote_viewport_id = remote_viewport_data.remote_viewport_id,
                 },
-                .render_size = args.payload.size,
+                .render_size = args.payload.rect.size(),
             },
 
             .embedded = embedded_key,
@@ -947,7 +942,7 @@ fn viewport_create_with_mux_window(
         .client_uuid = args.client_uuid,
         .viewport_id = args.payload.viewport_id,
     };
-    const window_handle = com.muxi.window_handle_for_viewport(key, args.payload.size) orelse return error.FailedToGetWindowHandle;
+    const window_handle = com.muxi.window_handle_for_viewport(key, args.payload.rect.size()) orelse return error.FailedToGetWindowHandle;
     const window_id = com.muxi.window_id_from_handle(window_handle) orelse return error.FailedToGetWindowID;
 
     const rs = com.resources.getPtr(args.client_uuid) orelse return error.ClientDoesNotExist;
@@ -960,10 +955,10 @@ fn viewport_create_with_mux_window(
         .clipping_rect = .{
             .x = 0,
             .y = 0,
-            .width = args.payload.size.width,
-            .height = args.payload.size.height,
+            .width = args.payload.rect.width,
+            .height = args.payload.rect.height,
         },
-        .render_size = args.payload.size,
+        .render_size = args.payload.rect.size(),
         .parent_key = null,
         .format = args.payload.format,
         .buffer_type = args.payload.buffer_type,

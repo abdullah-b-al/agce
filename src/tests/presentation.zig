@@ -10,7 +10,7 @@ pub fn present_many_viewports_cpu(init: std.process.Init) !void {
     const width = 512;
     const height = 512;
     for (viewports) |*vp| {
-        vp.* = try handle.viewport_create(.cpu, null, .{ .width = width, .height = height }, false);
+        vp.* = try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = width, .height = height }, false);
     }
 
     var x: i32 = 0;
@@ -93,7 +93,7 @@ pub fn present_many_viewports_d11(init: std.process.Init) !void {
     const viewports = try init.arena.allocator().alloc(*client.ViewportHandle, 10);
 
     for (viewports) |*vp| {
-        vp.* = try handle.viewport_create(.d11, null, .{ .width = 512, .height = 512 }, false);
+        vp.* = try handle.viewport_create(.d11, null, .{ .x = 0, .y = 0, .width = 512, .height = 512 }, false);
     }
 
     const white: [4]f32 = .{ 1, 1, 1, 1 };

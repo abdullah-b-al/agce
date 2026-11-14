@@ -55,7 +55,7 @@ fn show_tests(
     handle: *client.ClientHandle,
     binary_path: []const u8,
 ) !void {
-    const vp = try handle.viewport_create(.cpu, null, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = 512, .height = 512 }, false);
     defer vp.destroy();
 
     var mouse_x: i32 = 0;
@@ -161,7 +161,7 @@ fn render_few_frames_gl(init: std.process.Init) !void {
 
     try handle.init_opengl(3, 3);
 
-    const vp = try handle.viewport_create(.gl, null, .{ .width = 512, .height = 512 }, false);
+    const vp = try handle.viewport_create(.gl, null, .{ .x = 0, .y = 0, .width = 512, .height = 512 }, false);
 
     for (0..60) |_| {
         try shared.render_gl(vp);
