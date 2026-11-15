@@ -125,6 +125,11 @@ pub fn send_remote_viewport_display_state(c: *ClientConnection, io: Io, gpa: std
     try c.send(io, gpa, message);
 }
 
+pub fn send_remote_viewport_render_size(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportRenderSize) !void {
+    const message = try c.stringify(gpa, .{ .remote_viewport_render_size = payload });
+    try c.send(io, gpa, message);
+}
+
 pub fn send_remote_viewport_closed(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportClosed) !void {
     const message = try c.stringify(gpa, .{ .remote_viewport_closed = payload });
     try c.send(io, gpa, message);

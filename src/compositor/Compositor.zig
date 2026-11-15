@@ -659,6 +659,7 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
     const rs = com.resources.getPtr(client_uuid) orelse return;
     const window_size = com.muxi.window_size(vp.window_id) orelse return;
 
+    const old_render_size = vp.render_size;
     vp.render_size = render_size;
     if (vp.parent_key == null) {
         vp.clipping_rect = .{
@@ -686,6 +687,7 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
         client_uuid,
         viewport_id,
         buffer_id,
+        vp.parent_key,
         window_size,
         render_size,
 
@@ -696,11 +698,15 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
                 .release_point = sync.payload.release_point,
             },
         },
+
+        old_render_size,
     ));
 }
 
 pub fn present(com: *Compositor) !void {
-    try com.server_events.ensure_unused_capacity(com.present_queue.items.len);
+    try com.server_events.ensure_unused_capacity(
+        com.present_queue.items.len * 2,
+    );
 
     // FIXME: This could block forever on windows if we wait on a
     // timeline point that never gets signaled
@@ -714,8 +720,25 @@ pub fn present(com: *Compositor) !void {
         var i = com.present_queue.items.len;
         while (i > 0) {
             i -= 1;
-            if (com.present_queue.items[i].state == .presented) {
-                _ = com.present_queue.orderedRemove(i);
+            const item = com.present_queue.items[i];
+            if (item.state != .presented) continue;
+
+            _ = com.present_queue.orderedRemove(i);
+
+            if (item.parent_key) |parent| {
+                const is_remote_viewport = parent.client_uuid != item.client_uuid;
+                const size_changed = !item.old_render_size.eql(item.render_size);
+                if (is_remote_viewport and size_changed) {
+                    com.server_events.push_assume_capacity(.{
+                        .remote_viewport_render_size = .{
+                            .client_uuid = parent.client_uuid,
+                            .payload = .{
+                                .viewport_key = item.client_uuid.viewport_key(item.viewport_id),
+                                .size = item.render_size,
+                            },
+                        },
+                    });
+                }
             }
         }
     }
@@ -1728,6 +1751,8 @@ pub const BufferPresent = struct {
     client_uuid: ClientUUID,
     viewport_id: ViewportID,
     buffer_id: BufferID,
+    parent_key: ?ViewportKey,
+    old_render_size: ptypes.Size,
     render_size: ptypes.Size,
     window_size: ptypes.Size,
     sync: ?Sync,
@@ -1737,17 +1762,21 @@ pub const BufferPresent = struct {
         client_uuid: ClientUUID,
         viewport_id: ViewportID,
         buffer_id: BufferID,
+        parent_key: ?ViewportKey,
         window_size: ptypes.Size,
         render_size: ptypes.Size,
         sync: ?Sync,
+        old_render_size: ptypes.Size,
     ) BufferPresent {
         return .{
             .client_uuid = client_uuid,
             .viewport_id = viewport_id,
             .buffer_id = buffer_id,
+            .parent_key = parent_key,
             .window_size = window_size,
             .render_size = render_size,
             .sync = sync,
+            .old_render_size = old_render_size,
 
             .state = .new,
         };

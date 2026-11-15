@@ -654,6 +654,7 @@ pub const Event = union(enum) {
     remote_viewport_embedded: server_to_client.WithClientUUID(server_to_client.RemoteViewportEmbedded),
     remote_viewport_display_state: server_to_client.WithClientUUID(server_to_client.RemoteViewportDisplayState),
     remote_viewport_closed: server_to_client.WithClientUUID(server_to_client.RemoteViewportClosed),
+    remote_viewport_render_size: server_to_client.WithClientUUID(server_to_client.RemoteViewportRenderSize),
 
     frame_render: server_to_client.WithClientUUID(server_to_client.FrameRender),
 

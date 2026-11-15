@@ -309,6 +309,20 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
                 vp.event_push(.{ .remote_viewport_closed = rvp.id });
             }
         },
+        .remote_viewport_render_size => |e| {
+            const rvp = blk: for (client.remote_viewports.values()) |rvp| {
+                const key = switch (rvp.state) {
+                    .shown, .hidden => |key| key,
+                    .closed, .pending, .failed => continue,
+                };
+
+                if (std.meta.eql(key, e.viewport_key)) {
+                    break :blk rvp;
+                }
+            } else return;
+
+            rvp.render_size = e.size;
+        },
         .viewport_resize => |e| {
             const vp = client.viewports.get(e.viewport_id) orelse return;
             vp.event_push(.{ .viewport_resize = e });
