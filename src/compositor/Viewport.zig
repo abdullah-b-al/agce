@@ -54,12 +54,6 @@ pub fn create(args: CreateArgs) CreateError!*Viewport {
     switch (args.com.native_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(args.com);
-            const create_sync_timeline = switch (args.buffer_type) {
-                .d11 => unreachable,
-
-                .cpu => false,
-                .gbm_bo => true,
-            };
 
             vp.linux = .{
                 .wayland = try .init(
@@ -68,7 +62,6 @@ pub fn create(args: CreateArgs) CreateError!*Viewport {
                     vp,
                     args.parent,
                     args.key.client_uuid,
-                    create_sync_timeline,
                 ),
             };
         },

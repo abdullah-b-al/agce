@@ -196,6 +196,24 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
         );
     }
 
+    pub fn acquire_check_signaled(bo: *const GbmBo, gbm: Compositor.Gbm, point: ptypes.AcquireTimelinePoint) bool {
+        var handles = @intFromEnum(bo.acquire);
+        var points = @intFromEnum(point);
+
+        const result = c_linux.drmSyncobjTimelineWait(
+            gbm.dri.handle,
+            &handles,
+            &points,
+            1,
+            0,
+            0,
+            null,
+        );
+
+        // TODO: error handle
+        return result == 0;
+    }
+
     pub fn signal_release_timeline(bo: *const GbmBo, gbm: Compositor.Gbm, point: ptypes.ReleaseTimelinePoint) void {
         const handles = @intFromEnum(bo.release);
         var points = @intFromEnum(point);
@@ -215,6 +233,7 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
 pub const BufferCommitted = struct {
     viewport_id: ViewportID,
     ptr: *ServeQueue.Node,
+    sync: ?Compositor.BufferPresent.Sync,
 };
 
 const std = @import("std");

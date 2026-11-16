@@ -201,7 +201,7 @@ pub fn present(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.
 
     std.debug.assert(com.server_events.capacity >= com.present_queue.items.len);
 
-    win32.present_queue_check_available_to_copy(com, native_tag);
+    win32.present_queue_check_ready_to_copy(com, native_tag);
     win32.present_queue_copy_if_ready(com, native_tag);
     win32.present_queue_present_if_ready(com, native_tag);
 
@@ -220,7 +220,7 @@ pub fn present(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.
     }
 }
 
-fn present_queue_check_available_to_copy(_: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+fn present_queue_check_ready_to_copy(_: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state != .presented);
 
@@ -314,6 +314,7 @@ fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime nati
                 const sync = item.sync.?;
 
                 _ = swap_chain.IDXGISwapChain.Present(0, 0);
+                // TODO: Is this really the right time to signal release ?
                 _ = win32.d11_context.device_context4.Signal(
                     b.release.release,
                     @intFromEnum(sync.release_point),

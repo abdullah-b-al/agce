@@ -154,7 +154,6 @@ pub fn build(b: *std.Build) !void {
         scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
         scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
         scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
-        scanner.addSystemProtocol("staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml");
         scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
 
         scanner.generate("wl_seat", 4);
@@ -164,7 +163,6 @@ pub fn build(b: *std.Build) !void {
         scanner.generate("xdg_wm_base", 1);
         scanner.generate("zwp_linux_dmabuf_v1", 1);
         scanner.generate("wp_viewporter", 1);
-        scanner.generate("wp_linux_drm_syncobj_manager_v1", 1);
         scanner.generate("wp_cursor_shape_manager_v1", 1);
 
         break :blk wayland;

@@ -7,7 +7,6 @@ surface: *cwl.Surface,
 pointer: Pointer,
 subsurface: Subsurface,
 viewport: *wp.Viewport,
-sync_surface: ?*wp.LinuxDrmSyncobjSurfaceV1,
 
 pub const InitError = error{
     OutOfMemory,
@@ -18,7 +17,6 @@ pub fn init(
     base: *const Compositor.Viewport,
     parent: ParentOfViewport,
     client_uuid: ClientUUID,
-    create_sync_timeline: bool,
 ) !Viewport {
     const surface = try wl.compositor.createSurface();
     errdefer surface.destroy();
@@ -43,11 +41,6 @@ pub fn init(
         @intCast(base.clipping_rect.y),
     );
 
-    const sync_surface = if (create_sync_timeline)
-        try wl.sync_object_manager.getSurface(surface)
-    else
-        null;
-
     try Wayland.frame_listener_set(com, surface, .{ .client_uuid = client_uuid, .viewport_id = base.id });
 
     return .{
@@ -55,16 +48,12 @@ pub fn init(
         .surface = surface,
         .pointer = .init,
         .subsurface = .init(subsurface),
-        .sync_surface = sync_surface,
         .viewport = viewport,
         .refresh_cycle = 0,
     };
 }
 
 pub fn deinit(vp: *Viewport) void {
-    if (vp.sync_surface) |sync| {
-        sync.destroy();
-    }
     vp.viewport.destroy();
     vp.subsurface.subsurface.destroy();
     vp.surface.destroy();
@@ -112,40 +101,6 @@ pub fn min_source_size_with_buffer(vp: *const Viewport, window_size: ptypes.Size
         ),
     };
 }
-
-pub const AcquireTimeline = struct {
-    acquire: *wp.LinuxDrmSyncobjTimelineV1,
-
-    pub fn init(m: *wp.LinuxDrmSyncobjManagerV1, acquire: ptypes.DrmSyncobjAcquireTimelineFd) !AcquireTimeline {
-        return .{
-            .acquire = try m.importTimeline(@intFromEnum(acquire)),
-        };
-    }
-
-    pub fn set(t: AcquireTimeline, sync_surface: *wp.LinuxDrmSyncobjSurfaceV1, point: ptypes.AcquireTimelinePoint) void {
-        const int = @intFromEnum(point);
-        const lo: u32 = @truncate(int & 0xFF_FF_FF_FF);
-        const hi: u32 = @truncate(int >> 32);
-        sync_surface.setAcquirePoint(t.acquire, hi, lo);
-    }
-};
-
-pub const ReleaseTimeline = struct {
-    release: *wp.LinuxDrmSyncobjTimelineV1,
-
-    pub fn init(m: *wp.LinuxDrmSyncobjManagerV1, release: ptypes.DrmSyncobjReleaseTimelineFd) !ReleaseTimeline {
-        return .{
-            .release = try m.importTimeline(@intFromEnum(release)),
-        };
-    }
-
-    pub fn set(t: ReleaseTimeline, sync_surface: *wp.LinuxDrmSyncobjSurfaceV1, point: ptypes.ReleaseTimelinePoint) void {
-        const int = @intFromEnum(point);
-        const lo: u32 = @truncate(int & 0xFF_FF_FF_FF);
-        const hi: u32 = @truncate(int >> 32);
-        sync_surface.setReleasePoint(t.release, hi, lo);
-    }
-};
 
 pub const Pointer = struct {
     pointer: ?*cwl.Pointer,

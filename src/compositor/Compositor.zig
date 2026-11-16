@@ -708,7 +708,7 @@ pub fn present(com: *Compositor) !void {
         com.present_queue.items.len * 2,
     );
 
-    // FIXME: This could block forever on windows if we wait on a
+    // FIXME: This could block forever if we wait on a
     // timeline point that never gets signaled
     while (com.present_queue.items.len > 0) {
         switch (com.native_tag()) {
@@ -1782,7 +1782,7 @@ pub const BufferPresent = struct {
         };
     }
 
-    const Sync = struct {
+    pub const Sync = struct {
         acquire_point: ptypes.AcquireTimelinePoint,
         release_point: ptypes.ReleaseTimelinePoint,
     };

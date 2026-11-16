@@ -12,7 +12,6 @@ wm_base: *xdg.WmBase,
 seat: *cwl.Seat,
 dmabuf: *zwp.LinuxDmabufV1,
 viewporter: *wp.Viewporter,
-sync_object_manager: *wp.LinuxDrmSyncobjManagerV1,
 cursor_manager: *wp.CursorShapeManagerV1,
 
 display: *cwl.Display,
@@ -43,7 +42,6 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
     const subcompositor = globals.subcompositor orelse return error.NoWlSubcompositor;
     const dmabuf = globals.dmabuf orelse return error.NoZwpDmaBuf;
     const viewporter = globals.viewporter orelse return error.NoWpViewporter;
-    const sync_object_manager = globals.sync_object_manager orelse return error.NoWpSyncobjManager;
     const cursor_manager = globals.cursor_manager orelse return error.NoWpCursorManager;
 
     shm.setQueue(queue);
@@ -53,7 +51,6 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
     subcompositor.setQueue(queue);
     dmabuf.setQueue(queue);
     viewporter.setQueue(queue);
-    sync_object_manager.setQueue(queue);
     cursor_manager.setQueue(queue);
 
     const xkb_context = c_linux.xkb_context_new(c_linux.XKB_CONTEXT_NO_FLAGS) orelse
@@ -71,7 +68,6 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
         .seat = seat,
         .dmabuf = dmabuf,
         .viewporter = viewporter,
-        .sync_object_manager = sync_object_manager,
         .cursor_manager = cursor_manager,
 
         .display = display,
@@ -102,11 +98,40 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+pub fn present(wl: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
     std.debug.assert(com.server_events.capacity >= com.present_queue.items.len);
 
+    wl.present_queue_check_ready_to_copy(com, native_tag);
+    wl.present_queue_copy_if_ready_and_present(com, native_tag);
+}
+
+fn present_queue_check_ready_to_copy(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state == .new);
+
+        const rs = com.resources.getPtr(item.client_uuid).?;
+        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const nb = native_tag.buffer(buffer);
+
+        switch (nb.*) {
+            .cpu => {
+                item.state.advance();
+            },
+            .gpu => {
+                const gbm_bo = rs.gbm_bos.get(item.buffer_id).?;
+                const sync = item.sync.?;
+
+                if (gbm_bo.acquire_check_signaled(com.gbm, sync.acquire_point)) {
+                    item.state.advance();
+                }
+            },
+        }
+    }
+}
+
+fn present_queue_copy_if_ready_and_present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+    for (com.present_queue.items) |*item| {
+        if (item.state != .ready_to_copy) continue;
 
         const rs = com.resources.getPtr(item.client_uuid).?;
         const vp = rs.viewports.get(item.viewport_id).?;
@@ -133,51 +158,50 @@ pub fn present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.Na
         }
 
         // buffer synchronization and release
-        switch (b.*) {
-            .gpu => |gpu| {
-                std.debug.assert(item.sync != null);
-                const gbm_bo = rs.gbm_bos.get(item.buffer_id).?;
+        const case: enum { release, commit } =
+            if (should_be_hidden) .release else .commit;
+        const node = com.server_events.create_assume_capacity();
 
-                if (should_be_hidden) {
-                    // Maybe this should wait on the acquisition before releasing ?
-                    gbm_bo.signal_release_timeline(com.gbm, item.sync.?.release_point);
-                } else {
-                    gpu.timeline_acquire.set(nvp.sync_surface.?, item.sync.?.acquire_point);
-                    gpu.timeline_release.set(nvp.sync_surface.?, item.sync.?.release_point);
-                }
-            },
-            .cpu => {
-                std.debug.assert(item.sync == null);
-                const node = com.server_events.create_assume_capacity();
-
-                const case: enum { release, commit } =
-                    if (should_be_hidden) .release else .commit;
-
-                branch: switch (case) {
-                    .release => {
-                        com.server_events.push(node, .{
-                            .buffer_released = .{
-                                .client_uuid = item.client_uuid,
-                                .payload = .{
-                                    .buffer_id = item.buffer_id,
-                                    .viewport_id = item.viewport_id,
-                                },
+        branch: switch (case) {
+            .release => switch (b.*) {
+                .cpu => {
+                    com.server_events.push(node, .{
+                        .buffer_released = .{
+                            .client_uuid = item.client_uuid,
+                            .payload = .{
+                                .buffer_id = item.buffer_id,
+                                .viewport_id = item.viewport_id,
                             },
-                        });
+                        },
+                    });
+                },
+                .gpu => {
+                    std.debug.assert(item.sync != null);
+                    const gbm_bo = rs.gbm_bos.get(item.buffer_id).?;
+                    gbm_bo.signal_release_timeline(com.gbm, item.sync.?.release_point);
+                },
+            },
+
+            .commit => {
+                rs.buffers_commited.putNoClobber(
+                    com.gpa,
+                    item.buffer_id,
+                    .{
+                        .viewport_id = item.viewport_id,
+                        .ptr = node,
+                        .sync = item.sync,
                     },
-                    .commit => {
-                        rs.buffers_commited.putNoClobber(
-                            com.gpa,
-                            item.buffer_id,
-                            .{ .viewport_id = item.viewport_id, .ptr = node },
-                        ) catch continue :branch .release;
-                    },
-                }
+                ) catch continue :branch .release;
             },
         }
 
+        item.state.advance();
+        std.debug.assert(item.state == .ready_to_present);
+
         nvp.surface.commit();
-        item.state = .presented;
+
+        item.state.advance();
+        std.debug.assert(item.state == .presented);
     }
 }
 
@@ -261,7 +285,6 @@ fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals
                 .{ .field = "subcompositor",       .T = cwl.Subcompositor,           .v = 1 },
                 .{ .field = "dmabuf",              .T = zwp.LinuxDmabufV1,           .v = 1 },
                 .{ .field = "viewporter",          .T = wp.Viewporter,               .v = 1 },
-                .{ .field = "sync_object_manager", .T = wp.LinuxDrmSyncobjManagerV1, .v = 1 },
                 .{ .field = "cursor_manager",      .T = wp.CursorShapeManagerV1,     .v = 1 },
                 // zig fmt: on
             };
@@ -294,7 +317,6 @@ pub fn get_globals(display: *cwl.Display, queue: *cwl.EventQueue) !MaybeGlobals 
         .subcompositor = null,
         .dmabuf = null,
         .viewporter = null,
-        .sync_object_manager = null,
         .cursor_manager = null,
     };
 
@@ -635,12 +657,6 @@ pub fn buffer_create_and_register_gpu_async(
     const release_fd: ptypes.DrmSyncobjReleaseTimelineFd = buffer.release_fd(com.gbm);
     errdefer release_fd.close();
 
-    const acquire: Viewport.AcquireTimeline = try .init(wl.sync_object_manager, acquire_fd);
-    errdefer acquire.acquire.destroy();
-
-    const release: Viewport.ReleaseTimeline = try .init(wl.sync_object_manager, release_fd);
-    errdefer release.release.destroy();
-
     const params = try wl.dmabuf.createParams();
 
     errdefer comptime unreachable;
@@ -652,8 +668,6 @@ pub fn buffer_create_and_register_gpu_async(
             .gpu = .{
                 .wl_buffer = .pending,
                 .size = size,
-                .timeline_acquire = acquire,
-                .timeline_release = release,
                 .format = b_format,
             },
         },
@@ -784,7 +798,6 @@ pub const MaybeGlobals = struct {
     subcompositor: ?*cwl.Subcompositor,
     dmabuf: ?*zwp.LinuxDmabufV1,
     viewporter: ?*wp.Viewporter,
-    sync_object_manager: ?*wp.LinuxDrmSyncobjManagerV1,
     cursor_manager: ?*wp.CursorShapeManagerV1,
 };
 
@@ -848,8 +861,6 @@ pub const Buffer = union(enum) {
             ptr: *cwl.Buffer,
         },
 
-        timeline_acquire: Wayland.Viewport.AcquireTimeline,
-        timeline_release: Wayland.Viewport.ReleaseTimeline,
         size: ptypes.Size,
         format: BufferFormat,
 
@@ -858,9 +869,6 @@ pub const Buffer = union(enum) {
                 .pending => {},
                 .ptr => |ptr| ptr.destroy(),
             }
-
-            gpu.timeline_acquire.acquire.destroy();
-            gpu.timeline_release.release.destroy();
         }
     };
 
@@ -982,16 +990,29 @@ pub const BufferListener = struct {
                 const rs = data.com.resources.getPtr(key.client_uuid) orelse return;
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
+                const buffer = rs.buffers.getPtr(key.buffer_id) orelse return;
+                const nb = Compositor.NativeTag.wayland.buffer(buffer);
 
-                data.com.server_events.push(entry.value.ptr, .{
-                    .buffer_released = .{
-                        .client_uuid = key.client_uuid,
-                        .payload = .{
-                            .buffer_id = key.buffer_id,
-                            .viewport_id = entry.value.viewport_id,
-                        },
+                switch (nb.*) {
+                    .cpu => {
+                        std.debug.assert(entry.value.sync == null);
+
+                        data.com.server_events.push(entry.value.ptr, .{
+                            .buffer_released = .{
+                                .client_uuid = key.client_uuid,
+                                .payload = .{
+                                    .buffer_id = key.buffer_id,
+                                    .viewport_id = entry.value.viewport_id,
+                                },
+                            },
+                        });
                     },
-                });
+                    .gpu => {
+                        const gbm_bo = rs.gbm_bos.get(key.buffer_id).?;
+                        const sync = entry.value.sync.?;
+                        gbm_bo.signal_release_timeline(data.com.gbm, sync.release_point);
+                    },
+                }
             },
         }
     }
