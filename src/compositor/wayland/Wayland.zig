@@ -16,6 +16,8 @@ cursor_manager: *wp.CursorShapeManagerV1,
 
 display: *cwl.Display,
 
+should_flush_display: bool,
+
 frame_callbacks: std.array_hash_map.Auto(CallbackID, ViewportKey),
 
 buffer_listener_pool: std.heap.memory_pool.Extra(BufferListener, .{ .growable = false }),
@@ -71,6 +73,7 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
         .cursor_manager = cursor_manager,
 
         .display = display,
+        .should_flush_display = false,
 
         .frame_callbacks = .empty,
 

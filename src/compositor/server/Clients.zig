@@ -25,7 +25,7 @@ pub fn deinit(clients: *Clients, _: Io, gpa: std.mem.Allocator) void {
         clients.local.values(),
     }) |slice| {
         for (slice) |client| {
-            client.connection.close();
+            client.connection.close(gpa);
         }
     }
 
@@ -78,15 +78,7 @@ pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.St
     const client = clients.unknown_pool.create(gpa) catch @panic("Must reserve objects first");
 
     client.* = .{
-        .connection = .{
-            .format = .json,
-            .stream = stream,
-            .closed = false,
-            .pid = null,
-            .close_with_error = null,
-
-            .win32_socket_event = try .create(stream.socket, .client),
-        },
+        .connection = try .init(gpa, stream, null),
         .promoted = false,
     };
     clients.unknown.appendAssumeCapacity(client);
@@ -107,15 +99,7 @@ pub fn promote_client_to_known(
     const client = clients.remote_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
         .id = id,
-        .pid = pid,
-        .connection = .{
-            .format = unknown.connection.format,
-            .stream = unknown.connection.stream,
-            .closed = false,
-            .pid = pid,
-            .close_with_error = null,
-            .win32_socket_event = unknown.connection.win32_socket_event,
-        },
+        .connection = .from_unknown(&unknown.connection, pid),
     };
 
     clients.remote.putAssumeCapacityNoClobber(id, client);
@@ -134,14 +118,7 @@ pub fn promote_client_to_local(
     const client = clients.local_pool.create(gpa) catch @panic("Must reserve objects first");
     client.* = .{
         .id = id,
-        .connection = .{
-            .format = unknown.connection.format,
-            .stream = unknown.connection.stream,
-            .closed = false,
-            .pid = null,
-            .close_with_error = null,
-            .win32_socket_event = unknown.connection.win32_socket_event,
-        },
+        .connection = .from_unknown(&unknown.connection, null),
     };
 
     // TODO: Validate that the id does not exist
@@ -149,7 +126,7 @@ pub fn promote_client_to_local(
     unknown.promoted = true;
 }
 
-pub fn remove_closed_clients_known_or_local(clients: *Clients) void {
+pub fn remove_closed_clients_remote_or_local(clients: *Clients) void {
     {
         var i = clients.remote.count();
         while (i > 0) {
@@ -158,6 +135,8 @@ pub fn remove_closed_clients_known_or_local(clients: *Clients) void {
             if (client.connection.closed) {
                 const id = client.id;
                 log.debug("Removed closed client {f}", .{id});
+
+                std.debug.assert(client.connection.deinited);
                 clients.remote_pool.destroy(@alignCast(client));
                 _ = clients.remote.orderedRemove(id);
             }
@@ -171,6 +150,8 @@ pub fn remove_closed_clients_known_or_local(clients: *Clients) void {
             const client = clients.local.values()[i];
             if (client.connection.closed) {
                 log.debug("Removed local client", .{});
+
+                std.debug.assert(client.connection.deinited);
                 clients.local_pool.destroy(@alignCast(client));
                 _ = clients.local.orderedRemove(client.id);
             }
@@ -178,12 +159,13 @@ pub fn remove_closed_clients_known_or_local(clients: *Clients) void {
     }
 }
 
-pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients) void {
+pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients, gpa: std.mem.Allocator) void {
     var i = clients.unknown.items.len;
     while (i > 0) {
         i -= 1;
         const client = clients.unknown.items[i];
         if (client.promoted or client.connection.closed) {
+            client.connection.deinit_without_closing(gpa);
             clients.unknown_pool.destroy(@alignCast(client));
             _ = clients.unknown.orderedRemove(i);
         }
@@ -192,7 +174,6 @@ pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients) void {
 
 pub const RemoteClient = struct {
     id: ptypes.ClientUUID,
-    pid: ?ptypes.PID,
     connection: ClientConnection,
 };
 

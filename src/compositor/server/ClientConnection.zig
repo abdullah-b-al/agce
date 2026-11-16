@@ -3,44 +3,111 @@ const ClientConnection = @This();
 format: ptypes.MessageFormat,
 stream: zio.net.Stream,
 closed: bool,
+deinited: bool,
 pid: ?ptypes.PID,
 
 close_with_error: ?CloseError,
 
 win32_socket_event: Win32SocketEvent,
 
-pub fn close(c: *ClientConnection) void {
+reader_buffer: []u8,
+reader: zio.net.Stream.Reader,
+messages_parsed: std.ArrayList(Server.ParsedMessage),
+
+pub fn init(gpa: std.mem.Allocator, stream: zio.net.Stream, pid: ?ptypes.PID) !ClientConnection {
+    const reader_buffer = try gpa.alloc(u8, 1024);
+    errdefer gpa.free(reader_buffer);
+
+    return .{
+        .format = .json,
+        .stream = stream,
+        .closed = false,
+        .deinited = false,
+        .pid = pid,
+        .close_with_error = null,
+        .messages_parsed = .empty,
+
+        .win32_socket_event = try .create(stream.socket, .client),
+        .reader_buffer = reader_buffer,
+        .reader = stream.reader(reader_buffer),
+    };
+}
+
+pub fn from_unknown(
+    c: *ClientConnection,
+    pid: ?ptypes.PID,
+) ClientConnection {
+    std.debug.assert(!c.closed and !c.deinited);
+
+    defer {
+        c.reader_buffer = &.{};
+    }
+
+    return .{
+        .format = c.format,
+        .stream = c.stream,
+        .closed = false,
+        .deinited = false,
+        .pid = pid,
+        .close_with_error = null,
+        .messages_parsed = .empty,
+
+        .win32_socket_event = c.win32_socket_event,
+        .reader_buffer = c.reader_buffer,
+        .reader = c.stream.reader(c.reader_buffer),
+    };
+}
+
+pub fn close(c: *ClientConnection, gpa: std.mem.Allocator) void {
     std.debug.assert(!c.closed);
     c.win32_socket_event.close();
     c.stream.close();
+
+    c.deinit_without_closing(gpa);
+
     c.closed = true;
+}
+
+pub fn deinit_without_closing(c: *ClientConnection, gpa: std.mem.Allocator) void {
+    if (c.deinited) return;
+
+    c.deinited = true;
+    for (c.messages_parsed.items) |*item| item.deinit(gpa);
+    c.messages_parsed.deinit(gpa);
+
+    gpa.free(c.reader_buffer);
 }
 
 pub fn receive_raw_all(
     c: *ClientConnection,
     io: Io,
-    arena: std.mem.Allocator,
-    list: *std.ArrayList(Server.RawMessage),
+    gpa: std.mem.Allocator,
     source: Server.MessageSource,
 ) error{OutOfMemory}!void {
     std.debug.assert(!c.closed);
     std.debug.assert(c.close_with_error == null);
 
-    var reader_buffer: [4096]u8 = undefined;
-    var reader = c.stream.reader(&reader_buffer);
-    reader.setTimeout(.fromNanoseconds(0));
+    c.reader.setTimeout(.fromNanoseconds(0));
 
     var added_from_this_client: usize = 0;
     while (true) {
-        const header, const raw = c.receive_raw_with_reader(io, arena, &reader.interface) catch |err|
+        try c.messages_parsed.ensureUnusedCapacity(gpa, 1);
+        const parsed = c.receive_raw_with_reader_and_parse(
+            io,
+            gpa,
+            source,
+            &c.reader.interface,
+        ) catch |err|
             switch (err) {
+                error.OutOfMemory => |e| return e,
+
                 error.EndOfStream => {
                     if (added_from_this_client == 0) {
                         c.close_with_error = error.ConnectionClosed;
                     }
                     return;
                 },
-                error.ReadFailed => switch (reader.err.?) {
+                error.ReadFailed => switch (c.reader.err.?) {
                     error.Timeout => break,
                     else => |e| {
                         c.close_with_error = e;
@@ -48,7 +115,7 @@ pub fn receive_raw_all(
                     },
                 },
 
-                error.OutOfMemory,
+                error.ParseFailed,
                 error.InvalidHeader,
                 error.HeaderWithoutPayload,
                 => |e| {
@@ -57,17 +124,25 @@ pub fn receive_raw_all(
                 },
             };
 
-        try list.append(arena, .{ .from = source, .raw = raw, .header = header });
+        c.messages_parsed.insertAssumeCapacity(0, parsed);
         added_from_this_client += 1;
     }
 }
 
-pub fn receive_raw_with_reader(
+pub fn receive_raw_with_reader_and_parse(
     _: *ClientConnection,
     _: Io,
-    arena: std.mem.Allocator,
+    gpa: std.mem.Allocator,
+    source: Server.MessageSource,
     reader: *Io.Reader,
-) error{ ReadFailed, OutOfMemory, EndOfStream, InvalidHeader, HeaderWithoutPayload }!struct { client_to_server.MessageHeader, []const u8 } {
+) error{ ReadFailed, ParseFailed, OutOfMemory, EndOfStream, InvalidHeader, HeaderWithoutPayload }!Server.ParsedMessage {
+    var arena = try gpa.create(std.heap.ArenaAllocator);
+    arena.* = .init(gpa);
+    errdefer {
+        arena.deinit();
+        gpa.destroy(arena);
+    }
+
     const header_bytes = try reader.take(@sizeOf(client_to_server.MessageHeader));
 
     const header = client_to_server.parse_message_header(header_bytes) catch |err| switch (err) {
@@ -77,12 +152,20 @@ pub fn receive_raw_with_reader(
         },
     };
 
-    const data = reader.readAlloc(arena, header.payload_len) catch |err| return switch (err) {
+    const data = reader.readAlloc(arena.allocator(), header.payload_len) catch |err| return switch (err) {
         error.EndOfStream => error.HeaderWithoutPayload,
         error.ReadFailed, error.OutOfMemory => |e| e,
     };
 
-    return .{ header, data };
+    const payload = try Server.ParsedMessage.parse(header, data, arena.allocator());
+
+    return .{
+        .arena = arena,
+        .header = header,
+        .raw = data,
+        .payload = payload,
+        .from = source,
+    };
 }
 
 pub fn send_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.Void) !void {

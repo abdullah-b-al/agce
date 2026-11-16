@@ -2,7 +2,7 @@ const Compositor = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
-tick_arena: std.heap.ArenaAllocator,
+poll_arena: std.heap.ArenaAllocator,
 
 server: *Server,
 muxi: MuxInterface,
@@ -86,7 +86,7 @@ fn create_undefined_native(args: CreateArgs) !*Compositor {
     com.* = .{
         .io = args.io,
         .gpa = args.gpa,
-        .tick_arena = .init(args.gpa),
+        .poll_arena = .init(args.gpa),
         .server = server,
         .muxi = args.muxi,
         .class_of_window = class_window_dupe,
@@ -143,7 +143,7 @@ pub fn destroy(com: *Compositor) void {
 
     com.server.destroy();
 
-    com.tick_arena.deinit();
+    com.poll_arena.deinit();
     com.gpa.destroy(com);
 }
 
@@ -181,15 +181,13 @@ pub fn dispatch(com: *Compositor) void {
     }
 }
 
-pub fn flush(com: *Compositor, events: []const Compositor.Event) void {
+pub fn flush(com: *Compositor) void {
     switch (com.native_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
-            const should_flush = blk: for (events) |event| {
-                if (wl.should_flush(event)) break :blk true;
-            } else false;
 
-            if (should_flush) {
+            if (wl.should_flush_display) {
+                wl.should_flush_display = false;
                 _ = wl.display.flush();
             }
         },
@@ -197,15 +195,15 @@ pub fn flush(com: *Compositor, events: []const Compositor.Event) void {
     }
 }
 
-pub fn events_handle(com: *Compositor, events: []const Event) void {
-    for (events) |e| {
-        com.event_handle(e) catch |err| {
-            log.err("event_handle {}", .{err});
-        };
-    }
-}
-
 pub fn event_handle(com: *Compositor, event: Event) !void {
+    switch (com.native_tag()) {
+        .wayland => |tag| {
+            const wl = tag.compositor(com);
+            wl.should_flush_display |= wl.should_flush(event);
+        },
+        else => {},
+    }
+
     switch (event) {
         .texture_create_d3d => |args| try com.texture_create_d3d(args),
         .buffer_create_cpu => |args| try com.buffer_create_cpu(args),

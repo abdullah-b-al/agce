@@ -104,20 +104,30 @@ pub const CompositorHandle = opaque {
     pub fn tick(h: *CompositorHandle, poll_result: polling.Poll) !void {
         const com = h.cast();
 
-        defer _ = com.tick_arena.reset(.{ .retain_with_limit = 1024 * 1024 });
-
         const server = com.server;
-        const arena = com.tick_arena.allocator();
 
-        const compositor_events = try server.process_incoming_messages(arena, poll_result.clients);
+        {
+            try server.process_incoming_messages(poll_result.clients);
+            while (server.compositor_events.pop()) |event| {
+                com.event_handle(event) catch |err| {
+                    log.err("event_handle {}", .{err});
+                };
+            }
+            server.compositor_events.clearRetainingCapacity();
+        }
 
-        com.events_handle(compositor_events);
         try com.present();
 
-        com.dispatch();
+        {
+            com.dispatch();
 
-        com.events_handle(com.deferred_events.items);
-        com.deferred_events.clearRetainingCapacity();
+            for (com.deferred_events.items) |event| {
+                com.event_handle(event) catch |err| {
+                    log.err("event_handle {}", .{err});
+                };
+            }
+            com.deferred_events.clearRetainingCapacity();
+        }
 
         server.events_handle(com);
 
@@ -128,8 +138,8 @@ pub const CompositorHandle = opaque {
         }
 
         server.close_clients_marked_with_error();
-        server.clients.remove_closed_clients_known_or_local();
-        server.clients.remove_promoted_or_closed_unknown_clients();
+        server.clients.remove_closed_clients_remote_or_local();
+        server.clients.remove_promoted_or_closed_unknown_clients(server.gpa);
 
         var i = com.resources.count();
         while (i > 0) {
@@ -154,7 +164,7 @@ pub const CompositorHandle = opaque {
             }
         }
 
-        com.flush(compositor_events);
+        com.flush();
     }
 
     pub fn poll(
@@ -164,7 +174,7 @@ pub const CompositorHandle = opaque {
         std.debug.assert(timeout != .deadline);
         const com = h.cast();
         const server = com.server;
-        const arena = com.tick_arena.allocator();
+        const arena = com.poll_arena.allocator();
 
         return try polling.poll(arena, com, server, timeout);
     }

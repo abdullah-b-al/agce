@@ -11,6 +11,8 @@ clients: Clients,
 io_queue_buffer: []Compositor.Event,
 io_queue: *Io.Queue(Compositor.Event),
 
+compositor_events: std.ArrayList(CompositorEvent),
+
 win32_socket_event: Win32SocketEvent,
 
 pub fn create(
@@ -103,6 +105,7 @@ pub fn create(
         .clients = .init,
         .io_queue_buffer = io_queue_buffer,
         .io_queue = io_queue,
+        .compositor_events = .empty,
 
         .win32_socket_event = socket_event,
     };
@@ -127,6 +130,7 @@ pub fn destroy(server: *Server) void {
         },
     };
 
+    server.compositor_events.deinit(server.gpa);
     server.gpa.free(server.unix_path);
     server.gpa.free(server.io_queue_buffer);
     server.gpa.destroy(server.io_queue);
@@ -149,111 +153,81 @@ pub fn accept(server: *Server) !void {
     }
 }
 
-pub fn process_incoming_messages(
-    server: *Server,
-    arena: std.mem.Allocator,
-    poll_result: []const polling.ClientResult,
-) ![]const CompositorEvent {
-    if (poll_result.len == 0)
-        return &.{};
+pub fn process_incoming_messages(server: *Server, poll_result: []const polling.ClientResult) error{OutOfMemory}!void {
+    for (poll_result) |ps| {
+        const source = ps.source;
 
-    const messages_raw = blk: {
-        var messages_raw: std.ArrayList(RawMessage) = .empty;
+        const connection: *ClientConnection = switch (source) {
+            .unknown => |i| &server.clients.unknown.items[i].connection,
+            .remote => |id| &server.clients.remote.get(id).?.connection,
+            .local => |id| &server.clients.local.get(id).?.connection,
+        };
 
-        for (poll_result) |ps| {
-            const source = ps.source;
+        switch (ps.event) {
+            .none => continue,
+            .read => {
+                try connection.receive_raw_all(server.io, server.gpa, source);
+            },
+            .closed => {
+                const err = error.ConnectionResetByPeer;
+                switch (source) {
+                    .unknown => |i| server.mark_for_closing_unknown_client_with(i, err),
+                    .remote => |id| server.mark_for_closing_remote_client_with(id, err),
+                    .local => |id| server.mark_for_closing_local_client_with(id, err),
+                }
 
-            const connection: *ClientConnection = switch (source) {
-                .unknown => |i| &server.clients.unknown.items[i].connection,
-                .remote => |id| &server.clients.remote.get(id).?.connection,
-                .local => |id| &server.clients.local.get(id).?.connection,
-            };
-
-            switch (ps.event) {
-                .none => continue,
-                .read => {
-                    connection.receive_raw_all(server.io, arena, &messages_raw, source) catch |err|
-                        switch (err) {
-                            error.OutOfMemory => continue,
-                        };
-                },
-                .closed => {
-                    const err = error.ConnectionResetByPeer;
-                    switch (source) {
-                        .unknown => |i| server.mark_for_closing_unknown_client_with(i, err),
-                        .remote => |id| server.mark_for_closing_known_client_with(id, err),
-                        .local => |id| server.mark_for_closing_local_client_with(id, err),
-                    }
-
-                    continue;
-                },
-            }
+                continue;
+            },
         }
 
-        break :blk messages_raw.items;
-    };
-
-    const messages_parsed = blk: {
-        var messages_parsed: std.ArrayList(ReceivedMessage) =
-            try .initCapacity(arena, messages_raw.len);
-
-        for (messages_raw) |raw| {
-            const payload = raw.parse(arena) catch |err| switch (err) {
-                error.ParseFailed => continue,
-            };
-
-            messages_parsed.appendAssumeCapacity(.{ .from = raw.from, .payload = payload });
+        try server.compositor_events.ensureUnusedCapacity(
+            server.gpa,
+            connection.messages_parsed.items.len,
+        );
+        while (connection.messages_parsed.pop()) |const_parsed| {
+            var parsed = const_parsed;
+            server.handle_message(.{
+                .payload = parsed.payload,
+                .from = parsed.from,
+            });
+            parsed.deinit(server.gpa);
         }
-
-        break :blk messages_parsed.items;
-    };
-
-    var result: std.ArrayList(CompositorEvent) = try .initCapacity(arena, messages_parsed.len);
-    for (messages_parsed) |parsed| {
-        server.handle_message(parsed, &result);
     }
-
-    return result.items;
 }
 
 pub fn connect_local(server: *Server) !zio.net.Stream {
     return try server.server.socket.address.connect(.{ .timeout = .none });
 }
 
-fn handle_message(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) void {
-    const @"error" = switch (message.from) {
-        .remote => server.handle_message_from_known(message, events),
-        .unknown => server.handle_message_from_unknown(message),
-        .local => server.handle_message_from_local(message, events),
-    };
+fn handle_message(server: *Server, message: ReceivedMessage) void {
+    switch (message.from) {
+        .remote => server.handle_message_from_known(message),
+        .local => server.handle_message_from_local(message),
 
-    @"error" catch |err| switch (err) {
-        error.MisbehavingUnknownClient,
-        error.ClientSentInvalidClientFullID,
-        error.OutOfMemoryDuringRegister,
-        error.ClientUUIDAlreadyExists,
-        => |e| {
-            switch (message.from) {
-                .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                .remote => @panic("Not possible with a remote client"),
-                .local => @panic("Not possible with a local client"),
-            }
-        },
+        .unknown => {
+            server.handle_message_from_unknown(message) catch |err| switch (err) {
+                error.MisbehavingUnknownClient,
+                error.OutOfMemoryDuringRegister,
+                error.ClientUUIDAlreadyExists,
+                => |e| {
+                    switch (message.from) {
+                        .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
+                        .remote => @panic("Not possible with a remote client"),
+                        .local => @panic("Not possible with a local client"),
+                    }
+                },
 
-        error.ConnectionClosed,
-        => |e| {
-            switch (message.from) {
-                .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                .remote => |id| server.mark_for_closing_known_client_with(id, e),
-                .local => |id| server.mark_for_closing_local_client_with(id, e),
-            }
+                error.ConnectionClosed,
+                => |e| {
+                    switch (message.from) {
+                        .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
+                        .remote => |id| server.mark_for_closing_remote_client_with(id, e),
+                        .local => |id| server.mark_for_closing_local_client_with(id, e),
+                    }
+                },
+            };
         },
-
-        error.UnsupportedMessageOnOs,
-        => |e| {
-            log.err("{} when handling client message", .{e});
-        },
-    };
+    }
 }
 
 pub fn events_handle(server: *Server, com: *Compositor) void {
@@ -275,7 +249,7 @@ pub fn events_handle(server: *Server, com: *Compositor) void {
                         error.FailedToSendHandle,
                         error.ConnectionClosed,
                         => |mark| {
-                            server.mark_for_closing_known_client_with(v.client_uuid, mark);
+                            server.mark_for_closing_remote_client_with(v.client_uuid, mark);
                         },
                     }
                 },
@@ -373,7 +347,7 @@ pub fn handle_event(
     }
 }
 
-fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
+fn handle_message_from_known(server: *Server, message: ReceivedMessage) void {
     std.debug.assert(message.from == .remote);
 
     const client_uuid = message.from.remote;
@@ -387,8 +361,8 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
 
         inline else => |_, tag| {
             std.debug.assert(server.clients.remote.contains(client_uuid));
-            const ce = try server.compositor_event_from_message(client_uuid, tag, msg);
-            events.appendAssumeCapacity(ce);
+            const ce = server.compositor_event_from_message(client_uuid, tag, msg);
+            server.compositor_events.insertAssumeCapacity(0, ce);
         },
     }
 }
@@ -396,7 +370,6 @@ fn handle_message_from_known(server: *Server, message: ReceivedMessage, events: 
 pub const HandleMessageFromUnknownError = error{
     OutOfMemoryDuringRegister,
     MisbehavingUnknownClient,
-    ClientSentInvalidClientFullID,
     ConnectionClosed,
     ClientUUIDAlreadyExists,
 };
@@ -460,7 +433,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
     }
 }
 
-fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: *std.ArrayList(CompositorEvent)) !void {
+fn handle_message_from_local(server: *Server, message: ReceivedMessage) void {
     std.debug.assert(message.from == .local);
 
     const uuid = message.from.local;
@@ -472,7 +445,7 @@ fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: 
         },
         .queue_pop => {
             const event = server.io_queue.getOne(server.io) catch return;
-            events.appendAssumeCapacity(event);
+            server.compositor_events.insertAssumeCapacity(0, event);
         },
 
         inline .viewport_pos_set,
@@ -481,8 +454,8 @@ fn handle_message_from_local(server: *Server, message: ReceivedMessage, events: 
         .viewport_close,
         => |_, tag| {
             std.debug.assert(server.clients.local.contains(uuid));
-            const ce = try server.compositor_event_from_message(uuid, tag, msg);
-            events.appendAssumeCapacity(ce);
+            const ce = server.compositor_event_from_message(uuid, tag, msg);
+            server.compositor_events.insertAssumeCapacity(0, ce);
         },
 
         else => {
@@ -496,7 +469,7 @@ pub fn compositor_event_from_message(
     uuid: ClientUUID,
     comptime payload_tag: client_to_server.MessageTag,
     payload: client_to_server.MessagePayload,
-) error{UnsupportedMessageOnOs}!CompositorEvent {
+) CompositorEvent {
     std.debug.assert(payload_tag == payload);
     switch (payload_tag) {
         .register,
@@ -532,7 +505,7 @@ pub fn compositor_event_from_message(
 pub fn close_clients_marked_with_error(server: *Server) void {
     for (server.clients.remote.values()) |client| {
         const err = client.connection.close_with_error orelse continue;
-        client.connection.close();
+        client.connection.close(server.gpa);
 
         if (err == error.ConnectionClosed or err == error.ConnectionResetByPeer) {
             log.info("Closing remote client {f} with {}", .{ client.id, err });
@@ -554,7 +527,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
 
     for (server.clients.local.values()) |client| {
         const err = client.connection.close_with_error orelse continue;
-        client.connection.close();
+        client.connection.close(server.gpa);
 
         if (err == error.ConnectionClosed or err == error.ConnectionResetByPeer) {
             log.info("Closing local client {f} with {}", .{ client.id, err });
@@ -565,7 +538,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
 
     for (server.clients.unknown.items) |client| {
         const err = client.connection.close_with_error orelse continue;
-        client.connection.close();
+        client.connection.close(server.gpa);
 
         log.err("Closing unknown client with {}", .{err});
 
@@ -578,7 +551,7 @@ pub fn close_clients_marked_with_error(server: *Server) void {
     }
 }
 
-fn mark_for_closing_known_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
+fn mark_for_closing_remote_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
     const client = server.clients.remote.get(id) orelse return;
     client.connection.close_with_error = err;
 }
@@ -609,10 +582,48 @@ const ReceivedMessage = struct {
     const Payload = client_to_server.MessagePayload;
 };
 
+pub const ParsedMessage = struct {
+    arena: *std.heap.ArenaAllocator,
+    header: client_to_server.MessageHeader,
+    raw: []const u8,
+    payload: client_to_server.MessagePayload,
+    from: MessageSource,
+
+    pub fn deinit(parsed: *ParsedMessage, gpa: std.mem.Allocator) void {
+        parsed.arena.deinit();
+        gpa.destroy(parsed.arena);
+    }
+
+    pub fn parse(header: client_to_server.MessageHeader, raw: []const u8, arena: std.mem.Allocator) error{ParseFailed}!client_to_server.MessagePayload {
+        switch (header.message_tag) {
+            inline else => |tag| {
+                switch (header.format) {
+                    .json => {
+                        const T = @FieldType(client_to_server.MessagePayload, @tagName(tag));
+                        const p = std.json.parseFromSliceLeaky(T, arena, raw, .{
+                            .allocate = .alloc_if_needed,
+                        }) catch |err| {
+                            // TODO: Check errors
+                            log.err("{}", .{err});
+                            return error.ParseFailed;
+                        };
+
+                        return @unionInit(client_to_server.MessagePayload, @tagName(tag), p);
+                    },
+                }
+            },
+        }
+    }
+};
+
 pub const RawMessage = struct {
     header: client_to_server.MessageHeader,
     raw: []const u8,
     from: MessageSource,
+
+    pub fn deinit(raw: *RawMessage, gpa: std.mem.Allocator) void {
+        gpa.free(raw.raw);
+    }
 
     pub fn parse(raw: RawMessage, arena: std.mem.Allocator) error{ParseFailed}!client_to_server.MessagePayload {
         switch (raw.header.message_tag) {
@@ -624,7 +635,7 @@ pub const RawMessage = struct {
                             .allocate = .alloc_if_needed,
                         }) catch |err| {
                             // TODO: Check errors
-                            log.err("{}", .{err});
+                            log.err("{} {s}", .{ err, raw.raw });
                             return error.ParseFailed;
                         };
 
