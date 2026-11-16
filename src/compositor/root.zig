@@ -138,8 +138,7 @@ pub const CompositorHandle = opaque {
         }
 
         server.close_clients_marked_with_error();
-        server.clients.remove_closed_clients_remote_or_local();
-        server.clients.remove_promoted_or_closed_unknown_clients(server.gpa);
+        server.clients.remove_closed_clients(server.gpa);
 
         var i = com.resources.count();
         while (i > 0) {
@@ -151,16 +150,12 @@ pub const CompositorHandle = opaque {
         }
 
         try com.resources.ensureTotalCapacity(com.gpa, server.clients.count());
-        inline for (.{
-            server.clients.remote.keys(),
-            server.clients.local.keys(),
-        }) |keys| {
-            for (keys) |uuid| {
-                if (!com.resources.contains(uuid)) {
-                    com.client_registered(uuid) catch |err| switch (err) {
-                        error.OutOfMemory => unreachable,
-                    };
-                }
+        for (server.clients.list.items) |client| {
+            const uuid = client.uuid() orelse continue;
+            if (!com.resources.contains(uuid)) {
+                com.client_registered(uuid) catch |err| switch (err) {
+                    error.OutOfMemory => unreachable,
+                };
             }
         }
 

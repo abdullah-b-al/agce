@@ -28,21 +28,9 @@ pub fn poll(
 
     pollable.appendAssumeCapacity(.from_server(server));
 
-    for (server.clients.unknown.items, 0..) |c, j| {
+    for (server.clients.list.items, 0..) |c, j| {
         pollable.appendAssumeCapacity(
-            .from_connection(c.connection, .{ .unknown = j }),
-        );
-    }
-
-    for (server.clients.remote.values()) |c| {
-        pollable.appendAssumeCapacity(
-            .from_connection(c.connection, .{ .remote = c.id }),
-        );
-    }
-
-    for (server.clients.local.values()) |c| {
-        pollable.appendAssumeCapacity(
-            .from_connection(c.connection, .{ .local = c.id }),
+            .from_connection(c.connection, j),
         );
     }
 
@@ -69,7 +57,7 @@ pub fn poll(
             .server => accept = p.event() == .read,
             .client => |client| {
                 const event = p.event();
-                clients.appendAssumeCapacity(.{ .source = client, .event = event });
+                clients.appendAssumeCapacity(.{ .index = client, .event = event });
             },
         }
     }
@@ -165,8 +153,8 @@ const PollableLinux = struct {
         return .none;
     }
 
-    fn from_connection(c: ClientConnection, source: Server.MessageSource) PollableLinux {
-        return .from_fd(c.stream.socket.handle, .{ .client = source });
+    fn from_connection(c: ClientConnection, index: usize) PollableLinux {
+        return .from_fd(c.stream.socket.handle, .{ .client = index });
     }
 
     fn from_server(server: *const Server) PollableLinux {
@@ -216,8 +204,8 @@ const PollableWindows = struct {
         return .none;
     }
 
-    fn from_connection(c: ClientConnection, source: Server.MessageSource) PollableWindows {
-        return .from_handle(c.win32_socket_event, .{ .client = source }, c.stream.socket.handle);
+    fn from_connection(c: ClientConnection, index: usize) PollableWindows {
+        return .from_handle(c.win32_socket_event, .{ .client = index }, c.stream.socket.handle);
     }
 
     fn from_server(server: *const Server) PollableWindows {
@@ -240,8 +228,8 @@ pub const Poll = struct {
 };
 
 pub const ClientResult = struct {
-    source: Server.MessageSource,
     event: Event,
+    index: usize,
 };
 
 pub const Event = enum {
@@ -253,7 +241,7 @@ pub const Event = enum {
 const Source = union(enum) {
     server,
     display,
-    client: Server.MessageSource,
+    client: usize,
 };
 
 const std = @import("std");

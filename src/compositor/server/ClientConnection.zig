@@ -3,7 +3,6 @@ const ClientConnection = @This();
 format: ptypes.MessageFormat,
 stream: zio.net.Stream,
 closed: bool,
-deinited: bool,
 pid: ?ptypes.PID,
 
 close_with_error: ?CloseError,
@@ -22,7 +21,6 @@ pub fn init(gpa: std.mem.Allocator, stream: zio.net.Stream, pid: ?ptypes.PID) !C
         .format = .json,
         .stream = stream,
         .closed = false,
-        .deinited = false,
         .pid = pid,
         .close_with_error = null,
         .messages_parsed = .empty,
@@ -33,49 +31,17 @@ pub fn init(gpa: std.mem.Allocator, stream: zio.net.Stream, pid: ?ptypes.PID) !C
     };
 }
 
-pub fn from_unknown(
-    c: *ClientConnection,
-    pid: ?ptypes.PID,
-) ClientConnection {
-    std.debug.assert(!c.closed and !c.deinited);
-
-    defer {
-        c.reader_buffer = &.{};
-    }
-
-    return .{
-        .format = c.format,
-        .stream = c.stream,
-        .closed = false,
-        .deinited = false,
-        .pid = pid,
-        .close_with_error = null,
-        .messages_parsed = .empty,
-
-        .win32_socket_event = c.win32_socket_event,
-        .reader_buffer = c.reader_buffer,
-        .reader = c.stream.reader(c.reader_buffer),
-    };
-}
-
 pub fn close(c: *ClientConnection, gpa: std.mem.Allocator) void {
     std.debug.assert(!c.closed);
     c.win32_socket_event.close();
     c.stream.close();
 
-    c.deinit_without_closing(gpa);
-
-    c.closed = true;
-}
-
-pub fn deinit_without_closing(c: *ClientConnection, gpa: std.mem.Allocator) void {
-    if (c.deinited) return;
-
-    c.deinited = true;
     for (c.messages_parsed.items) |*item| item.deinit(gpa);
     c.messages_parsed.deinit(gpa);
 
     gpa.free(c.reader_buffer);
+
+    c.closed = true;
 }
 
 pub fn receive_raw_all(

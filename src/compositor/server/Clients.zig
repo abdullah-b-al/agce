@@ -1,190 +1,132 @@
 const Clients = @This();
 
-remote_pool: std.heap.MemoryPoolExtra(RemoteClient, .{ .growable = false }),
-unknown_pool: std.heap.MemoryPoolExtra(UnknownClient, .{ .growable = false }),
-local_pool: std.heap.MemoryPoolExtra(LocalClient, .{ .growable = false }),
-
-remote: std.array_hash_map.Auto(ptypes.ClientUUID, *RemoteClient),
-unknown: std.ArrayList(*UnknownClient),
-local: std.array_hash_map.Auto(ptypes.ClientUUID, *LocalClient),
+list: std.ArrayList(*Client),
 
 pub const init: Clients = .{
-    .remote_pool = .empty,
-    .unknown_pool = .empty,
-    .local_pool = .empty,
-
-    .remote = .empty,
-    .unknown = .empty,
-    .local = .empty,
+    .list = .empty,
 };
 
 pub fn deinit(clients: *Clients, _: Io, gpa: std.mem.Allocator) void {
-    inline for (.{
-        clients.remote.values(),
-        clients.unknown.items,
-        clients.local.values(),
-    }) |slice| {
-        for (slice) |client| {
-            client.connection.close(gpa);
-        }
+    for (clients.list.items) |client| {
+        client.connection.close(gpa);
+        gpa.destroy(client);
     }
-
-    inline for (.{
-        &clients.remote,
-        &clients.unknown,
-        &clients.local,
-    }) |entry| {
-        entry.deinit(gpa);
-    }
-
-    inline for (.{
-        &clients.remote_pool,
-        &clients.unknown_pool,
-        &clients.local_pool,
-    }) |pool| {
-        pool.deinit(gpa);
-    }
+    clients.list.deinit(gpa);
 }
 
 pub fn count(clients: *const Clients) usize {
-    return clients.remote.count() +
-        clients.unknown.items.len +
-        clients.local.count();
+    return clients.list.items.len;
 }
 
-pub fn prepare_for_new_client(clients: *Clients, gpa: std.mem.Allocator) !void {
-    try clients.remote.ensureUnusedCapacity(gpa, 1);
-    try clients.unknown.ensureUnusedCapacity(gpa, 1);
-    try clients.local.ensureUnusedCapacity(gpa, 1);
+pub fn contains_remote(clients: *Clients, uuid: ptypes.ClientUUID) bool {
+    return clients.get_remote(uuid) != null;
+}
 
-    const c = clients.count() + 1;
+pub fn contains_local(clients: *Clients, uuid: ptypes.ClientUUID) bool {
+    return clients.get_local(uuid) != null;
+}
 
-    inline for (.{
-        &clients.remote_pool,
-        &clients.unknown_pool,
-        &clients.local_pool,
-    }) |pool| {
-        while (pool.free_list.len() < c) {
-            try pool.addCapacity(gpa, 1);
+pub fn get_remote(clients: *Clients, uuid: ptypes.ClientUUID) ?*Client {
+    for (clients.list.items) |client| {
+        switch (client.kind) {
+            .unknown, .local => {},
+            .remote => |id| if (id == uuid) return client,
         }
     }
+
+    return null;
+}
+
+pub fn get_local(clients: *Clients, uuid: ptypes.ClientUUID) ?*Client {
+    for (clients.list.items) |client| {
+        switch (client.kind) {
+            .unknown, .remote => {},
+            .local => |id| if (id == uuid) return client,
+        }
+    }
+
+    return null;
 }
 
 pub fn contains(clients: *Clients, uuid: ptypes.ClientUUID) bool {
-    return clients.remote.contains(uuid) or clients.local.contains(uuid);
+    for (clients.list.items) |client| {
+        if (client.uuid() == uuid) return true;
+    }
+
+    return false;
 }
 
 pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.Stream) !void {
-    const client = clients.unknown_pool.create(gpa) catch @panic("Must reserve objects first");
+    try clients.list.ensureUnusedCapacity(gpa, 1);
+
+    const client = try gpa.create(Client);
+    errdefer gpa.destroy(client);
 
     client.* = .{
         .connection = try .init(gpa, stream, null),
-        .promoted = false,
+        .kind = .unknown,
     };
-    clients.unknown.appendAssumeCapacity(client);
+    clients.list.appendAssumeCapacity(client);
 }
 
-pub fn promote_client_to_known(
+pub fn promote_client_to_remote(
     clients: *Clients,
-    gpa: std.mem.Allocator,
     index: usize,
     id: ptypes.ClientUUID,
     pid: ?ptypes.PID,
 ) void {
-    std.debug.assert(!clients.remote.contains(id));
+    std.debug.assert(!clients.contains(id));
 
-    const unknown = clients.unknown.items[index];
-    std.debug.assert(!unknown.promoted);
+    const client = clients.list.items[index];
+    std.debug.assert(client.kind == .unknown);
+    client.kind = .{ .remote = id };
 
-    const client = clients.remote_pool.create(gpa) catch @panic("Must reserve objects first");
-    client.* = .{
-        .id = id,
-        .connection = .from_unknown(&unknown.connection, pid),
-    };
-
-    clients.remote.putAssumeCapacityNoClobber(id, client);
-    unknown.promoted = true;
+    client.connection.pid = pid;
 }
 
 pub fn promote_client_to_local(
     clients: *Clients,
-    gpa: std.mem.Allocator,
     index: usize,
     id: ptypes.ClientUUID,
 ) void {
-    const unknown = clients.unknown.items[index];
-    std.debug.assert(!unknown.promoted);
-
-    const client = clients.local_pool.create(gpa) catch @panic("Must reserve objects first");
-    client.* = .{
-        .id = id,
-        .connection = .from_unknown(&unknown.connection, null),
-    };
-
-    // TODO: Validate that the id does not exist
-    clients.local.putAssumeCapacityNoClobber(id, client);
-    unknown.promoted = true;
+    std.debug.assert(!clients.contains(id));
+    const client = clients.list.items[index];
+    std.debug.assert(client.kind == .unknown);
+    client.kind = .{ .local = id };
 }
 
-pub fn remove_closed_clients_remote_or_local(clients: *Clients) void {
-    {
-        var i = clients.remote.count();
-        while (i > 0) {
-            i -= 1;
-            const client = clients.remote.values()[i];
-            if (client.connection.closed) {
-                const id = client.id;
-                log.debug("Removed closed client {f}", .{id});
-
-                std.debug.assert(client.connection.deinited);
-                clients.remote_pool.destroy(@alignCast(client));
-                _ = clients.remote.orderedRemove(id);
-            }
-        }
-    }
-
-    {
-        var i = clients.local.count();
-        while (i > 0) {
-            i -= 1;
-            const client = clients.local.values()[i];
-            if (client.connection.closed) {
-                log.debug("Removed local client", .{});
-
-                std.debug.assert(client.connection.deinited);
-                clients.local_pool.destroy(@alignCast(client));
-                _ = clients.local.orderedRemove(client.id);
-            }
-        }
-    }
-}
-
-pub fn remove_promoted_or_closed_unknown_clients(clients: *Clients, gpa: std.mem.Allocator) void {
-    var i = clients.unknown.items.len;
+pub fn remove_closed_clients(clients: *Clients, gpa: std.mem.Allocator) void {
+    var i = clients.list.items.len;
     while (i > 0) {
         i -= 1;
-        const client = clients.unknown.items[i];
-        if (client.promoted or client.connection.closed) {
-            client.connection.deinit_without_closing(gpa);
-            clients.unknown_pool.destroy(@alignCast(client));
-            _ = clients.unknown.orderedRemove(i);
+        const client = clients.list.items[i];
+        if (!client.connection.closed) continue;
+
+        if (client.uuid()) |uuid| {
+            log.debug("Removed closed client {f}", .{uuid});
         }
+
+        _ = clients.list.orderedRemove(i);
+        gpa.destroy(client);
     }
 }
 
-pub const RemoteClient = struct {
-    id: ptypes.ClientUUID,
+pub const Client = struct {
     connection: ClientConnection,
+    kind: Kind,
+
+    pub fn uuid(client: *const Client) ?ptypes.ClientUUID {
+        return switch (client.kind) {
+            .unknown => null,
+            inline else => |id| id,
+        };
+    }
 };
 
-pub const LocalClient = struct {
-    id: ptypes.ClientUUID,
-    connection: ClientConnection,
-};
-
-pub const UnknownClient = struct {
-    connection: ClientConnection,
-    promoted: bool,
+pub const Kind = union(enum) {
+    unknown,
+    local: ptypes.ClientUUID,
+    remote: ptypes.ClientUUID,
 };
 
 const std = @import("std");
