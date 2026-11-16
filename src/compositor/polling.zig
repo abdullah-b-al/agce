@@ -1,5 +1,4 @@
 pub fn poll(
-    arena: std.mem.Allocator,
     com: *Compositor,
     server: *const Server,
     timeout: Io.Timeout,
@@ -12,7 +11,8 @@ pub fn poll(
     };
 
     const pollable_len = server.clients.count() + pollable_len_add;
-    var pollable: std.MultiArrayList(Pollable) = try .initCapacity(arena, pollable_len);
+    var pollable: std.MultiArrayList(Pollable) = try .initCapacity(com.gpa, pollable_len);
+    defer pollable.deinit(com.gpa);
 
     switch (com.native_tag()) {
         .wayland => |tag| {

@@ -2,7 +2,6 @@ const Compositor = @This();
 
 io: Io,
 gpa: std.mem.Allocator,
-poll_arena: std.heap.ArenaAllocator,
 
 server: *Server,
 muxi: MuxInterface,
@@ -86,7 +85,6 @@ fn create_undefined_native(args: CreateArgs) !*Compositor {
     com.* = .{
         .io = args.io,
         .gpa = args.gpa,
-        .poll_arena = .init(args.gpa),
         .server = server,
         .muxi = args.muxi,
         .class_of_window = class_window_dupe,
@@ -143,7 +141,6 @@ pub fn destroy(com: *Compositor) void {
 
     com.server.destroy();
 
-    com.poll_arena.deinit();
     com.gpa.destroy(com);
 }
 

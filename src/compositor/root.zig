@@ -189,9 +189,8 @@ pub const CompositorHandle = opaque {
         std.debug.assert(timeout != .deadline);
         const com = h.cast();
         const server = com.server;
-        const arena = com.poll_arena.allocator();
 
-        return try polling.poll(arena, com, server, timeout);
+        return try polling.poll( com, server, timeout);
     }
 };
 
