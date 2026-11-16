@@ -44,7 +44,7 @@ pub fn close(c: *ClientConnection, gpa: std.mem.Allocator) void {
     c.closed = true;
 }
 
-pub fn receive_raw_all(
+pub fn read_and_parse_all(
     c: *ClientConnection,
     io: Io,
     gpa: std.mem.Allocator,
@@ -57,6 +57,7 @@ pub fn receive_raw_all(
 
     var added_from_this_client: usize = 0;
     while (true) {
+        try maybe_oom();
         try c.messages_parsed.ensureUnusedCapacity(gpa, 1);
         const parsed = c.receive_raw_with_reader_and_parse(
             io,
@@ -81,6 +82,7 @@ pub fn receive_raw_all(
                     },
                 },
 
+                error.PayloadExceedsMaxSize,
                 error.ParseFailed,
                 error.InvalidHeader,
                 error.HeaderWithoutPayload,
@@ -101,7 +103,15 @@ pub fn receive_raw_with_reader_and_parse(
     gpa: std.mem.Allocator,
     source: Server.MessageSource,
     reader: *Io.Reader,
-) error{ ReadFailed, ParseFailed, OutOfMemory, EndOfStream, InvalidHeader, HeaderWithoutPayload }!Server.ParsedMessage {
+) error{
+    ReadFailed,
+    ParseFailed,
+    OutOfMemory,
+    EndOfStream,
+    InvalidHeader,
+    HeaderWithoutPayload,
+    PayloadExceedsMaxSize,
+}!Server.ParsedMessage {
     var arena = try gpa.create(std.heap.ArenaAllocator);
     arena.* = .init(gpa);
     errdefer {
@@ -118,17 +128,27 @@ pub fn receive_raw_with_reader_and_parse(
         },
     };
 
-    const data = reader.readAlloc(arena.allocator(), header.payload_len) catch |err| return switch (err) {
+    var buf: [constants.payload_max_size]u8 = undefined;
+
+    if (header.payload_len > buf.len) {
+        try reader.discardAll(header.payload_len);
+        return error.PayloadExceedsMaxSize;
+    }
+
+    reader.readSliceAll(buf[0..header.payload_len]) catch |err| return switch (err) {
         error.EndOfStream => error.HeaderWithoutPayload,
-        error.ReadFailed, error.OutOfMemory => |e| e,
+        error.ReadFailed => |e| e,
     };
 
-    const payload = try Server.ParsedMessage.parse(header, data, arena.allocator());
+    const payload = try Server.ParsedMessage.parse(
+        header,
+        buf[0..header.payload_len],
+        arena.allocator(),
+    );
 
     return .{
         .arena = arena,
         .header = header,
-        .raw = data,
         .payload = payload,
         .from = source,
     };
@@ -433,3 +453,4 @@ const win_sock = @import("win32").networking.win_sock;
 const Win32SocketEvent = @import("Win32SocketEvent.zig");
 const Server = @import("Server.zig");
 const log = std.log.scoped(.Server);
+const maybe_oom = @import("../maybe_oom.zig").maybe_oom;

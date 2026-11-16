@@ -4,6 +4,7 @@ pub const socket_extension = "sock";
 pub const socket_max_path = net.UnixAddress.max_len;
 pub const env_agce_socket_path = "AGCE_SOCKET_PATH";
 pub const env_client_uuid = "AGCE_CLIENT_UUID";
+pub const payload_max_size = 512;
 
 pub const os_has_gbm = switch (os) {
     .linux => true,

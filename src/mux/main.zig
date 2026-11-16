@@ -36,8 +36,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var mux: *Mux = try .create(io, gpa, &environ_map);
     defer mux.destroy();
 
+    var timeout: Io.Timeout = .none;
     while (!exit) {
-        try mux.tick(.none);
+        timeout = mux.tick(timeout) catch |err| switch (err) {
+            error.PollFailed => |e| {
+                if (!exit) return e;
+                continue;
+            },
+            error.OutOfMemory => timeout,
+        };
     }
 }
 

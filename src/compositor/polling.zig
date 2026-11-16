@@ -14,9 +14,6 @@ pub fn poll(
     const pollable_len = server.clients.count() + pollable_len_add;
     var pollable: std.MultiArrayList(Pollable) = try .initCapacity(arena, pollable_len);
 
-    var clients: std.ArrayList(ClientResult) =
-        try .initCapacity(arena, server.clients.count());
-
     switch (com.native_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
@@ -49,24 +46,33 @@ pub fn poll(
 
     for (0..pollable.len) |i| {
         const p = pollable.get(i);
+        const event = p.event(); // Do NOT call more than once
         switch (p.source) {
             .display => {
                 std.debug.assert(com.native_tag() != .win32);
-                dispatch = p.event() == .read;
+                dispatch = event == .read;
             },
-            .server => accept = p.event() == .read,
-            .client => |client| {
-                const event = p.event();
-                clients.appendAssumeCapacity(.{ .index = client, .event = event });
+            .server => accept = event == .read,
+            .client => |index| {
+                const client = server.clients.list.items[index];
+                client.messaging_state = switch (client.messaging_state) {
+                    .none => event.to_messaging_state(),
+                    .close => unreachable,
+                    .read => switch (event) {
+                        .none, .read => .read,
+                        .closed => .close,
+                    },
+                    .handle_messages => switch (event) {
+                        .none => .handle_messages,
+                        .read => .read,
+                        .closed => .close,
+                    },
+                };
             },
         }
     }
 
-    return .{
-        .accept = accept,
-        .dispatch = dispatch,
-        .clients = clients.items,
-    };
+    return .{ .accept = accept, .dispatch = dispatch };
 }
 
 const PollResult = enum {
@@ -224,7 +230,6 @@ const PollableWindows = struct {
 pub const Poll = struct {
     dispatch: bool,
     accept: bool,
-    clients: []const ClientResult,
 };
 
 pub const ClientResult = struct {
@@ -236,6 +241,14 @@ pub const Event = enum {
     read,
     closed,
     none,
+
+    pub fn to_messaging_state(e: Event) Clients.MessagingState {
+        return switch (e) {
+            .read => .read,
+            .closed => .close,
+            .none => .none,
+        };
+    }
 };
 
 const Source = union(enum) {
@@ -260,3 +273,4 @@ const Server = @import("server/Server.zig");
 const Compositor = @import("Compositor.zig");
 const zio = @import("zio");
 const Win32SocketEvent = @import("server/Win32SocketEvent.zig");
+const Clients = @import("server/Clients.zig");

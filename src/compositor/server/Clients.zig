@@ -65,6 +65,7 @@ pub fn new_unknown(clients: *Clients, gpa: std.mem.Allocator, stream: zio.net.St
     client.* = .{
         .connection = try .init(gpa, stream, null),
         .kind = .unknown,
+        .messaging_state = .none,
     };
     clients.list.appendAssumeCapacity(client);
 }
@@ -114,6 +115,7 @@ pub fn remove_closed_clients(clients: *Clients, gpa: std.mem.Allocator) void {
 pub const Client = struct {
     connection: ClientConnection,
     kind: Kind,
+    messaging_state: MessagingState,
 
     pub fn uuid(client: *const Client) ?ptypes.ClientUUID {
         return switch (client.kind) {
@@ -127,6 +129,13 @@ pub const Kind = union(enum) {
     unknown,
     local: ptypes.ClientUUID,
     remote: ptypes.ClientUUID,
+};
+
+pub const MessagingState = enum {
+    read,
+    handle_messages,
+    close,
+    none,
 };
 
 const std = @import("std");

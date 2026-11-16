@@ -152,43 +152,51 @@ pub fn accept(server: *Server) !void {
     }
 }
 
-pub fn process_incoming_messages(server: *Server, poll_result: []const polling.ClientResult) error{OutOfMemory}!void {
-    for (poll_result) |pr| {
-        const client = server.clients.list.items[pr.index];
+pub fn process_incoming_messages(server: *Server) error{OutOfMemory}!void {
+    // Mark closed clients first to make sure they're removed by the end of tick()
+    for (server.clients.list.items, 0..) |client, i| {
+        if (client.messaging_state == .close) {
+            server.mark_for_closing_client_with(i, error.ConnectionResetByPeer);
+            client.messaging_state = .none;
+        }
+    }
+
+    for (server.clients.list.items, 0..) |client, i| {
         const source: MessageSource = switch (client.kind) {
-            .unknown => .{ .unknown = pr.index },
+            .unknown => .{ .unknown = i },
             .remote => |id| .{ .remote = id },
             .local => |id| .{ .local = id },
         };
 
-        switch (pr.event) {
+        branch: switch (client.messaging_state) {
+            .close => unreachable,
             .none => continue,
             .read => {
-                try client.connection.receive_raw_all(server.io, server.gpa, source);
+                try client.connection.read_and_parse_all(server.io, server.gpa, source);
+                continue :branch .handle_messages;
             },
-            .closed => {
-                const err = error.ConnectionResetByPeer;
-                switch (source) {
-                    .unknown => |i| server.mark_for_closing_unknown_client_with(i, err),
-                    .remote => |id| server.mark_for_closing_remote_client_with(id, err),
-                    .local => |id| server.mark_for_closing_local_client_with(id, err),
+            .handle_messages => {
+                client.messaging_state = .handle_messages;
+
+                try maybe_oom();
+                try server.compositor_events.ensureTotalCapacityPrecise(
+                    server.gpa,
+                    client.connection.messages_parsed.items.len * 2,
+                );
+
+                errdefer comptime unreachable;
+
+                while (client.connection.messages_parsed.pop()) |const_parsed| {
+                    var parsed = const_parsed;
+                    server.handle_message(.{
+                        .payload = parsed.payload,
+                        .from = parsed.from,
+                    });
+                    parsed.deinit(server.gpa);
                 }
 
-                continue;
+                client.messaging_state = .none;
             },
-        }
-
-        try server.compositor_events.ensureUnusedCapacity(
-            server.gpa,
-            client.connection.messages_parsed.items.len,
-        );
-        while (client.connection.messages_parsed.pop()) |const_parsed| {
-            var parsed = const_parsed;
-            server.handle_message(.{
-                .payload = parsed.payload,
-                .from = parsed.from,
-            });
-            parsed.deinit(server.gpa);
         }
     }
 }
@@ -202,26 +210,14 @@ fn handle_message(server: *Server, message: ReceivedMessage) void {
         .remote => server.handle_message_from_remote(message),
         .local => server.handle_message_from_local(message),
 
-        .unknown => {
+        .unknown => |index| {
             server.handle_message_from_unknown(message) catch |err| switch (err) {
                 error.MisbehavingUnknownClient,
                 error.OutOfMemoryDuringRegister,
                 error.ClientUUIDAlreadyExists,
-                => |e| {
-                    switch (message.from) {
-                        .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                        .remote => @panic("Not possible with a remote client"),
-                        .local => @panic("Not possible with a local client"),
-                    }
-                },
-
                 error.ConnectionClosed,
                 => |e| {
-                    switch (message.from) {
-                        .unknown => |index| server.mark_for_closing_unknown_client_with(index, e),
-                        .remote => |id| server.mark_for_closing_remote_client_with(id, e),
-                        .local => |id| server.mark_for_closing_local_client_with(id, e),
-                    }
+                    server.mark_for_closing_unknown_client_with(index, e);
                 },
             };
         },
@@ -529,6 +525,11 @@ pub fn close_clients_marked_with_error(server: *Server) void {
     }
 }
 
+fn mark_for_closing_client_with(server: *Server, index: usize, err: ClientConnection.CloseError) void {
+    const client = server.clients.list.items[index];
+    client.connection.close_with_error = err;
+}
+
 fn mark_for_closing_remote_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
     const client = server.clients.get_remote(id) orelse return;
     client.connection.close_with_error = err;
@@ -563,7 +564,6 @@ const ReceivedMessage = struct {
 pub const ParsedMessage = struct {
     arena: *std.heap.ArenaAllocator,
     header: client_to_server.MessageHeader,
-    raw: []const u8,
     payload: client_to_server.MessagePayload,
     from: MessageSource,
 
@@ -578,9 +578,12 @@ pub const ParsedMessage = struct {
                 switch (header.format) {
                     .json => {
                         const T = @FieldType(client_to_server.MessagePayload, @tagName(tag));
-                        const p = std.json.parseFromSliceLeaky(T, arena, raw, .{
-                            .allocate = .alloc_if_needed,
-                        }) catch |err| {
+                        const p = std.json.parseFromSliceLeaky(
+                            T,
+                            arena,
+                            raw,
+                            .{ .allocate = .alloc_if_needed },
+                        ) catch |err| {
                             // TODO: Check errors
                             log.err("{}", .{err});
                             return error.ParseFailed;
@@ -689,3 +692,4 @@ const win_sock = @import("win32").networking.win_sock;
 const Win32SocketEvent = @import("Win32SocketEvent.zig");
 const known_folders = @import("known-folders");
 const polling = @import("../polling.zig");
+const maybe_oom = @import("../maybe_oom.zig").maybe_oom;

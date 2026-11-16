@@ -50,10 +50,9 @@ pub const TestServer = struct {
         defer mux.destroy();
 
         while (!exit.isSet()) {
-            mux.tick(
+            _ = mux.tick(
                 .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
             ) catch |err| switch (err) {
-                error.Timeout => continue,
                 else => |e| {
                     std.log.err("mux.compositor.poll() {}", .{err});
                     return e;

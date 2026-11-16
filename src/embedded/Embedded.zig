@@ -293,15 +293,26 @@ pub fn poll(em: *Embedded) void {
     }
 }
 fn tick_thread(com: *compositor.CompositorHandle, exit: *Io.Event) void {
+    var timeout: std.Io.Timeout = .none;
     while (!exit.isSet()) {
-        const poll_result = com.poll(.none) catch |err| {
-            log.err("tick_thread.poll() {}", .{err});
-            continue;
-        };
+        const poll_result: compositor.polling.Poll =
+            com.poll(timeout) catch |err| switch (err) {
+                error.PollFailed => {
+                    if (!exit.isSet()) {
+                        log.err("tick_thread.poll() {}", .{err});
+                    }
+                    continue;
+                },
+                error.Timeout, error.OutOfMemory => .{ .dispatch = false, .accept = false },
+            };
 
-        com.tick(poll_result) catch |err| {
-            log.err("tick_thread.tick() {}", .{err});
-        };
+        timeout =
+            if (com.tick(poll_result)) |_|
+                .none
+            else |err| switch (err) {
+                error.OutOfMemory,
+                => .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
+            };
     }
 }
 

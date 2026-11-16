@@ -196,6 +196,8 @@ pub fn flush(com: *Compositor) void {
 }
 
 pub fn event_handle(com: *Compositor, event: Event) !void {
+    try maybe_oom();
+
     switch (com.native_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
@@ -701,7 +703,7 @@ fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
     ));
 }
 
-pub fn present(com: *Compositor) !void {
+pub fn present(com: *Compositor) error{OutOfMemory}!void {
     try com.server_events.ensure_unused_capacity(
         com.present_queue.items.len * 2,
     );
@@ -1892,3 +1894,4 @@ const dxgi = @import("win32").graphics.dxgi;
 const ServerQueue = @import("server/EventQueue.zig");
 const cwl = @import("wayland").client.wl;
 const ViewportKey = ptypes.ViewportKey;
+const maybe_oom = @import("maybe_oom.zig").maybe_oom;

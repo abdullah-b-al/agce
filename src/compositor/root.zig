@@ -2,6 +2,7 @@ pub const Server = @import("server/Server.zig");
 pub const Compositor = @import("Compositor.zig");
 pub const zio = @import("zio");
 pub const ClientResources = @import("ClientResources.zig");
+pub const polling = @import("polling.zig");
 
 pub const CompositorHandle = opaque {
     fn cast(ptr: *CompositorHandle) *Compositor {
@@ -101,42 +102,15 @@ pub const CompositorHandle = opaque {
         });
     }
 
-    pub fn tick(h: *CompositorHandle, poll_result: polling.Poll) !void {
+    pub fn tick(h: *CompositorHandle, poll_result: polling.Poll) error{OutOfMemory}!void {
         const com = h.cast();
 
+        var oom = false;
+        tick_inner(com, poll_result) catch |err| switch (err) {
+            error.OutOfMemory => oom = true,
+        };
+
         const server = com.server;
-
-        {
-            try server.process_incoming_messages(poll_result.clients);
-            while (server.compositor_events.pop()) |event| {
-                com.event_handle(event) catch |err| {
-                    log.err("event_handle {}", .{err});
-                };
-            }
-            server.compositor_events.clearRetainingCapacity();
-        }
-
-        try com.present();
-
-        {
-            com.dispatch();
-
-            for (com.deferred_events.items) |event| {
-                com.event_handle(event) catch |err| {
-                    log.err("event_handle {}", .{err});
-                };
-            }
-            com.deferred_events.clearRetainingCapacity();
-        }
-
-        server.events_handle(com);
-
-        if (poll_result.accept) {
-            server.accept() catch |err| {
-                log.err("Accept client failed {}", .{err});
-            };
-        }
-
         server.close_clients_marked_with_error();
         server.clients.remove_closed_clients(server.gpa);
 
@@ -149,14 +123,60 @@ pub const CompositorHandle = opaque {
             }
         }
 
-        try com.resources.ensureTotalCapacity(com.gpa, server.clients.count());
-        for (server.clients.list.items) |client| {
-            const uuid = client.uuid() orelse continue;
-            if (!com.resources.contains(uuid)) {
-                com.client_registered(uuid) catch |err| switch (err) {
-                    error.OutOfMemory => unreachable,
-                };
+        if (com.resources.ensureTotalCapacity(com.gpa, server.clients.count())) |_| {
+            for (server.clients.list.items) |client| {
+                const uuid = client.uuid() orelse continue;
+                if (!com.resources.contains(uuid)) {
+                    com.client_registered(uuid) catch |err| switch (err) {
+                        error.OutOfMemory => unreachable,
+                    };
+                }
             }
+        } else |_| {}
+
+        if (oom) return error.OutOfMemory;
+    }
+
+    fn tick_inner(com: *Compositor, poll_result: polling.Poll) error{OutOfMemory}!void {
+        const server = com.server;
+
+        try server.process_incoming_messages();
+        while (server.compositor_events.pop()) |event| {
+            com.event_handle(event) catch |err| switch (err) {
+                error.OutOfMemory => |e| {
+                    server.compositor_events.appendAssumeCapacity(event);
+                    return e;
+                },
+
+                error.MessageUnsupportedByOS,
+                error.InvalidSize,
+                error.ClientDoesNotExist,
+                error.ViewportDoesNotExist,
+                error.ClientDoesNotOwnViewport,
+                error.InvalidPosition,
+                error.ViewportHasNoWindow,
+                => {
+                    log.err("event_handle {}", .{err});
+                },
+            };
+        }
+
+        try com.present();
+
+        com.dispatch();
+        for (com.deferred_events.items) |event| {
+            com.event_handle(event) catch |err| {
+                log.err("event_handle {}", .{err});
+            };
+        }
+        com.deferred_events.clearRetainingCapacity();
+
+        server.events_handle(com);
+
+        if (poll_result.accept) {
+            server.accept() catch |err| {
+                log.err("Accept client failed {}", .{err});
+            };
         }
 
         com.flush();
@@ -187,4 +207,3 @@ const win_sock = @import("win32").networking.win_sock;
 const os = @import("builtin").os.tag;
 const ptypes = @import("protocol").types;
 const ClientConnection = @import("server/ClientConnection.zig");
-const polling = @import("polling.zig");

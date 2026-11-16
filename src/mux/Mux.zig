@@ -125,17 +125,28 @@ pub fn destroy(mux: *Mux) void {
     mux.gpa.destroy(mux);
 }
 
-pub fn tick(mux: *Mux, timeout: std.Io.Timeout) !void {
-    const poll_result = try mux.compositor.poll(timeout);
+pub fn tick(mux: *Mux, timeout: std.Io.Timeout) !std.Io.Timeout {
+    const poll_result: Poll = mux.compositor.poll(timeout) catch |err| switch (err) {
+        error.Timeout => .{ .dispatch = false, .accept = false },
+        error.PollFailed, error.OutOfMemory => |e| return e,
+    };
 
     if (poll_result.dispatch) {
         mux.dispatch();
     }
 
-    try mux.compositor.tick(poll_result);
+    const new_timeout: std.Io.Timeout =
+        if (mux.compositor.tick(poll_result)) |_|
+            .none
+        else |err| switch (err) {
+            error.OutOfMemory,
+            => .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } },
+        };
 
     mux.windows_destroy_if_closed();
     mux.flush();
+
+    return new_timeout;
 }
 
 pub fn dispatch(mux: *Mux) void {
@@ -395,6 +406,7 @@ const vtable: Compositor.MuxInterface.VTable = .{
 };
 
 const std = @import("std");
+const Poll = @import("compositor").polling.Poll;
 const Compositor = @import("compositor").Compositor;
 const CompositorHandle = @import("compositor").CompositorHandle;
 const WindowID = Compositor.WindowID;
