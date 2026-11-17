@@ -224,8 +224,14 @@ fn present_queue_check_ready_to_copy(_: *Win32, com: *Compositor, comptime backe
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state != .presented);
 
-        const rs = com.resources.getPtr(item.client_uuid).?;
-        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const rs = com.resources.getPtr(item.client_uuid) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const buffer = rs.buffers.getPtr(item.buffer_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
         const nb = backend_tag.buffer(buffer);
 
         switch (nb.*) {
@@ -244,9 +250,19 @@ fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime backend
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_copy) continue;
 
-        const rs = com.resources.getPtr(item.client_uuid).?;
-        const buffer = rs.buffers.getPtr(item.buffer_id).?;
-        const vp = rs.viewports.get(item.viewport_id).?;
+        const rs = com.resources.getPtr(item.client_uuid) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const buffer = rs.buffers.getPtr(item.buffer_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const vp = rs.viewports.get(item.viewport_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+
         const nvp = backend_tag.viewport(vp);
         const nb = backend_tag.buffer(buffer);
 
@@ -298,9 +314,18 @@ fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime back
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_present) continue;
 
-        const rs = com.resources.getPtr(item.client_uuid).?;
-        const vp = rs.viewports.get(item.viewport_id).?;
-        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const rs = com.resources.getPtr(item.client_uuid) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const vp = rs.viewports.get(item.viewport_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const buffer = rs.buffers.getPtr(item.buffer_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
 
         const nvp = backend_tag.viewport(vp);
         const nb = backend_tag.buffer(buffer);

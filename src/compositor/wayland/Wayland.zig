@@ -112,8 +112,14 @@ fn present_queue_check_ready_to_copy(_: *Wayland, com: *Compositor, comptime bac
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state == .new);
 
-        const rs = com.resources.getPtr(item.client_uuid).?;
-        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const rs = com.resources.getPtr(item.client_uuid) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const buffer = rs.buffers.getPtr(item.buffer_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
         const nb = backend_tag.buffer(buffer);
 
         switch (nb.*) {
@@ -136,9 +142,18 @@ fn present_queue_copy_if_ready_and_present(_: *Wayland, com: *Compositor, compti
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_copy) continue;
 
-        const rs = com.resources.getPtr(item.client_uuid).?;
-        const vp = rs.viewports.get(item.viewport_id).?;
-        const buffer = rs.buffers.getPtr(item.buffer_id).?;
+        const rs = com.resources.getPtr(item.client_uuid) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const vp = rs.viewports.get(item.viewport_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
+        const buffer = rs.buffers.getPtr(item.buffer_id) orelse {
+            item.state = .destroyed;
+            continue;
+        };
 
         const nvp = backend_tag.viewport(vp);
         const b = &buffer.backend.wayland;

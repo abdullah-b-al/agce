@@ -760,7 +760,10 @@ pub fn present(com: *Compositor) error{OutOfMemory}!void {
         while (i > 0) {
             i -= 1;
             const item = com.present_queue.items[i];
-            if (item.state != .presented) continue;
+            switch (item.state) {
+                .presented, .destroyed => {},
+                else => continue,
+            }
 
             _ = com.present_queue.orderedRemove(i);
 
@@ -1818,6 +1821,7 @@ pub const BufferPresent = struct {
         ready_to_copy,
         ready_to_present,
         presented,
+        destroyed,
 
         pub fn advance(s: *State) void {
             s.* = switch (s.*) {
@@ -1825,6 +1829,7 @@ pub const BufferPresent = struct {
                 .ready_to_copy => .ready_to_present,
                 .ready_to_present => .presented,
                 .presented => unreachable,
+                .destroyed => unreachable,
             };
         }
     };
