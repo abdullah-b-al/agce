@@ -6,11 +6,11 @@ pub fn init(
     mux: *Mux,
     requested_size: ptypes.Size,
 ) !Window {
-    const handle = win32_win.CreateWindowExA(
+    const handle = win32_win.CreateWindowExW(
         .{},
 
         mux.win32.window_class.lpszClassName,
-        "agce",
+        std.unicode.utf8ToUtf16LeStringLiteral("agce"),
 
         .{
             .TABSTOP = 1,
@@ -40,7 +40,7 @@ pub fn init(
 
     const ilong: isize = @bitCast(@intFromPtr(mux));
 
-    _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
+    _ = win32_win.SetWindowLongPtrW(handle, .P_USERDATA, ilong);
 
     return .{ .handle = handle };
 }
@@ -55,17 +55,17 @@ pub fn window_proc(
     wparam: win32_foundation.WPARAM,
     lparam: win32_foundation.LPARAM,
 ) callconv(.winapi) win32_foundation.LRESULT {
-    const long: usize = @intCast(win32_win.GetWindowLongPtrA(hwnd, .P_USERDATA));
+    const long: usize = @intCast(win32_win.GetWindowLongPtrW(hwnd, .P_USERDATA));
 
     // Window has not been created yet. Pass through msg
     if (long == 0) {
-        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+        return win32_win.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
     const mux: *Mux = @ptrFromInt(long);
 
     if (mux.destroy_started) {
-        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+        return win32_win.DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
     const win = blk: {
@@ -74,7 +74,7 @@ pub fn window_proc(
         }
 
         // Window has been removed. Pass through msg
-        return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+        return win32_win.DefWindowProcW(hwnd, msg, wparam, lparam);
     };
 
     switch (msg) {
@@ -96,7 +96,7 @@ pub fn window_proc(
             const size: ptypes.Size = .{ .width = w, .height = h };
 
             mux.compositor.viewport_resize(win.viewport_key, size) catch {};
-            return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+            return win32_win.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
         win32_win.WM_CLOSE => {
@@ -107,7 +107,7 @@ pub fn window_proc(
         else => {},
     }
 
-    return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
+    return win32_win.DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 const std = @import("std");
 const log = std.log.scoped(.Mux);

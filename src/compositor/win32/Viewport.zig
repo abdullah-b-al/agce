@@ -25,11 +25,11 @@ pub fn init(
         .window => |handle| handle.cast(.win32),
         .viewport => |vp| vp.win32.child_window_handle,
     };
-    const handle = win32_win.CreateWindowExA(
+    const handle = win32_win.CreateWindowExW(
         .{},
 
         win32.class_viewport.lpszClassName,
-        "agce-child-window",
+        std.unicode.utf8ToUtf16LeStringLiteral("agce-child-window"),
 
         .{
             .CHILD = 1,
@@ -54,7 +54,7 @@ pub fn init(
 
     const ilong: isize = @bitCast(@intFromPtr(com));
 
-    _ = win32_win.SetWindowLongPtrA(handle, .P_USERDATA, ilong);
+    _ = win32_win.SetWindowLongPtrW(handle, .P_USERDATA, ilong);
 
     const swap_chain = blk: {
         if (base.buffer_type != .d11) break :blk null;

@@ -171,9 +171,9 @@ pub fn dispatch(com: *Compositor) void {
 
             // We assume that we run on our own thread, owning the thread window event queue
             var msg: win32_win.MSG = undefined;
-            while (win32_win.PeekMessageA(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
+            while (win32_win.PeekMessageW(&msg, null, 0, 0, win32_win.PM_REMOVE) > 0) {
                 _ = win32_win.TranslateMessage(&msg);
-                _ = win32_win.DispatchMessageA(&msg);
+                _ = win32_win.DispatchMessageW(&msg);
             }
         },
     }

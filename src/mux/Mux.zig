@@ -10,6 +10,7 @@ next_window_id: WindowID,
 windows: std.array_hash_map.Auto(WindowID, *Window),
 
 class_of_window: [:0]const u8,
+class_of_window_utf16: [:0]const u16,
 
 wayland_objects: WaylandObjects,
 win32: Win32,
@@ -22,14 +23,18 @@ pub fn create(
     const mux = try gpa.create(Mux);
     errdefer gpa.destroy(mux);
 
-    const class_of_window = try gpa.dupeZ(u8, "agce-mux");
-    errdefer gpa.free(class_of_window);
+    const static_class = "agce-mux";
+    const class_of_window_utf8 = try gpa.dupeZ(u8, static_class);
+    errdefer gpa.free(class_of_window_utf8);
+
+    const class_of_window_utf16 = try gpa.dupeZ(u16, std.unicode.utf8ToUtf16LeStringLiteral(static_class));
+    errdefer gpa.free(class_of_window_utf16);
 
     const create_args: Compositor.CreateArgs = .{
         .io = io,
         .gpa = gpa,
         .environ_map = environ_map,
-        .class = class_of_window,
+        .class = class_of_window_utf8,
         .muxi = .{ .ptr = mux, .vtable = &vtable },
         .socket_owner = .mux,
     };
@@ -60,7 +65,7 @@ pub fn create(
             },
             .windows => {
                 const hinstance = @import("win32").system.library_loader.GetModuleHandleW(null).?;
-                const window_class: win32_win.WNDCLASSA = .{
+                const window_class: win32_win.WNDCLASSW = .{
                     .style = .{},
                     .cbClsExtra = 0,
                     .cbWndExtra = 0,
@@ -70,10 +75,10 @@ pub fn create(
                     .hbrBackground = null,
                     .lpfnWndProc = Win32Window.window_proc,
                     .hInstance = hinstance,
-                    .lpszClassName = class_of_window,
+                    .lpszClassName = class_of_window_utf16,
                 };
 
-                if (win32_win.RegisterClassA(&window_class) == 0) {
+                if (win32_win.RegisterClassW(&window_class) == 0) {
                     const err = win32_foundation.GetLastError();
                     log.err("{}", .{err});
                     return error.FailedToRegisterClass;
@@ -92,7 +97,8 @@ pub fn create(
         .gpa = gpa,
         .windows = .empty,
         .destroy_started = false,
-        .class_of_window = class_of_window,
+        .class_of_window = class_of_window_utf8,
+        .class_of_window_utf16 = class_of_window_utf16,
         .compositor = com,
         .next_window_id = .first,
         .wayland_objects = wayland_globals,
@@ -121,6 +127,7 @@ pub fn destroy(mux: *Mux) void {
 
     mux.windows.deinit(mux.gpa);
 
+    mux.gpa.free(mux.class_of_window_utf16);
     mux.gpa.free(mux.class_of_window);
     mux.gpa.destroy(mux);
 }
@@ -186,9 +193,9 @@ pub fn dispatch(mux: *Mux) void {
 
             for (mux.windows.values()) |win| {
                 const handle = win.handle(mux).cast(tag);
-                while (win32_win.PeekMessageA(&msg, handle, 0, 0, win32_win.PM_REMOVE) > 0) {
+                while (win32_win.PeekMessageW(&msg, handle, 0, 0, win32_win.PM_REMOVE) > 0) {
                     _ = win32_win.TranslateMessage(&msg);
-                    _ = win32_win.DispatchMessageA(&msg);
+                    _ = win32_win.DispatchMessageW(&msg);
                 }
             }
         },
@@ -390,7 +397,7 @@ pub const WaylandObjects = if (os != .linux) void else struct {
 
 pub const Win32 = if (os != .windows) void else struct {
     hinstance: win32_foundation.HINSTANCE,
-    window_class: win32_win.WNDCLASSA,
+    window_class: win32_win.WNDCLASSW,
 };
 
 const Linux = union(enum) {
