@@ -84,7 +84,7 @@ fn viewport_proc(
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
         win32_win.WM_CLOSE => {
-            com.deferred_events.append(com.gpa, .{
+            com.native_events.append(com.gpa, .{
                 .viewport_should_close = .{ .viewport_key = vp_key },
             }) catch return 0;
             return 0;
@@ -98,7 +98,7 @@ fn viewport_proc(
             const flags: KeyDownLParam = .from_lparam(msg, lparam);
 
             const modifiers = get_modifires();
-            com.deferred_events.append(com.gpa, .{
+            com.native_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = if (flags.previous_state == 1) .repeat else .pressed,
@@ -113,7 +113,7 @@ fn viewport_proc(
             const truncate: @typeInfo(kbm.VIRTUAL_KEY).@"enum".tag_type = @truncate(wparam);
             const key: kbm.VIRTUAL_KEY = @enumFromInt(truncate);
             const pkey = to_protocol_key(key) orelse return 0;
-            com.deferred_events.append(com.gpa, .{
+            com.native_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = .released,
@@ -133,7 +133,7 @@ fn viewport_proc(
         win32_win.WM_RBUTTONDOWN,
         win32_win.WM_RBUTTONUP,
         => |tag| {
-            com.deferred_events.append(com.gpa, .{
+            com.native_events.append(com.gpa, .{
                 .mouse_enter = .{ .viewport_key = vp_key },
             }) catch return 0;
 
@@ -151,7 +151,7 @@ fn viewport_proc(
                 }
             }
 
-            const mouse_event: Compositor.Event = blk: switch (tag) {
+            const mouse_event: Compositor.EventFromNative = blk: switch (tag) {
                 win32_win.WM_MOUSEMOVE => {
                     const x: i32 = @truncate(lparam & 0xFFFF);
                     const y: i32 = @truncate((lparam >> 16) & 0xFFFF);
@@ -175,14 +175,14 @@ fn viewport_proc(
                 else => comptime unreachable,
             };
 
-            com.deferred_events.append(com.gpa, mouse_event) catch return 0;
+            com.native_events.append(com.gpa, mouse_event) catch return 0;
 
             return 0;
         },
 
         win32_controls.WM_MOUSELEAVE => {
             vp.win32.mouse_tracking = false;
-            com.deferred_events.append(com.gpa, .{
+            com.native_events.append(com.gpa, .{
                 .mouse_leave = .{ .viewport_key = vp_key },
             }) catch return 0;
             return 0;

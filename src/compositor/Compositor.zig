@@ -16,7 +16,7 @@ destroy_started: bool,
 resources: std.array_hash_map.Auto(ClientUUID, ClientResources),
 
 server_events: ServerQueue,
-deferred_events: std.ArrayList(Event),
+native_events: std.ArrayList(EventFromNative),
 
 present_queue: std.ArrayList(BufferPresent),
 
@@ -95,7 +95,7 @@ fn create_undefined_native(args: CreateArgs) !*Compositor {
         .destroy_started = false,
 
         .server_events = .init(args.gpa),
-        .deferred_events = .empty,
+        .native_events = .empty,
         .present_queue = .empty,
 
         .input_focus_mouse = null,
@@ -130,7 +130,7 @@ pub fn destroy(com: *Compositor) void {
 
     inline for (.{
         &com.resources,
-        &com.deferred_events,
+        &com.native_events,
         &com.present_queue,
     }) |entry| {
         entry.deinit(com.gpa);
@@ -192,7 +192,7 @@ pub fn flush(com: *Compositor) void {
     }
 }
 
-pub fn event_handle(com: *Compositor, event: Event) !void {
+pub fn event_handle_server(com: *Compositor, event: EventFromServer) !void {
     try maybe_oom();
 
     switch (com.native_tag()) {
@@ -215,7 +215,6 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
 
         .viewport_create => |args| try com.viewport_create(args),
         .viewport_destroy => |args| com.viewport_destroy(args.client_uuid.viewport_key(args.payload.viewport_id)),
-        .viewport_should_close => |args| try com.viewport_should_close(args),
         .viewport_pos_set => |args| try com.viewport_pos_set(args),
         .viewport_size_set => |args| try com.viewport_size_set(args),
         .viewport_display_state_set => |args| try com.viewport_display_state_set(args),
@@ -225,14 +224,44 @@ pub fn event_handle(com: *Compositor, event: Event) !void {
         .remote_viewport_embed_with_window => |args| try com.remote_viewport_embed_with_window(args),
 
         .cursor_shape_set => |args| try com.cursor_shape_set(args),
+    }
+}
 
-        .keyboard_enter => |args| try com.keyboard_enter(args),
-        .keyboard_key => |args| try com.keyboard_key(args),
-        .mouse_enter => |args| try com.mouse_enter(args),
-        .mouse_leave => |args| try com.mouse_leave(args),
-        .mouse_motion => |args| try com.mouse_motion(args),
-        .mouse_button => |args| try com.mouse_button(args),
-        .mouse_scroll => |args| try com.mouse_scroll(args),
+pub fn event_handle_native(com: *Compositor, event: EventFromNative) void {
+    switch (event) {
+        .viewport_should_close,
+        => |args| com.viewport_should_close(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+
+        .keyboard_enter,
+        => |args| com.keyboard_enter(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+        .keyboard_key,
+        => |args| com.keyboard_key(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+        .mouse_enter,
+        => |args| com.mouse_enter(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+        .mouse_leave,
+        => |args| com.mouse_leave(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+        .mouse_motion,
+        => |args| com.mouse_motion(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+        .mouse_button,
+        => |args| com.mouse_button(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
+        .mouse_scroll,
+        => |args| com.mouse_scroll(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
     }
 }
 
@@ -305,7 +334,7 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_uuid });
 }
 
-fn viewport_should_close(com: *Compositor, args: @FieldType(Event, "viewport_should_close")) !void {
+fn viewport_should_close(com: *Compositor, args: @FieldType(EventFromNative, "viewport_should_close")) !void {
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .viewport_close = .{
@@ -315,7 +344,7 @@ fn viewport_should_close(com: *Compositor, args: @FieldType(Event, "viewport_sho
     });
 }
 
-fn buffer_create_cpu(com: *Compositor, args: @FieldType(Event, "buffer_create_cpu")) !void {
+fn buffer_create_cpu(com: *Compositor, args: @FieldType(EventFromServer, "buffer_create_cpu")) !void {
     try com.server_events.ensure_unused_capacity(1);
     const rs = com.resources.getPtr(args.client_uuid).?;
 
@@ -476,7 +505,7 @@ fn buffer_create_cpu_inner(
     }
 }
 
-fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create_gbm_bo")) !void {
+fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(EventFromServer, "buffer_create_gbm_bo")) !void {
     if (!constants.os_has_gbm) {
         return error.MessageUnsupportedByOS;
     }
@@ -501,7 +530,7 @@ fn buffer_create_gbm_bo(com: *Compositor, args: @FieldType(Event, "buffer_create
         } });
     }
 }
-fn buffer_create_gbm_bo_inner(com: *Compositor, args: @FieldType(Event, "buffer_create_gbm_bo")) !void {
+fn buffer_create_gbm_bo_inner(com: *Compositor, args: @FieldType(EventFromServer, "buffer_create_gbm_bo")) !void {
     if (!constants.os_has_gbm) @compileError("OS does not support gbm");
 
     if (args.payload.size.width <= 0 or args.payload.size.height <= 0) return error.InvalidSize;
@@ -534,7 +563,7 @@ fn buffer_create_gbm_bo_inner(com: *Compositor, args: @FieldType(Event, "buffer_
     }
 }
 
-fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_d3d")) !void {
+fn texture_create_d3d(com: *Compositor, args: @FieldType(EventFromServer, "texture_create_d3d")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const win32 = switch (com.native_tag()) {
@@ -566,7 +595,7 @@ fn texture_create_d3d(com: *Compositor, args: @FieldType(Event, "texture_create_
         } });
     }
 }
-fn texture_create_d3d_inner(com: *Compositor, win32: *Win32, args: @FieldType(Event, "texture_create_d3d")) !server_to_client.TextureCreatedD3D.Success {
+fn texture_create_d3d_inner(com: *Compositor, win32: *Win32, args: @FieldType(EventFromServer, "texture_create_d3d")) !server_to_client.TextureCreatedD3D.Success {
     std.debug.assert(args.payload.version == .d3d11);
     std.debug.assert(com.server_events.capacity >= 1);
 
@@ -633,8 +662,8 @@ fn texture_create_d3d_inner(com: *Compositor, win32: *Win32, args: @FieldType(Ev
 }
 
 const BufferQueuePresent = union(enum) {
-    no_sync: @FieldType(Event, "buffer_present"),
-    sync: @FieldType(Event, "buffer_present_with_sync"),
+    no_sync: @FieldType(EventFromServer, "buffer_present"),
+    sync: @FieldType(EventFromServer, "buffer_present_with_sync"),
 };
 
 fn present_queue_push(com: *Compositor, args: BufferQueuePresent) !void {
@@ -741,12 +770,12 @@ pub fn present(com: *Compositor) error{OutOfMemory}!void {
     }
 }
 
-fn buffer_destroy(com: *Compositor, args: @FieldType(Event, "buffer_destroy")) !void {
+fn buffer_destroy(com: *Compositor, args: @FieldType(EventFromServer, "buffer_destroy")) !void {
     const rs = com.resources.getPtr(args.client_uuid) orelse return;
     rs.buffer_destroy(com, args.payload.buffer_id);
 }
 
-pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_create")) !void {
+pub fn viewport_create(com: *Compositor, args: @FieldType(EventFromServer, "viewport_create")) !void {
     var reserve: Viewport.MemoryReserveForDestroy = try .init(com);
     errdefer reserve.release(com);
 
@@ -823,7 +852,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(Event, "viewport_creat
 pub fn viewport_create_inner(
     com: *Compositor,
     reserve: Viewport.MemoryReserveForDestroy,
-    args: @FieldType(Event, "viewport_create"),
+    args: @FieldType(EventFromServer, "viewport_create"),
 ) !ViewportCreateResult {
     if (args.payload.rect.width <= 0 or args.payload.rect.height <= 0) {
         return error.InvalidSize;
@@ -842,7 +871,7 @@ pub fn viewport_create_inner(
 fn viewport_create_with_viewport_parent(
     com: *Compositor,
     reserve: Viewport.MemoryReserveForDestroy,
-    args: @FieldType(Event, "viewport_create"),
+    args: @FieldType(EventFromServer, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
     std.debug.assert(args.payload.parent_id != null);
     const parent_id = args.payload.parent_id.?;
@@ -870,7 +899,7 @@ fn viewport_create_with_viewport_parent(
 fn viewport_create_with_remote_viewport(
     com: *Compositor,
     reserve: Viewport.MemoryReserveForDestroy,
-    args: @FieldType(Event, "viewport_create"),
+    args: @FieldType(EventFromServer, "viewport_create"),
 ) !Compositor.ViewportCreateResult {
     const embedded_key = args.client_uuid.viewport_key(args.payload.viewport_id);
 
@@ -953,7 +982,7 @@ fn viewport_create_with_remote_viewport(
 fn viewport_create_with_mux_window(
     com: *Compositor,
     reserve: Viewport.MemoryReserveForDestroy,
-    args: @FieldType(Event, "viewport_create"),
+    args: @FieldType(EventFromServer, "viewport_create"),
 ) !ViewportKey {
     std.debug.assert(!args.payload.viewport_id.is_server_id());
     std.debug.assert(args.payload.parent_id == null);
@@ -1024,7 +1053,7 @@ pub fn resources_of_embeder_get(com: *Compositor, to_embed: ViewportKey) error{E
     return error.EmbederClientDoesNotExist;
 }
 
-pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_set")) !void {
+pub fn viewport_pos_set(com: *Compositor, args: @FieldType(EventFromServer, "viewport_pos_set")) !void {
     const vp = if (args.client_uuid == args.payload.viewport_key.client_uuid) blk: {
         break :blk com.viewport_from_key(args.payload.viewport_key) orelse return;
     } else blk: {
@@ -1072,7 +1101,7 @@ pub fn viewport_pos_set(com: *Compositor, args: @FieldType(Event, "viewport_pos_
     }
 }
 
-pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_size_set")) !void {
+pub fn viewport_size_set(com: *Compositor, args: @FieldType(EventFromServer, "viewport_size_set")) !void {
     const vp = if (args.client_uuid == args.payload.viewport_key.client_uuid) blk: {
         break :blk com.viewport_from_key(args.payload.viewport_key) orelse return;
     } else blk: {
@@ -1134,7 +1163,7 @@ pub fn viewport_size_set(com: *Compositor, args: @FieldType(Event, "viewport_siz
     });
 }
 
-pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "viewport_display_state_set")) !void {
+pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(EventFromServer, "viewport_display_state_set")) !void {
     std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
     try com.server_events.ensure_unused_capacity(2);
 
@@ -1200,7 +1229,7 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(Event, "vie
     });
 }
 
-pub fn viewport_close(com: *Compositor, args: @FieldType(Event, "viewport_close")) !void {
+pub fn viewport_close(com: *Compositor, args: @FieldType(EventFromServer, "viewport_close")) !void {
     std.debug.assert(args.payload.viewport_key.client_uuid != args.client_uuid);
 
     // validate the viewport exists and is owned by the client
@@ -1209,7 +1238,7 @@ pub fn viewport_close(com: *Compositor, args: @FieldType(Event, "viewport_close"
     try com.viewport_should_close(.{ .viewport_key = args.payload.viewport_key });
 }
 
-pub fn cursor_shape_set(com: *Compositor, args: @FieldType(Event, "cursor_shape_set")) !void {
+pub fn cursor_shape_set(com: *Compositor, args: @FieldType(EventFromServer, "cursor_shape_set")) !void {
     const viewport_key: ViewportKey = .{
         .client_uuid = args.client_uuid,
         .viewport_id = args.payload.viewport_id,
@@ -1220,7 +1249,7 @@ pub fn cursor_shape_set(com: *Compositor, args: @FieldType(Event, "cursor_shape_
     com.cursor_shape_set_from_viewport(vp, viewport_key);
 }
 
-pub fn remote_viewport_embed_with_viewport(com: *Compositor, args: @FieldType(Event, "remote_viewport_embed")) !void {
+pub fn remote_viewport_embed_with_viewport(com: *Compositor, args: @FieldType(EventFromServer, "remote_viewport_embed")) !void {
     try com.remote_viewport_embed(
         args.client_uuid,
         args.payload.remote_viewport_id,
@@ -1232,7 +1261,7 @@ pub fn remote_viewport_embed_with_viewport(com: *Compositor, args: @FieldType(Ev
 
 pub fn remote_viewport_embed_with_window(
     com: *Compositor,
-    args: @FieldType(Event, "remote_viewport_embed_with_window"),
+    args: @FieldType(EventFromServer, "remote_viewport_embed_with_window"),
 ) !void {
     try com.remote_viewport_embed(
         args.client_uuid,
@@ -1371,7 +1400,7 @@ pub fn keyboard_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?Viewp
     }
 }
 
-pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !void {
+pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromNative, "keyboard_key")) !void {
     try com.server_events.ensure_unused_capacity(2);
 
     const key = com.input_focus_keyboard orelse return;
@@ -1428,17 +1457,17 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(Event, "keyboard_key")) !
     }
 }
 
-pub fn keyboard_enter(com: *Compositor, args: @FieldType(Event, "keyboard_enter")) !void {
+pub fn keyboard_enter(com: *Compositor, args: @FieldType(EventFromNative, "keyboard_enter")) !void {
     try com.server_events.ensure_unused_capacity(2);
     com.keyboard_focus_switch_assume_capacity(args.viewport_key);
 }
 
-pub fn mouse_enter(com: *Compositor, args: @FieldType(Event, "mouse_enter")) !void {
+pub fn mouse_enter(com: *Compositor, args: @FieldType(EventFromNative, "mouse_enter")) !void {
     try com.server_events.ensure_unused_capacity(2);
     com.mouse_focus_switch_assume_capacity(args.viewport_key);
 }
 
-pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !void {
+pub fn mouse_leave(com: *Compositor, args: @FieldType(EventFromNative, "mouse_leave")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     com.server_events.push_assume_capacity(.{
@@ -1455,7 +1484,7 @@ pub fn mouse_leave(com: *Compositor, args: @FieldType(Event, "mouse_leave")) !vo
     }
 }
 
-pub fn mouse_motion(com: *Compositor, args: @FieldType(Event, "mouse_motion")) !void {
+pub fn mouse_motion(com: *Compositor, args: @FieldType(EventFromNative, "mouse_motion")) !void {
     const key = com.input_focus_mouse orelse return;
 
     try com.server_events.ensure_unused_capacity(1);
@@ -1471,7 +1500,7 @@ pub fn mouse_motion(com: *Compositor, args: @FieldType(Event, "mouse_motion")) !
     });
 }
 
-pub fn mouse_button(com: *Compositor, args: @FieldType(Event, "mouse_button")) !void {
+pub fn mouse_button(com: *Compositor, args: @FieldType(EventFromNative, "mouse_button")) !void {
     try com.server_events.ensure_unused_capacity(3);
 
     const key = com.input_focus_mouse orelse return;
@@ -1491,7 +1520,7 @@ pub fn mouse_button(com: *Compositor, args: @FieldType(Event, "mouse_button")) !
     });
 }
 
-pub fn mouse_scroll(com: *Compositor, args: @FieldType(Event, "mouse_scroll")) !void {
+pub fn mouse_scroll(com: *Compositor, args: @FieldType(EventFromNative, "mouse_scroll")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const key = com.input_focus_mouse orelse return;
@@ -1563,7 +1592,7 @@ pub const Gbm = if (!constants.os_has_gbm) void else struct {
     }
 };
 
-pub const Event = union(enum) {
+pub const EventFromServer = union(enum) {
     buffer_create_cpu: WithClientUUID(client_to_server.BufferCreateCpu),
     buffer_create_gbm_bo: WithClientUUID(client_to_server.BufferCreateGbmBo),
     buffer_present: WithClientUUID(client_to_server.BufferPresent),
@@ -1574,7 +1603,6 @@ pub const Event = union(enum) {
 
     viewport_create: WithClientUUID(client_to_server.ViewportCreate),
     viewport_destroy: WithClientUUID(client_to_server.ViewportDestroy),
-    viewport_should_close: ViewportShouldClose,
     viewport_pos_set: WithClientUUID(client_to_server.ViewportPosSet),
 
     remote_viewport_embed: WithClientUUID(client_to_server.RemoteViewportEmbed),
@@ -1585,6 +1613,18 @@ pub const Event = union(enum) {
 
     cursor_shape_set: WithClientUUID(client_to_server.CursorShape),
 
+    const WithClientUUID = client_to_server.WithClientUUID;
+
+    pub const RemoteViewportEmbedWithWindow = struct {
+        client_uuid_to_embed: ptypes.ClientUUID,
+        remote_viewport_id: ptypes.RemoteViewportID,
+        rect: ptypes.Rect,
+        window_id: WindowID,
+    };
+};
+
+pub const EventFromNative = union(enum) {
+    viewport_should_close: ViewportShouldClose,
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
 
@@ -1593,30 +1633,6 @@ pub const Event = union(enum) {
     mouse_motion: MouseMotion,
     mouse_button: MouseButton,
     mouse_scroll: MouseScroll,
-
-    const WithClientUUID = client_to_server.WithClientUUID;
-
-    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        switch (self) {
-            .wayland_dispatch => |_, tag| {
-                try writer.print("{s}", .{@tagName(tag)});
-            },
-            inline else => |v, tag| {
-                try utils.format_active_union_field(v, @tagName(tag), writer);
-            },
-        }
-    }
-
-    pub const ClientRegistered = struct {
-        client_uuid: ClientUUID,
-    };
-
-    pub const RemoteViewportEmbedWithWindow = struct {
-        client_uuid_to_embed: ptypes.ClientUUID,
-        remote_viewport_id: ptypes.RemoteViewportID,
-        rect: ptypes.Rect,
-        window_id: WindowID,
-    };
 
     pub const KeyboardChar = struct {
         char: u32,

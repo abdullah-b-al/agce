@@ -8,10 +8,10 @@ unix_path: []const u8,
 server: zio.net.Server,
 clients: Clients,
 
-io_queue_buffer: []Compositor.Event,
-io_queue: *Io.Queue(Compositor.Event),
+io_queue_buffer: []Compositor.EventFromServer,
+io_queue: *Io.Queue(Compositor.EventFromServer),
 
-compositor_events: std.ArrayList(CompositorEvent),
+compositor_events: std.ArrayList(Compositor.EventFromServer),
 
 win32_socket_event: Win32SocketEvent,
 
@@ -24,10 +24,10 @@ pub fn create(
     const server = try gpa.create(Server);
     errdefer gpa.destroy(server);
 
-    const io_queue_buffer = try gpa.alloc(Compositor.Event, 128);
+    const io_queue_buffer = try gpa.alloc(Compositor.EventFromServer, 128);
     errdefer gpa.free(io_queue_buffer);
 
-    const io_queue = try gpa.create(Io.Queue(Compositor.Event));
+    const io_queue = try gpa.create(Io.Queue(Compositor.EventFromServer));
     errdefer gpa.destroy(io_queue);
 
     io_queue.* = .init(io_queue_buffer);
@@ -455,7 +455,7 @@ pub fn compositor_event_from_message(
     uuid: ClientUUID,
     comptime payload_tag: client_to_server.MessageTag,
     payload: client_to_server.MessagePayload,
-) CompositorEvent {
+) Compositor.EventFromServer {
     std.debug.assert(payload_tag == payload);
     switch (payload_tag) {
         .register,
@@ -480,7 +480,7 @@ pub fn compositor_event_from_message(
         => {
             const msg = @field(payload, @tagName(payload_tag));
             return @unionInit(
-                CompositorEvent,
+                Compositor.EventFromServer,
                 @tagName(payload_tag),
                 .{ .client_uuid = uuid, .payload = msg },
             );
@@ -677,7 +677,6 @@ const Clients = @import("Clients.zig");
 const log = std.log.scoped(.Server);
 const os_tag = @import("builtin").os.tag;
 const Compositor = @import("../Compositor.zig");
-const CompositorEvent = @import("../Compositor.zig").Event;
 const server_to_client = @import("protocol").server_to_client;
 const client_to_server = @import("protocol").client_to_server;
 const local_client = @import("protocol").local_client;

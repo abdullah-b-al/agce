@@ -388,7 +388,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Composit
             const control =
                 mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
 
-            com.deferred_events.append(com.gpa, .{
+            com.native_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = key,
                     .state = state,
@@ -404,7 +404,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Composit
 
 fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compositor) void {
     const wl = com.linux.wayland;
-    const ws_event: Event = blk: switch (event) {
+    const ws_event: Compositor.EventFromNative = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse return;
 
@@ -417,7 +417,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
                     wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
                 }
 
-                break :blk @unionInit(Event, "mouse_" ++ @tagName(tag), .{
+                break :blk @unionInit(Compositor.EventFromNative, "mouse_" ++ @tagName(tag), .{
                     .viewport_key = key,
                 });
             } else {
@@ -480,7 +480,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
         },
     };
 
-    com.deferred_events.append(com.gpa, ws_event) catch return;
+    com.native_events.append(com.gpa, ws_event) catch return;
 }
 
 pub fn window_id_from_toplevel(com: *const Compositor, tl: *xdg.Toplevel) WindowID {
@@ -705,7 +705,7 @@ pub fn buffer_create_and_register_gpu_async(
     return buffer_id;
 }
 
-pub fn should_flush(_: *Wayland, event: Compositor.Event) bool {
+pub fn should_flush(_: *Wayland, event: Compositor.EventFromServer) bool {
     return switch (event) {
         .cursor_shape_set,
         .buffer_present,
@@ -721,14 +721,6 @@ pub fn should_flush(_: *Wayland, event: Compositor.Event) bool {
         .buffer_create_gbm_bo,
         => true,
 
-        .viewport_should_close,
-        .keyboard_key,
-        .keyboard_enter,
-        .mouse_enter,
-        .mouse_leave,
-        .mouse_motion,
-        .mouse_button,
-        .mouse_scroll,
         .buffer_create_cpu,
         .texture_create_d3d,
         .buffer_destroy,
@@ -783,7 +775,7 @@ pub fn input_repeat(com: *Compositor, ms: i32, key: pinput.Key, modifiers: pinpu
     // FIXME: This is not thread safe
     // FIXME: This might end up sending stale data.
     // Add some checks to make sure that doesn't happen
-    com.deferred_events.append(com.gpa, .{
+    com.native_events.append(com.gpa, .{
         .keyboard_key = .{
             .key = key,
             .state = .repeat,
@@ -1061,7 +1053,6 @@ const ptypes = @import("protocol").types;
 const pinput = @import("protocol").input;
 const server_to_client = @import("protocol").server_to_client;
 const BufferID = ptypes.BufferID;
-const Event = Compositor.Event;
 const input = @import("input.zig");
 const BufferFormat = ptypes.BufferFormat;
 const CpuBufferHandle = ptypes.CpuBufferHandle;

@@ -35,7 +35,7 @@ pub const CompositorHandle = opaque {
         return h.cast().server.unix_path;
     }
 
-    pub fn io_queue(h: *CompositorHandle) *Io.Queue(Compositor.Event) {
+    pub fn io_queue(h: *CompositorHandle) *Io.Queue(Compositor.EventFromServer) {
         return h.cast().server.io_queue;
     }
 
@@ -50,7 +50,7 @@ pub const CompositorHandle = opaque {
     pub fn window_focused_by_keyboard(h: *CompositorHandle, key: ptypes.ViewportKey) void {
         const com = h.cast();
         if (com.input_focus_keyboard == null) {
-            com.deferred_events.append(
+            com.native_events.append(
                 com.gpa,
                 .{ .keyboard_enter = .{ .viewport_key = key } },
             ) catch return;
@@ -97,7 +97,7 @@ pub const CompositorHandle = opaque {
         key: ptypes.ViewportKey,
     ) error{OutOfMemory}!void {
         const com = h.cast();
-        try com.deferred_events.append(com.gpa, .{
+        try com.native_events.append(com.gpa, .{
             .viewport_should_close = .{ .viewport_key = key },
         });
     }
@@ -142,7 +142,7 @@ pub const CompositorHandle = opaque {
 
         try server.process_incoming_messages();
         while (server.compositor_events.pop()) |event| {
-            com.event_handle(event) catch |err| switch (err) {
+            com.event_handle_server(event) catch |err| switch (err) {
                 error.OutOfMemory => |e| {
                     server.compositor_events.appendAssumeCapacity(event);
                     return e;
@@ -164,12 +164,10 @@ pub const CompositorHandle = opaque {
         try com.present();
 
         com.dispatch();
-        for (com.deferred_events.items) |event| {
-            com.event_handle(event) catch |err| {
-                log.err("event_handle {}", .{err});
-            };
+        for (com.native_events.items) |event| {
+            com.event_handle_native(event);
         }
-        com.deferred_events.clearRetainingCapacity();
+        com.native_events.clearRetainingCapacity();
 
         server.events_handle(com);
 
@@ -190,7 +188,7 @@ pub const CompositorHandle = opaque {
         const com = h.cast();
         const server = com.server;
 
-        return try polling.poll( com, server, timeout);
+        return try polling.poll(com, server, timeout);
     }
 };
 
