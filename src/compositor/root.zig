@@ -123,6 +123,11 @@ pub const CompositorHandle = opaque {
             }
         }
 
+        // client disconnection will push server events
+        server.handle_events(com) catch |err| switch (err) {
+            error.OutOfMemory => oom = true,
+        };
+
         if (com.resources.ensureTotalCapacity(com.gpa, server.clients.count())) |_| {
             for (server.clients.list.items) |client| {
                 const uuid = client.uuid() orelse continue;
@@ -135,6 +140,9 @@ pub const CompositorHandle = opaque {
         } else |_| {}
 
         if (oom) return error.OutOfMemory;
+
+        std.debug.assert(com.server_events.list.len() == 0);
+        std.debug.assert(server.compositor_events.items.len == 0);
     }
 
     fn tick_inner(com: *Compositor, poll_result: polling.Poll) error{OutOfMemory}!void {
@@ -169,27 +177,7 @@ pub const CompositorHandle = opaque {
         }
         com.native_events.clearRetainingCapacity();
 
-        while (com.server_events.peek()) |node| {
-            server.handle_event(node.event) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => |e| {
-                        return e;
-                    },
-
-                    // TODO: Do not close the client when sending handles fails
-                    error.FailedToSendFds,
-                    error.FailedToSendHandle,
-                    error.ConnectionClosed,
-                    => |e| {
-                        server.mark_for_closing_client_uuid_with(node.event.client_uuid(), e);
-                    },
-                }
-            };
-
-            const popped = com.server_events.pop().?;
-            std.debug.assert(popped == node);
-            com.server_events.destroy(node);
-        }
+        try server.handle_events(com);
 
         if (poll_result.accept) {
             server.accept() catch |err| {

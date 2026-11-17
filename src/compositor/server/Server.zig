@@ -152,6 +152,30 @@ pub fn accept(server: *Server) !void {
     }
 }
 
+pub fn handle_events(server: *Server, com: *Compositor) error{OutOfMemory}!void {
+    while (com.server_events.peek()) |node| {
+        server.handle_event(node.event) catch |err| {
+            switch (err) {
+                error.OutOfMemory => |e| {
+                    return e;
+                },
+
+                // TODO: Do not close the client when sending handles fails
+                error.FailedToSendFds,
+                error.FailedToSendHandle,
+                error.ConnectionClosed,
+                => |e| {
+                    server.mark_for_closing_client_uuid_with(node.event.client_uuid(), e);
+                },
+            }
+        };
+
+        const popped = com.server_events.pop().?;
+        std.debug.assert(popped == node);
+        com.server_events.destroy(node);
+    }
+}
+
 pub fn process_incoming_messages(server: *Server) error{OutOfMemory}!void {
     // Mark closed clients first to make sure they're removed by the end of tick()
     for (server.clients.list.items, 0..) |client, i| {
