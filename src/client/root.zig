@@ -195,13 +195,13 @@ pub const ClientHandle = opaque {
         );
     }
 
-    pub fn remote_viewport_embed(handle: *ClientHandle, viewport: *ViewportHandle, remote: *RemoteClient, rect: Rect) !*RemoteViewportHandle {
+    pub fn remote_viewport_create(handle: *ClientHandle, viewport: *ViewportHandle, remote: *RemoteClient, rect: Rect) !*RemoteViewportHandle {
         std.debug.assert(remote.status == .connected);
         const client = handle.cast();
         const vp = viewport.cast();
 
         return @ptrCast(
-            try client.remote_viewport_embed(vp.id, remote.uuid, rect),
+            try client.remote_viewport_create(vp.id, remote.uuid, rect),
         );
     }
 

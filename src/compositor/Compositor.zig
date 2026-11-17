@@ -220,8 +220,8 @@ pub fn event_handle_server(com: *Compositor, event: EventFromServer) !void {
         .viewport_display_state_set => |args| try com.viewport_display_state_set(args),
         .viewport_close => |args| try com.viewport_close(args),
 
-        .remote_viewport_embed => |args| try com.remote_viewport_embed_with_viewport(args),
-        .remote_viewport_embed_with_window => |args| try com.remote_viewport_embed_with_window(args),
+        .remote_viewport_create => |args| try com.remote_viewport_create_with_viewport(args),
+        .remote_viewport_create_with_window => |args| try com.remote_viewport_create_with_window(args),
 
         .cursor_shape_set => |args| try com.cursor_shape_set(args),
     }
@@ -819,7 +819,7 @@ pub fn viewport_create(com: *Compositor, args: @FieldType(EventFromServer, "view
                 });
 
                 com.server_events.push_assume_capacity(.{
-                    .remote_viewport_embedded = .{
+                    .remote_viewport_created = .{
                         .client_uuid = v.embeder.key.client_uuid,
                         .payload = .{
                             .remote_viewport_id = v.embeder.key.remote_viewport_id,
@@ -925,7 +925,7 @@ fn viewport_create_with_remote_viewport(
 
     const embeder = try com.resources_of_embeder_get(embedded_key);
     const remote_viewport_data =
-        embeder.remote_viewports_pending_fetch_remove_by_embedded_key(embedded_key) orelse
+        embeder.remote_viewports_pending_fetch_remove_by_remote_key(embedded_key) orelse
         return error.InvalidEmbededViewportKey;
 
     switch (remote_viewport_data.embed_in) {
@@ -1262,8 +1262,8 @@ pub fn cursor_shape_set(com: *Compositor, args: @FieldType(EventFromServer, "cur
     com.cursor_shape_set_from_viewport(vp, viewport_key);
 }
 
-pub fn remote_viewport_embed_with_viewport(com: *Compositor, args: @FieldType(EventFromServer, "remote_viewport_embed")) !void {
-    try com.remote_viewport_embed(
+pub fn remote_viewport_create_with_viewport(com: *Compositor, args: @FieldType(EventFromServer, "remote_viewport_create")) !void {
+    try com.remote_viewport_create(
         args.client_uuid,
         args.payload.remote_viewport_id,
         args.payload.rect,
@@ -1272,11 +1272,11 @@ pub fn remote_viewport_embed_with_viewport(com: *Compositor, args: @FieldType(Ev
     );
 }
 
-pub fn remote_viewport_embed_with_window(
+pub fn remote_viewport_create_with_window(
     com: *Compositor,
-    args: @FieldType(EventFromServer, "remote_viewport_embed_with_window"),
+    args: @FieldType(EventFromServer, "remote_viewport_create_with_window"),
 ) !void {
-    try com.remote_viewport_embed(
+    try com.remote_viewport_create(
         args.client_uuid,
         args.payload.remote_viewport_id,
         args.payload.rect,
@@ -1285,7 +1285,7 @@ pub fn remote_viewport_embed_with_window(
     );
 }
 
-pub fn remote_viewport_embed(
+pub fn remote_viewport_create(
     com: *Compositor,
     request_from: ClientUUID,
     remote_viewport_id: ptypes.RemoteViewportID,
@@ -1618,8 +1618,8 @@ pub const EventFromServer = union(enum) {
     viewport_destroy: WithClientUUID(client_to_server.ViewportDestroy),
     viewport_pos_set: WithClientUUID(client_to_server.ViewportPosSet),
 
-    remote_viewport_embed: WithClientUUID(client_to_server.RemoteViewportEmbed),
-    remote_viewport_embed_with_window: WithClientUUID(RemoteViewportEmbedWithWindow),
+    remote_viewport_create: WithClientUUID(client_to_server.RemoteViewportCreate),
+    remote_viewport_create_with_window: WithClientUUID(RemoteViewportCreateWithWindow),
     viewport_size_set: WithClientUUID(client_to_server.ViewportSizeSet),
     viewport_display_state_set: WithClientUUID(client_to_server.ViewportDisplayStateSet),
     viewport_close: WithClientUUID(client_to_server.RemoteViewportClose),
@@ -1628,7 +1628,7 @@ pub const EventFromServer = union(enum) {
 
     const WithClientUUID = client_to_server.WithClientUUID;
 
-    pub const RemoteViewportEmbedWithWindow = struct {
+    pub const RemoteViewportCreateWithWindow = struct {
         client_uuid_to_embed: ptypes.ClientUUID,
         remote_viewport_id: ptypes.RemoteViewportID,
         rect: ptypes.Rect,

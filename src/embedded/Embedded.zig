@@ -161,7 +161,7 @@ pub fn window_add(em: *Embedded, new: *anyopaque, size: ptypes.Size) !void {
     );
 }
 
-pub fn remote_viewport_embed(em: *Embedded, remote: *RemoteClient, window_handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
+pub fn remote_viewport_create(em: *Embedded, remote: *RemoteClient, window_handle: *anyopaque, rect: ptypes.Rect) !*RemoteViewport {
     const window_id = em.window_id_from_handle(@ptrCast(window_handle)) orelse return error.WindowDoesNotExist;
 
     try em.remote_viewports.ensureUnusedCapacity(em.gpa, 1);
@@ -177,7 +177,7 @@ pub fn remote_viewport_embed(em: *Embedded, remote: *RemoteClient, window_handle
     );
 
     em.com.io_queue().putOneUncancelable(em.rt.io(), .{
-        .remote_viewport_embed_with_window = .{
+        .remote_viewport_create_with_window = .{
             .client_uuid = em.connection.uuid,
             .payload = .{
                 .client_uuid_to_embed = remote.uuid,
@@ -276,7 +276,7 @@ pub fn poll(em: *Embedded) void {
                     }
                 }
             },
-            .remote_viewport_embedded => |m| {
+            .remote_viewport_created => |m| {
                 const rvp = em.remote_viewports.get(m.remote_viewport_id) orelse
                     continue;
 

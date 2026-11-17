@@ -83,7 +83,7 @@ pub fn buffer_destroy(rs: *ClientResources, com: *Compositor, id: BufferID) void
     _ = rs.buffers.orderedRemove(id);
 }
 
-pub fn remote_viewports_pending_fetch_remove_by_embedded_key(rs: *ClientResources, key: ViewportKey) ?RemoteViewportPending {
+pub fn remote_viewports_pending_fetch_remove_by_remote_key(rs: *ClientResources, key: ViewportKey) ?RemoteViewportPending {
     const id = blk: {
         for (rs.remote_viewports_pending.values()) |remote| {
             if (std.meta.eql(remote.to_embed, key)) {

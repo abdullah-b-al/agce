@@ -260,12 +260,12 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
             );
         },
 
-        .remote_viewport_embedded => |e| {
+        .remote_viewport_created => |e| {
             const rvp = client.remote_viewports.get(e.remote_viewport_id) orelse return;
             switch (e.status) {
                 .success => {
                     if (client.viewports.get(rvp.parent)) |vp| {
-                        vp.event_push(.{ .remote_viewport_embedded = rvp.id });
+                        vp.event_push(.{ .remote_viewport_created = rvp.id });
                     }
                     rvp.state = .{ .shown = e.viewport_key };
                 },
@@ -690,7 +690,7 @@ pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
     );
 }
 
-pub fn remote_viewport_embed(
+pub fn remote_viewport_create(
     client: *Client,
     viewport_id: ViewportID,
     client_uuid_to_embed: ptypes.ClientUUID,
@@ -705,7 +705,7 @@ pub fn remote_viewport_embed(
 
     client.remote_viewports.putAssumeCapacityNoClobber(id, rvp);
 
-    try client.connection.send_remote_viewport_embed(
+    try client.connection.send_remote_viewport_create(
         client.io,
         client.gpa,
         .{
@@ -885,7 +885,7 @@ pub const Event = union(enum) {
     mouse_button: server_to_client.MouseButton,
     mouse_scroll: server_to_client.MouseScroll,
     remote_viewport_closed: RemoteViewportID,
-    remote_viewport_embedded: RemoteViewportID,
+    remote_viewport_created: RemoteViewportID,
     wake_up,
 };
 

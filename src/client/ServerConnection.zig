@@ -94,8 +94,8 @@ pub fn send_viewport_destroy(c: *ServerConnection, io: Io, gpa: std.mem.Allocato
     try c.send(io, gpa, message);
 }
 
-pub fn send_remote_viewport_embed(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.RemoteViewportEmbed) !void {
-    const message = try c.stringify(gpa, .{ .remote_viewport_embed = payload });
+pub fn send_remote_viewport_create(c: *ServerConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.RemoteViewportCreate) !void {
+    const message = try c.stringify(gpa, .{ .remote_viewport_create = payload });
     try c.send(io, gpa, message);
 }
 

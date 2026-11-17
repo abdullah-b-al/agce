@@ -70,7 +70,7 @@ pub fn hide_remote_viewports(init: std.process.Init) !void {
 
     const rvp_width = @divFloor(vp.size().width, 3) * 2;
     const rvp_height = @divFloor(vp.size().height, 3) * 2;
-    const remote_viewport = try handle.remote_viewport_embed(vp, remote, .{
+    const remote_viewport = try handle.remote_viewport_create(vp, remote, .{
         .x = 100,
         .y = 100,
         .width = rvp_width,

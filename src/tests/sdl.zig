@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
         eh.poll();
     }
 
-    const remote_vp = try eh.remote_viewport_embed(remote, window_ptr, .{
+    const remote_vp = try eh.remote_viewport_create(remote, window_ptr, .{
         .x = 100,
         .y = 100,
         .width = 250,

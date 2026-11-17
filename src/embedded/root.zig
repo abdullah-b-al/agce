@@ -66,14 +66,14 @@ pub const EmbeddedHandle = opaque {
         );
     }
 
-    pub fn remote_viewport_embed(
+    pub fn remote_viewport_create(
         h: *EmbeddedHandle,
         remote: *RemoteClient,
         window_handle: *anyopaque,
         rect: Rect,
     ) !*RemoteViewportHandle {
         return @ptrCast(
-            try h.cast().remote_viewport_embed(
+            try h.cast().remote_viewport_create(
                 remote,
                 window_handle,
                 rect,

@@ -58,7 +58,7 @@ pub fn main(init: std.process.Init) !void {
             try handle.poll(std.math.maxInt(u64));
         }
 
-        remote_viewport = try handle.remote_viewport_embed(viewport, remote, .{
+        remote_viewport = try handle.remote_viewport_create(viewport, remote, .{
             .x = 100,
             .y = 100,
             .width = rvp_width,

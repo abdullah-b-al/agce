@@ -33,7 +33,7 @@ pub const MessagePayload = union(enum(u32)) {
     viewport_display_state_set: ViewportDisplayStateSet,
     viewport_close: RemoteViewportClose,
 
-    remote_viewport_embed: RemoteViewportEmbed,
+    remote_viewport_create: RemoteViewportCreate,
 
     cursor_shape_set: CursorShape,
 };
@@ -65,7 +65,7 @@ pub const ViewportDestroy = struct {
     viewport_id: types.ViewportID,
 };
 
-pub const RemoteViewportEmbed = struct {
+pub const RemoteViewportCreate = struct {
     client_uuid_to_embed: types.ClientUUID,
     remote_viewport_id: types.RemoteViewportID,
     rect: types.Rect,
