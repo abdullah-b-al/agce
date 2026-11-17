@@ -43,14 +43,14 @@ pub const CompositorHandle = opaque {
         return h.cast().resources.values();
     }
 
-    pub fn native_tag(h: *CompositorHandle) Compositor.NativeTag {
-        return h.cast().native_tag();
+    pub fn backend_tag(h: *CompositorHandle) Compositor.BackendTag {
+        return h.cast().backend_tag();
     }
 
     pub fn window_focused_by_keyboard(h: *CompositorHandle, key: ptypes.ViewportKey) void {
         const com = h.cast();
         if (com.input_focus_keyboard == null) {
-            com.native_events.append(
+            com.backend_events.append(
                 com.gpa,
                 .{ .keyboard_enter = .{ .viewport_key = key } },
             ) catch return;
@@ -61,10 +61,10 @@ pub const CompositorHandle = opaque {
         return h.cast().input_focus_keyboard;
     }
 
-    pub fn native_handle_from_viewport_key(h: *CompositorHandle, key: ptypes.ViewportKey) ?*anyopaque {
+    pub fn backend_handle_from_viewport_key(h: *CompositorHandle, key: ptypes.ViewportKey) ?*anyopaque {
         const com = h.cast();
         const vp = com.viewport_from_key(key) orelse return null;
-        return switch (vp.native_tag()) {
+        return switch (vp.backend_tag()) {
             .wayland => |tag| @ptrCast(tag.viewport(vp).surface),
             .win32 => |tag| @ptrCast(tag.viewport(vp).child_window_handle),
         };
@@ -97,7 +97,7 @@ pub const CompositorHandle = opaque {
         key: ptypes.ViewportKey,
     ) error{OutOfMemory}!void {
         const com = h.cast();
-        try com.native_events.append(com.gpa, .{
+        try com.backend_events.append(com.gpa, .{
             .viewport_should_close = .{ .viewport_key = key },
         });
     }
@@ -172,10 +172,10 @@ pub const CompositorHandle = opaque {
         try com.present();
 
         com.dispatch();
-        for (com.native_events.items) |event| {
-            com.event_handle_native(event);
+        for (com.backend_events.items) |event| {
+            com.event_handle_backend(event);
         }
-        com.native_events.clearRetainingCapacity();
+        com.backend_events.clearRetainingCapacity();
 
         try server.handle_events(com);
 

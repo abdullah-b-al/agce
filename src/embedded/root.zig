@@ -1,4 +1,4 @@
-pub const Native = Embedded.Native;
+pub const Backend = Embedded.Backend;
 pub const Process = @import("remote_client").Process;
 pub const RemoteClient = @import("remote_client").RemoteClient;
 pub const Size = ptypes.Size;
@@ -14,11 +14,11 @@ pub const EmbeddedHandle = opaque {
         gpa: std.mem.Allocator,
         environ_map: *const std.process.Environ.Map,
         ptr: *anyopaque,
-        native: Native,
+        backend: Backend,
         class: []const u8,
     ) !*EmbeddedHandle {
         return @ptrCast(
-            try Embedded.create(gpa, environ_map, ptr, native, class),
+            try Embedded.create(gpa, environ_map, ptr, backend, class),
         );
     }
 

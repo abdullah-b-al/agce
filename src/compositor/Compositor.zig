@@ -16,7 +16,7 @@ destroy_started: bool,
 resources: std.array_hash_map.Auto(ClientUUID, ClientResources),
 
 server_events: ServerQueue,
-native_events: std.ArrayList(EventFromNative),
+backend_events: std.ArrayList(EventFromBackend),
 
 present_queue: std.ArrayList(BufferPresent),
 
@@ -29,7 +29,7 @@ input_focus_mouse: ?ViewportKey,
 input_focus_keyboard: ?ViewportKey,
 
 pub fn create_wayland(display: *cwl.Display, args: CreateArgs) !*Compositor {
-    const com: *Compositor = try .create_undefined_native(args);
+    const com: *Compositor = try .create_undefined_backend(args);
 
     const wl: *Wayland = try .create(args.io, args.gpa, display);
     com.linux = .{ .wayland = wl };
@@ -40,7 +40,7 @@ pub fn create_wayland(display: *cwl.Display, args: CreateArgs) !*Compositor {
 }
 
 pub fn create_win32(instance: Win32.HINSTANCE, args: CreateArgs) !*Compositor {
-    const com: *Compositor = try .create_undefined_native(args);
+    const com: *Compositor = try .create_undefined_backend(args);
 
     com.win32 = try .create(com, instance);
 
@@ -55,7 +55,7 @@ pub const CreateArgs = struct {
     muxi: MuxInterface,
     socket_owner: Server.UnixSocketOwner,
 };
-fn create_undefined_native(args: CreateArgs) !*Compositor {
+fn create_undefined_backend(args: CreateArgs) !*Compositor {
     const server = try Server.create(args.io, args.environ_map, args.gpa, args.socket_owner);
     errdefer server.destroy();
 
@@ -95,7 +95,7 @@ fn create_undefined_native(args: CreateArgs) !*Compositor {
         .destroy_started = false,
 
         .server_events = .init(args.gpa),
-        .native_events = .empty,
+        .backend_events = .empty,
         .present_queue = .empty,
 
         .input_focus_mouse = null,
@@ -115,7 +115,7 @@ pub fn destroy(com: *Compositor) void {
         rs.deinit(com);
     }
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
             wl.destroy();
@@ -130,7 +130,7 @@ pub fn destroy(com: *Compositor) void {
 
     inline for (.{
         &com.resources,
-        &com.native_events,
+        &com.backend_events,
         &com.present_queue,
     }) |entry| {
         entry.deinit(com.gpa);
@@ -144,7 +144,7 @@ pub fn destroy(com: *Compositor) void {
     com.gpa.destroy(com);
 }
 
-pub fn native_tag(com: *const Compositor) NativeTag {
+pub fn backend_tag(com: *const Compositor) BackendTag {
     return switch (os) {
         .linux => switch (com.linux) {
             .wayland => .wayland,
@@ -155,7 +155,7 @@ pub fn native_tag(com: *const Compositor) NativeTag {
 }
 
 pub fn dispatch(com: *Compositor) void {
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl: *Wayland = tag.compositor(com);
             const display = wl.display;
@@ -179,7 +179,7 @@ pub fn dispatch(com: *Compositor) void {
 }
 
 pub fn flush(com: *Compositor) void {
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
 
@@ -195,7 +195,7 @@ pub fn flush(com: *Compositor) void {
 pub fn event_handle_server(com: *Compositor, event: EventFromServer) !void {
     try maybe_oom();
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
             wl.should_flush_display |= wl.should_flush(event);
@@ -227,7 +227,7 @@ pub fn event_handle_server(com: *Compositor, event: EventFromServer) !void {
     }
 }
 
-pub fn event_handle_native(com: *Compositor, event: EventFromNative) void {
+pub fn event_handle_backend(com: *Compositor, event: EventFromBackend) void {
     switch (event) {
         .viewport_should_close,
         => |args| com.viewport_should_close(args) catch |err| switch (err) {
@@ -347,7 +347,7 @@ fn viewport_destroy(com: *Compositor, key: ViewportKey) void {
     log.debug("{f} of {f} destroyed", .{ key.viewport_id, key.client_uuid });
 }
 
-fn viewport_should_close(com: *Compositor, args: @FieldType(EventFromNative, "viewport_should_close")) !void {
+fn viewport_should_close(com: *Compositor, args: @FieldType(EventFromBackend, "viewport_should_close")) !void {
     try com.server_events.ensure_unused_capacity(1);
     com.server_events.push_assume_capacity(.{
         .viewport_close = .{
@@ -426,7 +426,7 @@ fn buffer_create_cpu_inner(
 
     const size_bytes = size.width * size.height * format.bytes_per_pixel();
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
             const fd: ptypes.CpuBufferHandle =
@@ -579,7 +579,7 @@ fn buffer_create_gbm_bo_inner(com: *Compositor, args: @FieldType(EventFromServer
 fn texture_create_d3d(com: *Compositor, args: @FieldType(EventFromServer, "texture_create_d3d")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
-    const win32 = switch (com.native_tag()) {
+    const win32 = switch (com.backend_tag()) {
         .win32 => |tag| tag.compositor(com),
         else => return error.MessageUnsupportedByOS,
     };
@@ -750,7 +750,7 @@ pub fn present(com: *Compositor) error{OutOfMemory}!void {
     // FIXME: This could block forever if we wait on a
     // timeline point that never gets signaled
     while (com.present_queue.items.len > 0) {
-        switch (com.native_tag()) {
+        switch (com.backend_tag()) {
             inline else => |tag| {
                 tag.compositor(com).present(com, tag);
             },
@@ -1087,7 +1087,7 @@ pub fn viewport_pos_set(com: *Compositor, args: @FieldType(EventFromServer, "vie
     vp.clipping_rect.x = pos.x;
     vp.clipping_rect.y = pos.y;
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
             if (set_position) {
@@ -1139,7 +1139,7 @@ pub fn viewport_size_set(com: *Compositor, args: @FieldType(EventFromServer, "vi
     vp.clipping_rect.width = size.width;
     vp.clipping_rect.height = size.height;
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
             const min_size = nvp.min_source_size(window_size);
@@ -1190,7 +1190,7 @@ pub fn viewport_display_state_set(com: *Compositor, args: @FieldType(EventFromSe
 
     if (vp.state == old) return;
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
 
@@ -1324,7 +1324,7 @@ pub fn remote_viewport_create(
 pub fn cursor_shape_set_from_viewport(com: *Compositor, vp: *Viewport, viewport_key: ViewportKey) void {
     if (!std.meta.eql(com.input_focus_mouse, viewport_key)) return;
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
             const shape = Wayland.from_protocol_cursor_shape(vp.cursor_shape);
@@ -1399,7 +1399,7 @@ pub fn keyboard_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?Viewp
             },
         });
 
-        switch (com.native_tag()) {
+        switch (com.backend_tag()) {
             .wayland => {},
             .win32 => |tag| {
                 // windows requires explict focusing to receive
@@ -1413,7 +1413,7 @@ pub fn keyboard_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?Viewp
     }
 }
 
-pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromNative, "keyboard_key")) !void {
+pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromBackend, "keyboard_key")) !void {
     try com.server_events.ensure_unused_capacity(2);
 
     const key = com.input_focus_keyboard orelse return;
@@ -1430,7 +1430,7 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromNative, "keyboar
         },
     });
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
             if (wl.input_repeat_future) |*future| {
@@ -1470,17 +1470,17 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromNative, "keyboar
     }
 }
 
-pub fn keyboard_enter(com: *Compositor, args: @FieldType(EventFromNative, "keyboard_enter")) !void {
+pub fn keyboard_enter(com: *Compositor, args: @FieldType(EventFromBackend, "keyboard_enter")) !void {
     try com.server_events.ensure_unused_capacity(2);
     com.keyboard_focus_switch_assume_capacity(args.viewport_key);
 }
 
-pub fn mouse_enter(com: *Compositor, args: @FieldType(EventFromNative, "mouse_enter")) !void {
+pub fn mouse_enter(com: *Compositor, args: @FieldType(EventFromBackend, "mouse_enter")) !void {
     try com.server_events.ensure_unused_capacity(2);
     com.mouse_focus_switch_assume_capacity(args.viewport_key);
 }
 
-pub fn mouse_leave(com: *Compositor, args: @FieldType(EventFromNative, "mouse_leave")) !void {
+pub fn mouse_leave(com: *Compositor, args: @FieldType(EventFromBackend, "mouse_leave")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     com.server_events.push_assume_capacity(.{
@@ -1497,7 +1497,7 @@ pub fn mouse_leave(com: *Compositor, args: @FieldType(EventFromNative, "mouse_le
     }
 }
 
-pub fn mouse_motion(com: *Compositor, args: @FieldType(EventFromNative, "mouse_motion")) !void {
+pub fn mouse_motion(com: *Compositor, args: @FieldType(EventFromBackend, "mouse_motion")) !void {
     const key = com.input_focus_mouse orelse return;
 
     try com.server_events.ensure_unused_capacity(1);
@@ -1513,7 +1513,7 @@ pub fn mouse_motion(com: *Compositor, args: @FieldType(EventFromNative, "mouse_m
     });
 }
 
-pub fn mouse_button(com: *Compositor, args: @FieldType(EventFromNative, "mouse_button")) !void {
+pub fn mouse_button(com: *Compositor, args: @FieldType(EventFromBackend, "mouse_button")) !void {
     try com.server_events.ensure_unused_capacity(3);
 
     const key = com.input_focus_mouse orelse return;
@@ -1533,7 +1533,7 @@ pub fn mouse_button(com: *Compositor, args: @FieldType(EventFromNative, "mouse_b
     });
 }
 
-pub fn mouse_scroll(com: *Compositor, args: @FieldType(EventFromNative, "mouse_scroll")) !void {
+pub fn mouse_scroll(com: *Compositor, args: @FieldType(EventFromBackend, "mouse_scroll")) !void {
     try com.server_events.ensure_unused_capacity(1);
 
     const key = com.input_focus_mouse orelse return;
@@ -1636,7 +1636,7 @@ pub const EventFromServer = union(enum) {
     };
 };
 
-pub const EventFromNative = union(enum) {
+pub const EventFromBackend = union(enum) {
     viewport_should_close: ViewportShouldClose,
     keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
@@ -1690,13 +1690,13 @@ pub const EventFromNative = union(enum) {
     };
 };
 
-pub const NativeTag = enum {
+pub const BackendTag = enum {
     wayland,
     win32,
 
     /// Prevents compile errors of other platforms
     pub fn guard(
-        comptime tag: NativeTag,
+        comptime tag: BackendTag,
     ) if (tag.os_matches_tag()) void else noreturn {
         switch (tag) {
             .wayland => if (os != .linux) unreachable,
@@ -1705,7 +1705,7 @@ pub const NativeTag = enum {
     }
 
     pub fn compositor(
-        comptime tag: NativeTag,
+        comptime tag: BackendTag,
         com: *Compositor,
     ) if (tag.os_matches_tag()) *compositor_type(tag) else noreturn {
         tag.guard();
@@ -1716,7 +1716,7 @@ pub const NativeTag = enum {
     }
 
     pub fn viewport(
-        comptime tag: NativeTag,
+        comptime tag: BackendTag,
         vp: *Viewport,
     ) if (tag.os_matches_tag()) *viewport_type(tag) else noreturn {
         tag.guard();
@@ -1727,45 +1727,45 @@ pub const NativeTag = enum {
     }
 
     pub fn buffer(
-        comptime tag: NativeTag,
+        comptime tag: BackendTag,
         b: *Buffer,
     ) if (tag.os_matches_tag()) *buffer_type(tag) else noreturn {
         tag.guard();
         return switch (tag) {
-            .wayland => &b.native.wayland,
-            .win32 => &b.native,
+            .wayland => &b.backend.wayland,
+            .win32 => &b.backend,
         };
     }
 
-    fn compositor_type(comptime tag: NativeTag) type {
+    fn compositor_type(comptime tag: BackendTag) type {
         return switch (tag) {
             .wayland => Wayland,
             .win32 => Win32,
         };
     }
 
-    fn window_type(comptime tag: NativeTag) type {
+    fn window_type(comptime tag: BackendTag) type {
         return switch (tag) {
             .wayland => Wayland.Window,
             .win32 => Win32.Window,
         };
     }
 
-    fn viewport_type(comptime tag: NativeTag) type {
+    fn viewport_type(comptime tag: BackendTag) type {
         return switch (tag) {
             .wayland => Wayland.Viewport,
             .win32 => Win32.Viewport,
         };
     }
 
-    fn buffer_type(comptime tag: NativeTag) type {
+    fn buffer_type(comptime tag: BackendTag) type {
         return switch (tag) {
             .wayland => Wayland.Buffer,
             .win32 => Win32.Buffer,
         };
     }
 
-    fn os_matches_tag(comptime tag: NativeTag) bool {
+    fn os_matches_tag(comptime tag: BackendTag) bool {
         return switch (tag) {
             .wayland => os == .linux,
             .win32 => os == .windows,
@@ -1831,7 +1831,7 @@ pub const BufferPresent = struct {
 };
 
 pub const WindowHandle = opaque {
-    pub fn cast(handle: *WindowHandle, comptime tag: NativeTag) Type(tag) {
+    pub fn cast(handle: *WindowHandle, comptime tag: BackendTag) Type(tag) {
         switch (tag) {
             .wayland => {
                 comptime std.debug.assert(os == .linux);
@@ -1844,7 +1844,7 @@ pub const WindowHandle = opaque {
         }
     }
 
-    fn Type(comptime tag: NativeTag) type {
+    fn Type(comptime tag: BackendTag) type {
         return switch (tag) {
             .wayland => *cwl.Surface,
             .win32 => win32_foundation.HWND,

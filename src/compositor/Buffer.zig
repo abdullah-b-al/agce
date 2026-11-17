@@ -1,13 +1,13 @@
 pub const Buffer = @This();
 
-native: Native,
+backend: Backend,
 
-pub fn init(native: Native) Buffer {
-    return .{ .native = native };
+pub fn init(backend: Backend) Buffer {
+    return .{ .backend = backend };
 }
 
 pub fn deinit(b: *Buffer) void {
-    b.native.deinit();
+    b.backend.deinit();
 }
 
 pub fn init_wayland(b: Wayland.Buffer) Buffer {
@@ -19,7 +19,7 @@ pub fn init_win32(b: Win32.Buffer) Buffer {
 }
 
 pub fn format(b: Buffer) BufferFormat {
-    return b.native.format();
+    return b.backend.format();
 }
 
 pub const Linux = union(enum) {
@@ -32,7 +32,7 @@ pub const Linux = union(enum) {
     }
 };
 
-pub const Native = switch (os) {
+pub const Backend = switch (os) {
     .linux => Linux,
     .windows => Win32.Buffer,
     else => unreachable,

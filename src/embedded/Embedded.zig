@@ -22,7 +22,7 @@ pub fn create(
     gpa: std.mem.Allocator,
     environ_map: *const std.process.Environ.Map,
     ptr: *anyopaque,
-    native: Native,
+    backend: Backend,
     class: []const u8,
 ) !*Embedded {
     const em = try gpa.create(Embedded);
@@ -57,7 +57,7 @@ pub fn create(
         .socket_owner = .{ .embedded = class },
     };
 
-    const com: *compositor.CompositorHandle = blk: switch (native) {
+    const com: *compositor.CompositorHandle = blk: switch (backend) {
         .wayland_display => {
             if (!constants.os_supports_wayland) return error.OsDoesNotSupportWayland;
             break :blk try .create_wayland(@ptrCast(ptr), create_args);
@@ -316,7 +316,7 @@ fn tick_thread(com: *compositor.CompositorHandle, exit: *Io.Event) void {
     }
 }
 
-pub const Native = enum {
+pub const Backend = enum {
     wayland_display,
     win32_instance,
 };

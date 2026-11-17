@@ -65,7 +65,7 @@ pub fn deinit(rs: *ClientResources, com: *Compositor) void {
 pub fn buffer_destroy(rs: *ClientResources, com: *Compositor, id: BufferID) void {
     const buffer = rs.buffers.getPtr(id) orelse return;
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const b = tag.buffer(buffer);
             if (rs.gbm_bos.getPtr(id)) |bo| {

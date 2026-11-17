@@ -101,20 +101,20 @@ pub fn destroy(wl: *Wayland) void {
     wl.gpa.destroy(wl);
 }
 
-pub fn present(wl: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+pub fn present(wl: *Wayland, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     std.debug.assert(com.server_events.capacity >= com.present_queue.items.len);
 
-    wl.present_queue_check_ready_to_copy(com, native_tag);
-    wl.present_queue_copy_if_ready_and_present(com, native_tag);
+    wl.present_queue_check_ready_to_copy(com, backend_tag);
+    wl.present_queue_copy_if_ready_and_present(com, backend_tag);
 }
 
-fn present_queue_check_ready_to_copy(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+fn present_queue_check_ready_to_copy(_: *Wayland, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state == .new);
 
         const rs = com.resources.getPtr(item.client_uuid).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
-        const nb = native_tag.buffer(buffer);
+        const nb = backend_tag.buffer(buffer);
 
         switch (nb.*) {
             .cpu => {
@@ -132,7 +132,7 @@ fn present_queue_check_ready_to_copy(_: *Wayland, com: *Compositor, comptime nat
     }
 }
 
-fn present_queue_copy_if_ready_and_present(_: *Wayland, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+fn present_queue_copy_if_ready_and_present(_: *Wayland, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_copy) continue;
 
@@ -140,8 +140,8 @@ fn present_queue_copy_if_ready_and_present(_: *Wayland, com: *Compositor, compti
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
-        const nvp = native_tag.viewport(vp);
-        const b = &buffer.native.wayland;
+        const nvp = backend_tag.viewport(vp);
+        const b = &buffer.backend.wayland;
 
         const should_be_hidden = vp.should_be_hidden(com);
 
@@ -388,7 +388,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Composit
             const control =
                 mods & c_linux.xkb_keymap_mod_get_mask(wl.xkb_keymap, c_linux.XKB_MOD_NAME_CTRL) != 0;
 
-            com.native_events.append(com.gpa, .{
+            com.backend_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = key,
                     .state = state,
@@ -404,7 +404,7 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Composit
 
 fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compositor) void {
     const wl = com.linux.wayland;
-    const ws_event: Compositor.EventFromNative = blk: switch (event) {
+    const ws_event: Compositor.EventFromBackend = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse return;
 
@@ -417,7 +417,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
                     wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
                 }
 
-                break :blk @unionInit(Compositor.EventFromNative, "mouse_" ++ @tagName(tag), .{
+                break :blk @unionInit(Compositor.EventFromBackend, "mouse_" ++ @tagName(tag), .{
                     .viewport_key = key,
                 });
             } else {
@@ -480,7 +480,7 @@ fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compo
         },
     };
 
-    com.native_events.append(com.gpa, ws_event) catch return;
+    com.backend_events.append(com.gpa, ws_event) catch return;
 }
 
 pub fn window_id_from_toplevel(com: *const Compositor, tl: *xdg.Toplevel) WindowID {
@@ -775,7 +775,7 @@ pub fn input_repeat(com: *Compositor, ms: i32, key: pinput.Key, modifiers: pinpu
     // FIXME: This is not thread safe
     // FIXME: This might end up sending stale data.
     // Add some checks to make sure that doesn't happen
-    com.native_events.append(com.gpa, .{
+    com.backend_events.append(com.gpa, .{
         .keyboard_key = .{
             .key = key,
             .state = .repeat,
@@ -930,11 +930,11 @@ pub const RegisterGpuBuffer = struct {
                     data.buffer_listener,
                 );
 
-                const native: *Buffer = &buffer.native.wayland;
-                std.debug.assert(native.* == .gpu);
-                std.debug.assert(native.gpu.wl_buffer == .pending);
+                const backend: *Buffer = &buffer.backend.wayland;
+                std.debug.assert(backend.* == .gpu);
+                std.debug.assert(backend.gpu.wl_buffer == .pending);
 
-                buffer.native.wayland.gpu.wl_buffer = .{ .ptr = result.buffer };
+                buffer.backend.wayland.gpu.wl_buffer = .{ .ptr = result.buffer };
 
                 log.debug("GPU buffer created {f} for {f}", .{ data.buffer_id, data.client_uuid });
 
@@ -986,7 +986,7 @@ pub const BufferListener = struct {
 
                 const entry = rs.buffers_commited.fetchSwapRemove(key.buffer_id) orelse return;
                 const buffer = rs.buffers.getPtr(key.buffer_id) orelse return;
-                const nb = Compositor.NativeTag.wayland.buffer(buffer);
+                const nb = Compositor.BackendTag.wayland.buffer(buffer);
 
                 switch (nb.*) {
                     .cpu => {

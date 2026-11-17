@@ -81,7 +81,7 @@ pub fn window_proc(
         win32_win.WM_SETFOCUS => {
             // Never focus the window, reset focus to the viewport.
             if (mux.compositor.key_of_focused_viewport_keyboard()) |focused| {
-                const child_handle = mux.compositor.native_handle_from_viewport_key(focused).?;
+                const child_handle = mux.compositor.backend_handle_from_viewport_key(focused).?;
                 _ = win32_kbm.SetFocus(@ptrCast(child_handle));
             }
 

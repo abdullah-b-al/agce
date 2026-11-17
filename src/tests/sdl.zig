@@ -29,7 +29,7 @@ pub fn main(init: std.process.Init) !void {
         init.gpa,
         init.environ_map,
         display,
-        embedded_native_from_driver(),
+        embedded_backend_from_driver(),
         "sdl_test",
     );
     defer eh.destroy();
@@ -132,7 +132,7 @@ fn handle_event(
 fn window_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     const pid = sdl.SDL_GetWindowProperties(window);
 
-    const pointer_name = switch (embedded_native_from_driver()) {
+    const pointer_name = switch (embedded_backend_from_driver()) {
         .wayland_display => sdl.SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
         .win32_instance => sdl.SDL_PROP_WINDOW_WIN32_HWND_POINTER,
     };
@@ -145,7 +145,7 @@ fn window_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
 fn display_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     const pid = sdl.SDL_GetWindowProperties(window);
 
-    const pointer_name = switch (embedded_native_from_driver()) {
+    const pointer_name = switch (embedded_backend_from_driver()) {
         .wayland_display => sdl.SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER,
         .win32_instance => sdl.SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER,
     };
@@ -156,7 +156,7 @@ fn display_handle_from_sdl_window(window: *sdl.SDL_Window) ?*anyopaque {
     return ptr;
 }
 
-fn embedded_native_from_driver() embedded.Native {
+fn embedded_backend_from_driver() embedded.Backend {
     const driver_name = sdl.SDL_GetCurrentVideoDriver();
     const driver = driver_name[0..std.mem.len(driver_name)];
     if (std.mem.eql(u8, driver, "wayland"))

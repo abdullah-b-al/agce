@@ -51,7 +51,7 @@ pub fn create(args: CreateArgs) CreateError!*Viewport {
         .memory_reserve_for_destroy = args.reserve,
     };
 
-    switch (args.com.native_tag()) {
+    switch (args.com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(args.com);
 
@@ -83,7 +83,7 @@ pub fn destroy(vp: *Viewport, gpa: std.mem.Allocator) void {
 
     vp.remote_viewports.deinit(gpa);
 
-    switch (vp.native_tag()) {
+    switch (vp.backend_tag()) {
         .wayland => |tag| {
             const nvp = tag.viewport(vp);
             nvp.deinit();
@@ -106,7 +106,7 @@ pub fn remote_viewport_remove(vp: *Viewport, key: ViewportKey) void {
     }
 }
 
-pub fn native_tag(vp: *Viewport) Compositor.NativeTag {
+pub fn backend_tag(vp: *Viewport) Compositor.BackendTag {
     return switch (os) {
         .linux => switch (vp.linux) {
             .wayland => .wayland,

@@ -104,10 +104,10 @@ pub fn create(
 
 pub fn destroy(mux: *Mux) void {
     mux.destroy_started = true;
-    const native_tag = mux.compositor.native_tag();
+    const backend_tag = mux.compositor.backend_tag();
     mux.compositor.destroy();
 
-    switch (native_tag) {
+    switch (backend_tag) {
         .wayland => |tag| {
             tag.guard();
             mux.wayland_objects.display.disconnect();
@@ -150,7 +150,7 @@ pub fn tick(mux: *Mux, timeout: std.Io.Timeout) !std.Io.Timeout {
 }
 
 pub fn dispatch(mux: *Mux) void {
-    switch (mux.compositor.native_tag()) {
+    switch (mux.compositor.backend_tag()) {
         .wayland => |tag| {
             tag.guard();
 
@@ -196,7 +196,7 @@ pub fn dispatch(mux: *Mux) void {
 }
 
 pub fn flush(mux: *Mux) void {
-    switch (mux.compositor.native_tag()) {
+    switch (mux.compositor.backend_tag()) {
         .wayland => |tag| {
             tag.guard();
             _ = mux.wayland_objects.display.flush();
@@ -221,7 +221,7 @@ fn window_handle_for_viewport(ptr: *anyopaque, key: ptypes.ViewportKey, size: pt
 
     mux.windows.putAssumeCapacityNoClobber(id, win);
 
-    switch (win.native_tag()) {
+    switch (win.backend_tag()) {
         .wayland => |tag| {
             tag.guard();
             win.linux.wayland.surface.commit();
@@ -304,7 +304,7 @@ pub const Window = struct {
             .linux = undefined,
         };
 
-        switch (mux.compositor.native_tag()) {
+        switch (mux.compositor.backend_tag()) {
             .wayland => |tag| {
                 tag.guard();
                 win.linux = .{ .wayland = try .init(mux, size) };
@@ -327,7 +327,7 @@ pub const Window = struct {
     }
 
     pub fn handle(win: *Window, mux: *Mux) *Compositor.WindowHandle {
-        switch (mux.compositor.native_tag()) {
+        switch (mux.compositor.backend_tag()) {
             .wayland => |tag| {
                 tag.guard();
                 return @ptrCast(win.linux.wayland.surface);
@@ -340,7 +340,7 @@ pub const Window = struct {
     }
 
     pub fn get_size(win: *Window) ptypes.Size {
-        return switch (win.native_tag()) {
+        return switch (win.backend_tag()) {
             .wayland => |tag| {
                 tag.guard();
                 return win.linux.wayland.buffer.size;
@@ -360,7 +360,7 @@ pub const Window = struct {
         };
     }
 
-    pub fn native_tag(win: *const Window) Compositor.NativeTag {
+    pub fn backend_tag(win: *const Window) Compositor.BackendTag {
         return switch (os) {
             .linux => switch (win.linux) {
                 .wayland => .wayland,

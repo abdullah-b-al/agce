@@ -5,7 +5,7 @@ pub fn poll(
 ) !Poll {
     std.debug.assert(timeout != .deadline);
 
-    const pollable_len_add: usize = switch (com.native_tag()) {
+    const pollable_len_add: usize = switch (com.backend_tag()) {
         .wayland => 2, // +2 for the display fd and server socket
         .win32 => 1, // +1 only for the server socket
     };
@@ -14,7 +14,7 @@ pub fn poll(
     var pollable: std.MultiArrayList(Pollable) = try .initCapacity(com.gpa, pollable_len);
     defer pollable.deinit(com.gpa);
 
-    switch (com.native_tag()) {
+    switch (com.backend_tag()) {
         .wayland => |tag| {
             const wl = tag.compositor(com);
             const display_fd = wl.display.getFd();
@@ -49,7 +49,7 @@ pub fn poll(
         const event = p.event(); // Do NOT call more than once
         switch (p.source) {
             .display => {
-                std.debug.assert(com.native_tag() != .win32);
+                std.debug.assert(com.backend_tag() != .win32);
                 dispatch = event == .read;
             },
             .server => accept = event == .read,

@@ -84,7 +84,7 @@ fn viewport_proc(
             return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
         },
         win32_win.WM_CLOSE => {
-            com.native_events.append(com.gpa, .{
+            com.backend_events.append(com.gpa, .{
                 .viewport_should_close = .{ .viewport_key = vp_key },
             }) catch return 0;
             return 0;
@@ -98,7 +98,7 @@ fn viewport_proc(
             const flags: KeyDownLParam = .from_lparam(msg, lparam);
 
             const modifiers = get_modifires();
-            com.native_events.append(com.gpa, .{
+            com.backend_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = if (flags.previous_state == 1) .repeat else .pressed,
@@ -113,7 +113,7 @@ fn viewport_proc(
             const truncate: @typeInfo(kbm.VIRTUAL_KEY).@"enum".tag_type = @truncate(wparam);
             const key: kbm.VIRTUAL_KEY = @enumFromInt(truncate);
             const pkey = to_protocol_key(key) orelse return 0;
-            com.native_events.append(com.gpa, .{
+            com.backend_events.append(com.gpa, .{
                 .keyboard_key = .{
                     .key = pkey,
                     .state = .released,
@@ -133,7 +133,7 @@ fn viewport_proc(
         win32_win.WM_RBUTTONDOWN,
         win32_win.WM_RBUTTONUP,
         => |tag| {
-            com.native_events.append(com.gpa, .{
+            com.backend_events.append(com.gpa, .{
                 .mouse_enter = .{ .viewport_key = vp_key },
             }) catch return 0;
 
@@ -151,7 +151,7 @@ fn viewport_proc(
                 }
             }
 
-            const mouse_event: Compositor.EventFromNative = blk: switch (tag) {
+            const mouse_event: Compositor.EventFromBackend = blk: switch (tag) {
                 win32_win.WM_MOUSEMOVE => {
                     const x: i32 = @truncate(lparam & 0xFFFF);
                     const y: i32 = @truncate((lparam >> 16) & 0xFFFF);
@@ -175,14 +175,14 @@ fn viewport_proc(
                 else => comptime unreachable,
             };
 
-            com.native_events.append(com.gpa, mouse_event) catch return 0;
+            com.backend_events.append(com.gpa, mouse_event) catch return 0;
 
             return 0;
         },
 
         win32_controls.WM_MOUSELEAVE => {
             vp.win32.mouse_tracking = false;
-            com.native_events.append(com.gpa, .{
+            com.backend_events.append(com.gpa, .{
                 .mouse_leave = .{ .viewport_key = vp_key },
             }) catch return 0;
             return 0;
@@ -194,16 +194,16 @@ fn viewport_proc(
     return win32_win.DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
-pub fn present(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+pub fn present(win32: *Win32, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     comptime {
-        std.debug.assert(native_tag == .win32);
+        std.debug.assert(backend_tag == .win32);
     }
 
     std.debug.assert(com.server_events.capacity >= com.present_queue.items.len);
 
-    win32.present_queue_check_ready_to_copy(com, native_tag);
-    win32.present_queue_copy_if_ready(com, native_tag);
-    win32.present_queue_present_if_ready(com, native_tag);
+    win32.present_queue_check_ready_to_copy(com, backend_tag);
+    win32.present_queue_copy_if_ready(com, backend_tag);
+    win32.present_queue_present_if_ready(com, backend_tag);
 
     for (com.present_queue.items) |item| {
         if (item.state == .presented) {
@@ -220,13 +220,13 @@ pub fn present(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.
     }
 }
 
-fn present_queue_check_ready_to_copy(_: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+fn present_queue_check_ready_to_copy(_: *Win32, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     for (com.present_queue.items) |*item| {
         std.debug.assert(item.state != .presented);
 
         const rs = com.resources.getPtr(item.client_uuid).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
-        const nb = native_tag.buffer(buffer);
+        const nb = backend_tag.buffer(buffer);
 
         switch (nb.*) {
             .cpu => item.state.advance(),
@@ -240,15 +240,15 @@ fn present_queue_check_ready_to_copy(_: *Win32, com: *Compositor, comptime nativ
     }
 }
 
-fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_copy) continue;
 
         const rs = com.resources.getPtr(item.client_uuid).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
         const vp = rs.viewports.get(item.viewport_id).?;
-        const nvp = native_tag.viewport(vp);
-        const nb = native_tag.buffer(buffer);
+        const nvp = backend_tag.viewport(vp);
+        const nb = backend_tag.buffer(buffer);
 
         switch (nb.*) {
             .cpu => |*cpu| {
@@ -294,7 +294,7 @@ fn present_queue_copy_if_ready(win32: *Win32, com: *Compositor, comptime native_
     }
 }
 
-fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime native_tag: Compositor.NativeTag) void {
+fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime backend_tag: Compositor.BackendTag) void {
     for (com.present_queue.items) |*item| {
         if (item.state != .ready_to_present) continue;
 
@@ -302,8 +302,8 @@ fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime nati
         const vp = rs.viewports.get(item.viewport_id).?;
         const buffer = rs.buffers.getPtr(item.buffer_id).?;
 
-        const nvp = native_tag.viewport(vp);
-        const nb = native_tag.buffer(buffer);
+        const nvp = backend_tag.viewport(vp);
+        const nb = backend_tag.buffer(buffer);
 
         switch (nb.*) {
             .cpu => {},
