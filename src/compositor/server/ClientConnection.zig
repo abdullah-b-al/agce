@@ -436,7 +436,7 @@ fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
 pub const CloseError =
     zio.ev.NetRecv.Error ||
     Server.HandleMessageFromUnknownError ||
-    error{ FailedToSendHandle, FailedToSendFds, FailedToCreateWin32SocketEvent };
+    error{ FailedToSendHandle, FailedToSendFds };
 
 const std = @import("std");
 const Io = std.Io;

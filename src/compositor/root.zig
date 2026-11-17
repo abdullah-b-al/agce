@@ -156,7 +156,7 @@ pub const CompositorHandle = opaque {
                 error.InvalidPosition,
                 error.ViewportHasNoWindow,
                 => {
-                    log.err("event_handle {}", .{err});
+                    log.err("event_handle_server() {}", .{err});
                 },
             };
         }
@@ -169,7 +169,27 @@ pub const CompositorHandle = opaque {
         }
         com.native_events.clearRetainingCapacity();
 
-        server.events_handle(com);
+        while (com.server_events.peek()) |node| {
+            server.handle_event(node.event) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => |e| {
+                        return e;
+                    },
+
+                    // TODO: Do not close the client when sending handles fails
+                    error.FailedToSendFds,
+                    error.FailedToSendHandle,
+                    error.ConnectionClosed,
+                    => |e| {
+                        server.mark_for_closing_client_uuid_with(node.event.client_uuid(), e);
+                    },
+                }
+            };
+
+            const popped = com.server_events.pop().?;
+            std.debug.assert(popped == node);
+            com.server_events.destroy(node);
+        }
 
         if (poll_result.accept) {
             server.accept() catch |err| {

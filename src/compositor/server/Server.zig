@@ -224,33 +224,6 @@ fn handle_message(server: *Server, message: ReceivedMessage) void {
     }
 }
 
-pub fn events_handle(server: *Server, com: *Compositor) void {
-    while (com.server_events.pop()) |node| {
-        defer com.server_events.destroy(node);
-
-        const event = node.event;
-        server.handle_event(event) catch |err| {
-            switch (event) {
-                inline else => |v| {
-                    switch (err) {
-                        error.OutOfMemory => {
-                            log.err("events_handle {}", .{err});
-                        },
-
-                        error.FailedToCreateWin32SocketEvent,
-                        error.FailedToSendFds,
-                        error.FailedToSendHandle,
-                        error.ConnectionClosed,
-                        => |mark| {
-                            server.mark_for_closing_remote_client_with(v.client_uuid, mark);
-                        },
-                    }
-                },
-            }
-        };
-    }
-}
-
 pub fn handle_event(
     server: *Server,
     event: Event,
@@ -259,8 +232,9 @@ pub fn handle_event(
     FailedToSendFds,
     FailedToSendHandle,
     ConnectionClosed,
-    FailedToCreateWin32SocketEvent,
 }!void {
+    try maybe_oom();
+
     switch (event) {
         .buffer_created_cpu => |e| {
             defer if (constants.os_supports_fd and e.payload == .success) {
@@ -530,6 +504,14 @@ fn mark_for_closing_client_with(server: *Server, index: usize, err: ClientConnec
     client.connection.close_with_error = err;
 }
 
+pub fn mark_for_closing_client_uuid_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
+    const client =
+        server.clients.get_remote(id) orelse
+        server.clients.get_local(id) orelse
+        return;
+    client.connection.close_with_error = err;
+}
+
 fn mark_for_closing_remote_client_with(server: *Server, id: ClientUUID, err: ClientConnection.CloseError) void {
     const client = server.clients.get_remote(id) orelse return;
     client.connection.close_with_error = err;
@@ -665,6 +647,12 @@ pub const Event = union(enum) {
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try utils.format_union(self, writer);
+    }
+
+    pub fn client_uuid(self: Event) ClientUUID {
+        return switch (self) {
+            inline else => |v| v.client_uuid,
+        };
     }
 };
 

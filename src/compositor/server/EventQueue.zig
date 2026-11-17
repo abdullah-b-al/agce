@@ -71,6 +71,12 @@ pub fn pop(q: *EventQueue) ?*Node {
     return ptr;
 }
 
+pub fn peek(q: *EventQueue) ?*Node {
+    const node = q.list.first orelse return null;
+    const ptr: *Node = @alignCast(@fieldParentPtr("node", node));
+    return ptr;
+}
+
 pub const Node = struct {
     event: Event,
     node: std.DoublyLinkedList.Node,
