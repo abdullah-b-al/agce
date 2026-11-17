@@ -431,6 +431,7 @@ pub const ViewportHandle = opaque {
         std.debug.assert(vp.current_buffer != null);
 
         const buffer = vp.buffers.d11.getPtr(vp.current_buffer.?).?;
+        // TODO: is this really the right time to signal ?
         const hr = d11_device.context4.Signal(
             buffer.acquire.fence.acquire,
             @intFromEnum(buffer.acquire.point),
@@ -449,7 +450,7 @@ pub const ViewportHandle = opaque {
         std.debug.assert(vp.renderer == .d11);
         std.debug.assert(vp.current_buffer != null);
 
-        const buffer = vp.renderer.d11.Buffers.get(vp.current_buffer.?).?;
+        const buffer = vp.buffers.d11.get(vp.current_buffer.?).?;
         return buffer.rtv;
     }
 
