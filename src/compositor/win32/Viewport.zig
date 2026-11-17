@@ -8,6 +8,9 @@ swap_chain: ?*dxgi.IDXGISwapChain1,
 
 mouse_tracking: bool = false,
 
+wm_char_low_surrogate: ?u16,
+wm_char_high_surrogate: ?u16,
+
 pub const InitError = error{
     FailedToCreateChildWindow,
     FailedToCreateDXGISwapChain1,
@@ -81,6 +84,8 @@ pub fn init(
         .child_window_handle = handle,
         .parent_tag = parent,
         .swap_chain = swap_chain,
+        .wm_char_low_surrogate = null,
+        .wm_char_high_surrogate = null,
     };
 }
 

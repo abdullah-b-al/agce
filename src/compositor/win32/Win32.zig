@@ -85,6 +85,7 @@ fn viewport_proc(
         // Child window has been removed. Pass through msg
         return win32_win.DefWindowProcW(hwnd, msg, wparam, lparam);
     };
+    const bvp = &vp.win32;
 
     switch (msg) {
         win32_win.WM_PAINT => {
@@ -192,6 +193,41 @@ fn viewport_proc(
             com.backend_events.append(com.gpa, .{
                 .mouse_leave = .{ .viewport_key = vp_key },
             }) catch return 0;
+            return 0;
+        },
+        win32_win.WM_CHAR => {
+            const char: u16 = @intCast(wparam);
+            if (!std.unicode.isSurrogateCodepoint(char)) {
+                bvp.wm_char_low_surrogate = null;
+                bvp.wm_char_high_surrogate = null;
+
+                com.backend_events.append(com.gpa, .{
+                    .keyboard_char = .{ .char = char },
+                }) catch return 0;
+            } else if (std.unicode.utf16IsHighSurrogate(char)) {
+                bvp.wm_char_high_surrogate = char;
+            } else if (std.unicode.utf16IsLowSurrogate(char)) {
+                bvp.wm_char_low_surrogate = char;
+            }
+
+            if (bvp.wm_char_high_surrogate != null and bvp.wm_char_low_surrogate != null) {
+                defer {
+                    bvp.wm_char_high_surrogate = null;
+                    bvp.wm_char_low_surrogate = null;
+                }
+
+                const utf32 = std.unicode.utf16DecodeSurrogatePair(&.{
+                    bvp.wm_char_high_surrogate.?,
+                    bvp.wm_char_low_surrogate.?,
+                }) catch |err| switch (err) {
+                    error.ExpectedSecondSurrogateHalf => unreachable,
+                };
+
+                com.backend_events.append(com.gpa, .{
+                    .keyboard_char = .{ .char = utf32 },
+                }) catch return 0;
+            }
+
             return 0;
         },
 

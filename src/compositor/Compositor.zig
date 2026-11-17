@@ -243,6 +243,10 @@ pub fn event_handle_backend(com: *Compositor, event: EventFromBackend) void {
         => |args| com.keyboard_key(args) catch |err| switch (err) {
             error.OutOfMemory => {},
         },
+        .keyboard_char,
+        => |args| com.keyboard_char(args) catch |err| switch (err) {
+            error.OutOfMemory => {},
+        },
         .mouse_enter,
         => |args| com.mouse_enter(args) catch |err| switch (err) {
             error.OutOfMemory => {},
@@ -1415,6 +1419,11 @@ pub fn keyboard_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?Viewp
     }
 }
 
+pub fn keyboard_enter(com: *Compositor, args: @FieldType(EventFromBackend, "keyboard_enter")) !void {
+    try com.server_events.ensure_unused_capacity(2);
+    com.keyboard_focus_switch_assume_capacity(args.viewport_key);
+}
+
 pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromBackend, "keyboard_key")) !void {
     try com.server_events.ensure_unused_capacity(2);
 
@@ -1472,9 +1481,17 @@ pub fn keyboard_key(com: *Compositor, args: @FieldType(EventFromBackend, "keyboa
     }
 }
 
-pub fn keyboard_enter(com: *Compositor, args: @FieldType(EventFromBackend, "keyboard_enter")) !void {
-    try com.server_events.ensure_unused_capacity(2);
-    com.keyboard_focus_switch_assume_capacity(args.viewport_key);
+pub fn keyboard_char(com: *Compositor, args: @FieldType(EventFromBackend, "keyboard_char")) !void {
+    try com.server_events.ensure_unused_capacity(1);
+
+    const key = com.input_focus_keyboard orelse return;
+
+    com.server_events.push_assume_capacity(.{
+        .keyboard_char = .{
+            .client_uuid = key.client_uuid,
+            .payload = .{ .viewport_id = key.viewport_id, .char = args.char },
+        },
+    });
 }
 
 pub fn mouse_enter(com: *Compositor, args: @FieldType(EventFromBackend, "mouse_enter")) !void {
@@ -1640,8 +1657,9 @@ pub const EventFromServer = union(enum) {
 
 pub const EventFromBackend = union(enum) {
     viewport_should_close: ViewportShouldClose,
-    keyboard_key: KeyboardKey,
     keyboard_enter: KeyboardEnter,
+    keyboard_key: KeyboardKey,
+    keyboard_char: KeyboardChar,
 
     mouse_enter: MouseEnter,
     mouse_leave: MouseLeave,
