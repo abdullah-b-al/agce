@@ -29,6 +29,8 @@ pending_buffers_cpu: std.array_hash_map.Auto(ptypes.RequestID, BufferCreatedCpu)
 pending_buffers_gbm_bo: std.array_hash_map.Auto(ptypes.RequestID, BufferCreatedGbmBo),
 pending_textures_d3d: std.array_hash_map.Auto(ptypes.RequestID, TextureCreatedD3D),
 
+cursor_shape: ptypes.CursorShape,
+
 env: Env,
 
 read_future: Io.Future(void),
@@ -99,6 +101,7 @@ pub fn init(
         .pending_buffers_gbm_bo = .empty,
         .pending_textures_d3d = .empty,
 
+        .cursor_shape = .default,
         .env = env,
         .read_future = future,
     };

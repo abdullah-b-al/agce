@@ -207,10 +207,14 @@ pub const ClientHandle = opaque {
     pub fn cursor_shape_set(handle: *ClientHandle, shape: CursorShape) !void {
         const client = handle.cast();
 
-        try client.connection.send_cursor_shape_set(
-            client.io,
-            .{ .shape = shape },
-        );
+        if (shape != client.cursor_shape) {
+            try client.connection.send_cursor_shape_set(
+                client.io,
+                .{ .shape = shape },
+            );
+        }
+
+        client.cursor_shape = shape;
     }
 
     pub fn d11_device(handle: *ClientHandle) *d11.ID3D11Device {
