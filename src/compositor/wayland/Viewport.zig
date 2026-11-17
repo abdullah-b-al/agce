@@ -4,7 +4,6 @@ base: *const Compositor.Viewport,
 
 refresh_cycle: u32,
 surface: *cwl.Surface,
-pointer: Pointer,
 subsurface: Subsurface,
 viewport: *wp.Viewport,
 
@@ -46,7 +45,6 @@ pub fn init(
     return .{
         .base = base,
         .surface = surface,
-        .pointer = .init,
         .subsurface = .init(subsurface),
         .viewport = viewport,
         .refresh_cycle = 0,
@@ -101,45 +99,6 @@ pub fn min_source_size_with_buffer(vp: *const Viewport, window_size: ptypes.Size
         ),
     };
 }
-
-pub const Pointer = struct {
-    pointer: ?*cwl.Pointer,
-    shaper: ?*wp.CursorShapeDeviceV1,
-    enter_serial: ?u32,
-
-    pub const init: Pointer = .{ .pointer = null, .shaper = null, .enter_serial = null };
-
-    pub fn on_surface_enter(
-        p: *Pointer,
-        cursor_manager: *wp.CursorShapeManagerV1,
-        wl_pointer: *cwl.Pointer,
-        enter_serial: u32,
-    ) void {
-        if (p.pointer != wl_pointer) {
-            p.pointer = null;
-
-            if (p.shaper) |shaper| {
-                shaper.destroy();
-                p.shaper = null;
-            }
-        }
-
-        p.pointer = wl_pointer;
-
-        if (p.shaper == null) {
-            p.shaper = cursor_manager.getPointer(wl_pointer) catch null;
-        }
-
-        p.enter_serial = enter_serial;
-    }
-
-    pub fn set_shape(p: *Pointer, shape: wp.CursorShapeDeviceV1.Shape) void {
-        if (p.shaper) |shaper| {
-            const serial = p.enter_serial orelse return;
-            shaper.setShape(serial, shape);
-        }
-    }
-};
 
 pub const Subsurface = struct {
     subsurface: *cwl.Subsurface,

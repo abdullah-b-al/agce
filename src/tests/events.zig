@@ -227,7 +227,7 @@ pub fn events_cursor_shape(init: std.process.Init) !void {
         while (iter.next()) |e| {
             try context.showText(@tagName(e), 0, y);
             if (mouse_y >= y and mouse_y <= y + line_size) {
-                try handle.cursor_shape_set(vp.id(), e);
+                try handle.cursor_shape_set(e);
                 if (current_cursor == null) {
                     hover_time = .now(init.io, .awake);
                     current_cursor = e;

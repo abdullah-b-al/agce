@@ -14,6 +14,8 @@ viewports: std.array_hash_map.Auto(ViewportID, *Viewport),
 viewports_pending: std.array_hash_map.Auto(ViewportID, void),
 remote_viewports_pending: std.array_hash_map.Auto(RemoteViewportID, RemoteViewportPending),
 
+cursor_shape: ptypes.CursorShape,
+
 gbm_bos: std.array_hash_map.Auto(BufferID, GbmBo),
 
 pub fn init(id: ClientUUID) ClientResources {
@@ -27,6 +29,7 @@ pub fn init(id: ClientUUID) ClientResources {
         .viewports = .empty,
         .viewports_pending = .empty,
         .remote_viewports_pending = .empty,
+        .cursor_shape = .default,
         .gbm_bos = .empty,
     };
 }

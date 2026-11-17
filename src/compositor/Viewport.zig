@@ -9,7 +9,6 @@ parent_key: ?ViewportKey,
 remote_viewports: std.ArrayList(ViewportKey),
 format: ptypes.BufferFormat,
 buffer_type: ptypes.BufferType,
-cursor_shape: ptypes.CursorShape,
 
 win32: if (os == .windows) Win32.Viewport else void,
 linux: if (os == .linux) Linux else void,
@@ -43,7 +42,6 @@ pub fn create(args: CreateArgs) CreateError!*Viewport {
         .remote_viewports = .empty,
         .format = args.format,
         .buffer_type = args.buffer_type,
-        .cursor_shape = .default,
 
         .win32 = undefined,
         .linux = undefined,

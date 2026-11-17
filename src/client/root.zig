@@ -204,12 +204,12 @@ pub const ClientHandle = opaque {
         );
     }
 
-    pub fn cursor_shape_set(handle: *ClientHandle, viewport_id: ViewportID, shape: CursorShape) !void {
+    pub fn cursor_shape_set(handle: *ClientHandle, shape: CursorShape) !void {
         const client = handle.cast();
 
         try client.connection.send_cursor_shape_set(
             client.io,
-            .{ .viewport_id = viewport_id, .shape = shape },
+            .{ .shape = shape },
         );
     }
 

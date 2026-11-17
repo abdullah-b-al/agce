@@ -34,7 +34,8 @@ pub fn create_wayland(display: *cwl.Display, args: CreateArgs) !*Compositor {
     const wl: *Wayland = try .create(args.io, args.gpa, display);
     com.linux = .{ .wayland = wl };
 
-    try wl.set_listeners(com);
+    wl.wl_keyboard.setListener(*Compositor, Wayland.listener_keyboard, com);
+    wl.wl_pointer.setListener(*Compositor, Wayland.listener_pointer, com);
 
     return com;
 }
@@ -1255,14 +1256,10 @@ pub fn viewport_close(com: *Compositor, args: @FieldType(EventFromServer, "viewp
 }
 
 pub fn cursor_shape_set(com: *Compositor, args: @FieldType(EventFromServer, "cursor_shape_set")) !void {
-    const viewport_key: ViewportKey = .{
-        .client_uuid = args.client_uuid,
-        .viewport_id = args.payload.viewport_id,
-    };
-    const vp = com.viewport_from_key(viewport_key) orelse return;
-    vp.cursor_shape = args.payload.shape;
+    const rs = com.resources.getPtr(args.client_uuid) orelse return;
+    rs.cursor_shape = args.payload.shape;
 
-    com.cursor_shape_set_from_viewport(vp, viewport_key);
+    com.cursor_shape_set_from_focused_viewport(args.client_uuid);
 }
 
 pub fn remote_viewport_create_with_viewport(com: *Compositor, args: @FieldType(EventFromServer, "remote_viewport_create")) !void {
@@ -1324,21 +1321,24 @@ pub fn remote_viewport_create(
         },
     });
 }
-pub fn cursor_shape_set_from_viewport(com: *Compositor, vp: *Viewport, viewport_key: ViewportKey) void {
-    if (!std.meta.eql(com.input_focus_mouse, viewport_key)) return;
+pub fn cursor_shape_set_from_focused_viewport(com: *Compositor, client_uuid: ClientUUID) void {
+    const focus = com.input_focus_mouse orelse return;
+    if (focus.client_uuid != client_uuid) return;
 
+    const rs = com.resources.get(client_uuid) orelse return;
     switch (com.backend_tag()) {
         .wayland => |tag| {
-            const nvp = tag.viewport(vp);
-            const shape = Wayland.from_protocol_cursor_shape(vp.cursor_shape);
-            nvp.pointer.set_shape(shape orelse return);
+            const wl = tag.compositor(com);
+            const shape = Wayland.from_protocol_cursor_shape(rs.cursor_shape);
+            const serial = wl.wl_pointer_enter_serial orelse return;
+            wl.cursor_shaper.setShape(serial, shape orelse return);
         },
         .win32 => |tag| {
             tag.guard();
-            if (vp.cursor_shape == .none) {
+            if (rs.cursor_shape == .none) {
                 _ = win32_win.SetCursor(null);
             } else {
-                const name = Win32.from_protocol_cursor_shape(vp.cursor_shape);
+                const name = Win32.from_protocol_cursor_shape(rs.cursor_shape);
                 const hcursor = win32_win.LoadCursorW(null, name);
 
                 _ = win32_win.SetCursor(hcursor orelse return);
@@ -1366,7 +1366,6 @@ pub fn mouse_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?Viewport
     com.input_focus_mouse = maybe_key;
 
     if (maybe_key) |key| {
-        const vp = com.viewport_from_key(key) orelse return;
         com.server_events.push_assume_capacity(.{
             .mouse_enter = .{
                 .client_uuid = key.client_uuid,
@@ -1374,7 +1373,7 @@ pub fn mouse_focus_switch_assume_capacity(com: *Compositor, maybe_key: ?Viewport
             },
         });
 
-        com.cursor_shape_set_from_viewport(vp, key);
+        com.cursor_shape_set_from_focused_viewport(key.client_uuid);
     }
 }
 

@@ -133,7 +133,6 @@ pub const BufferDestroy = struct {
 };
 
 pub const CursorShape = struct {
-    viewport_id: types.ViewportID,
     shape: types.CursorShape,
 };
 

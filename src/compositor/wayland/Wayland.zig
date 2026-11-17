@@ -31,6 +31,11 @@ input_delay_ms: ?i32,
 input_rate_ms: ?i32,
 input_repeat_future: ?InputRepeatFuture,
 
+wl_keyboard: *cwl.Keyboard,
+wl_pointer: *cwl.Pointer,
+wl_pointer_enter_serial: ?u32,
+cursor_shaper: *wp.CursorShapeDeviceV1,
+
 pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
     const state = try gpa.create(Wayland);
     const queue = try display.createQueue();
@@ -57,6 +62,10 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
 
     const xkb_context = c_linux.xkb_context_new(c_linux.XKB_CONTEXT_NO_FLAGS) orelse
         return error.XkbContextNewFailed;
+
+    const wl_keyboard = try seat.getKeyboard();
+    const wl_pointer = try seat.getPointer();
+    const cursor_shaper = try cursor_manager.getPointer(wl_pointer);
 
     state.* = .{
         .io = io,
@@ -87,6 +96,11 @@ pub fn create(io: Io, gpa: std.mem.Allocator, display: *cwl.Display) !*Wayland {
         .input_delay_ms = null,
         .input_rate_ms = null,
         .input_repeat_future = null,
+
+        .wl_keyboard = wl_keyboard,
+        .wl_pointer = wl_pointer,
+        .wl_pointer_enter_serial = null,
+        .cursor_shaper = cursor_shaper,
     };
 
     return state;
@@ -282,14 +296,6 @@ pub fn keyboard_repeat_info(wl: *Wayland, rate: i32, delay: i32) void {
     });
 }
 
-pub fn set_listeners(wl: *Wayland, com: *Compositor) !void {
-    const keyboard = try wl.seat.getKeyboard();
-    keyboard.setListener(*Compositor, listener_keyboard, com);
-
-    const pointer = try wl.seat.getPointer();
-    pointer.setListener(*Compositor, listener_pointer, com);
-}
-
 fn registry_listener(registry: *cwl.Registry, event: cwl.Registry.Event, globals: *MaybeGlobals) void {
     switch (event) {
         .global => |global| {
@@ -345,7 +351,7 @@ pub fn get_globals(display: *cwl.Display, queue: *cwl.EventQueue) !MaybeGlobals 
     return globals;
 }
 
-fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Compositor) void {
+pub fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Compositor) void {
     const wl = com.linux.wayland;
     switch (event) {
         .keymap => |e| {
@@ -417,20 +423,16 @@ fn listener_keyboard(_: *cwl.Keyboard, event: cwl.Keyboard.Event, com: *Composit
     }
 }
 
-fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compositor) void {
+pub fn listener_pointer(pointer: *cwl.Pointer, event: cwl.Pointer.Event, com: *Compositor) void {
     const wl = com.linux.wayland;
+    std.debug.assert(pointer == wl.wl_pointer);
+
     const ws_event: Compositor.EventFromBackend = blk: switch (event) {
         inline .leave, .enter => |e, tag| {
             const surface = e.surface orelse return;
 
             if (viewport_key_from_surface(com, surface)) |key| {
-                if (tag == .enter) {
-                    const rs = com.resources.getPtr(key.client_uuid).?;
-                    const viewport = rs.viewports.get(key.viewport_id).?;
-                    const wl_vp = &viewport.linux.wayland;
-
-                    wl_vp.pointer.on_surface_enter(wl.cursor_manager, pointer, e.serial);
-                }
+                wl.wl_pointer_enter_serial = e.serial;
 
                 break :blk @unionInit(Compositor.EventFromBackend, "mouse_" ++ @tagName(tag), .{
                     .viewport_key = key,
