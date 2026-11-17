@@ -293,6 +293,74 @@ fn render_enums_with_header(
     try io.sleep(.fromMilliseconds(33), .awake);
 }
 
+pub fn events_keyboard_char(init: std.process.Init) !void {
+    const gpa = init.gpa;
+
+    var server = try shared.TestServer.concurrent(@src(), init);
+    errdefer server.await(init) catch {};
+
+    const handle = try shared.client_init(@src(), init);
+    defer handle.deinit();
+
+    const vp = try handle.viewport_create(.cpu, null, .{ .x = 0, .y = 0, .width = 512, .height = 512 }, false);
+
+    var events: std.ArrayList(client.Event) = .empty;
+    defer events.deinit(gpa);
+
+    var string: std.ArrayList(u8) = .empty;
+    defer string.deinit(init.gpa);
+
+    var exit = false;
+    while (!exit) {
+        try handle.poll(0);
+
+        while (vp.event_pop()) |event| {
+            switch (event) {
+                .viewport_resize => |e| try vp.resize(e.size),
+                .viewport_close => exit = true,
+                .keyboard_char => |e| {
+                    var bytes: [4]u8 = undefined;
+                    const len = std.unicode.utf8Encode(@intCast(e.char), &bytes) catch unreachable;
+                    try string.appendSlice(init.gpa, bytes[0..len]);
+                },
+                else => continue,
+            }
+        }
+
+        const black = z2d.Pixel.fromColor(.{ .rgba = .{ 0, 0, 0, 1 } });
+
+        const frame = try vp.cpu_buffer_get();
+        const buffer: []z2d.pixel.ARGB = blk: {
+            const ptr: [*]z2d.pixel.ARGB = @ptrCast(@alignCast(frame.buffer));
+            std.debug.assert(frame.bytes_per_pixel == 4);
+            break :blk ptr[0 .. frame.buffer.len / 4];
+        };
+
+        var surface = z2d.Surface.initBuffer(
+            .image_surface_argb,
+            .{ .r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF },
+            buffer,
+            frame.width,
+            frame.height,
+        );
+
+        var context = z2d.Context.init(init.io, init.gpa, &surface);
+        defer context.deinit();
+
+        const font_size = 32;
+        context.setSourceToPixel(black);
+        context.setAntiAliasingMode(.default);
+        context.setFontSize(font_size);
+        try context.setFontToBuffer(@embedFile("ProggyClean.ttf"));
+
+        try context.showText(string.items, 0, 0);
+
+        try vp.cpu_present();
+    }
+
+    vp.destroy();
+}
+
 fn inside(x: i32, y: i32, rect: client.Rect) bool {
     const bottom = rect.y + rect.height;
     const right = rect.x + rect.width;
