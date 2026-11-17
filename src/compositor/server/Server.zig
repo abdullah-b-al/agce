@@ -237,7 +237,6 @@ fn handle_message(server: *Server, message: ReceivedMessage) void {
         .unknown => |index| {
             server.handle_message_from_unknown(message) catch |err| switch (err) {
                 error.MisbehavingUnknownClient,
-                error.OutOfMemoryDuringRegister,
                 error.ClientUUIDAlreadyExists,
                 error.ConnectionClosed,
                 => |e| {
@@ -268,7 +267,6 @@ pub fn handle_event(
             const client = server.clients.get_remote(e.client_uuid) orelse return;
             client.connection.send_buffer_created_cpu(
                 server.io,
-                server.gpa,
                 e.payload,
             ) catch |err| {
                 if (os == .windows) {
@@ -292,7 +290,7 @@ pub fn handle_event(
             };
 
             const client = server.clients.get_remote(e.client_uuid) orelse return;
-            client.connection.send_buffer_created_gbm_bo(server.io, server.gpa, e.payload) catch
+            client.connection.send_buffer_created_gbm_bo(server.io, e.payload) catch
                 return error.ConnectionClosed;
         },
         .texture_created_d3d => |e| {
@@ -304,10 +302,8 @@ pub fn handle_event(
             };
 
             const client = server.clients.get_remote(e.client_uuid) orelse return;
-            client.connection.send_texture_created_d3d(server.io, server.gpa, e.payload) catch |err|
+            client.connection.send_texture_created_d3d(server.io, e.payload) catch |err|
                 return switch (err) {
-                    error.OutOfMemory => error.OutOfMemory,
-
                     error.Win32OpenProcessFailed,
                     error.DuplicateHandleFailed,
                     => error.FailedToSendHandle,
@@ -324,7 +320,7 @@ pub fn handle_event(
             };
 
             const send = @field(ClientConnection, "send_" ++ @tagName(tag));
-            send(connection, server.io, server.gpa, e.payload) catch
+            send(connection, server.io, e.payload) catch
                 return error.ConnectionClosed;
         },
     }
@@ -351,7 +347,6 @@ fn handle_message_from_remote(server: *Server, message: ReceivedMessage) void {
 }
 
 pub const HandleMessageFromUnknownError = error{
-    OutOfMemoryDuringRegister,
     MisbehavingUnknownClient,
     ConnectionClosed,
     ClientUUIDAlreadyExists,
@@ -379,8 +374,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 
         const client = server.clients.get_local(register.uuid).?;
 
-        client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
-            error.OutOfMemory => error.OutOfMemoryDuringRegister,
+        client.connection.send_registered(server.io, .{}) catch |err| return switch (err) {
             else => return error.ConnectionClosed,
         };
 
@@ -395,8 +389,7 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 
         const client = server.clients.get_remote(register.uuid).?;
 
-        client.connection.send_registered(server.io, server.gpa, .{}) catch |err| return switch (err) {
-            error.OutOfMemory => error.OutOfMemoryDuringRegister,
+        client.connection.send_registered(server.io, .{}) catch |err| return switch (err) {
             else => return error.ConnectionClosed,
         };
 
@@ -409,7 +402,6 @@ fn handle_message_from_unknown(server: *Server, message: ReceivedMessage) Handle
 
             other.connection.send_client_registered(
                 server.io,
-                server.gpa,
                 .{ .client_uuid = register.uuid },
             ) catch |err|
                 log.err("{} from {f} during broadcast", .{ err, other_uuid });
@@ -499,7 +491,6 @@ pub fn close_clients_marked_with_error(server: *Server) void {
 
                     other.connection.send_client_disconnected(
                         server.io,
-                        server.gpa,
                         .{ .client_uuid = uuid },
                     ) catch {};
                 }

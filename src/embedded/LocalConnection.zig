@@ -35,52 +35,62 @@ pub fn receive_with_reader(_: *LocalConnection, arena: std.mem.Allocator, reader
     }
 }
 
-pub fn send_register_local(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void {
+pub fn send_register_local(c: *LocalConnection, io: Io) !void {
     const payload: client_to_server.Register = .{
         .uuid = c.uuid,
         .pid = null,
         .is_local = true,
     };
-    const message = try c.stringify(gpa, .{ .register = payload });
-    try c.send(io, gpa, message);
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .register = payload });
+    try c.send(io, message);
 }
 
-pub fn send_wake_up(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void {
-    const message = try c.stringify(gpa, .{ .wake_up = .{} });
-    try c.send(io, gpa, message);
+pub fn send_wake_up(c: *LocalConnection, io: Io) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .wake_up = .{} });
+    try c.send(io, message);
 }
 
-pub fn send_queue_pop(c: *LocalConnection, io: Io, gpa: std.mem.Allocator) !void {
-    const message = try c.stringify(gpa, .{ .queue_pop = .{} });
-    try c.send(io, gpa, message);
+pub fn send_queue_pop(c: *LocalConnection, io: Io) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .queue_pop = .{} });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_pos_set(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportPosSet) !void {
-    const message = try c.stringify(gpa, .{ .viewport_pos_set = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_pos_set(c: *LocalConnection, io: Io, payload: client_to_server.ViewportPosSet) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_pos_set = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_size_set(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportSizeSet) !void {
-    const message = try c.stringify(gpa, .{ .viewport_size_set = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_size_set(c: *LocalConnection, io: Io, payload: client_to_server.ViewportSizeSet) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_size_set = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_display_state_set(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.ViewportDisplayStateSet) !void {
-    const message = try c.stringify(gpa, .{ .viewport_display_state_set = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_display_state_set(c: *LocalConnection, io: Io, payload: client_to_server.ViewportDisplayStateSet) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_display_state_set = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_close(c: *LocalConnection, io: Io, gpa: std.mem.Allocator, payload: client_to_server.RemoteViewportClose) !void {
-    const message = try c.stringify(gpa, .{ .viewport_close = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_close(c: *LocalConnection, io: Io, payload: client_to_server.RemoteViewportClose) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_close = payload });
+    try c.send(io, message);
 }
 
-fn stringify(c: *LocalConnection, gpa: std.mem.Allocator, payload: client_to_server.MessagePayload) !client_to_server.Message {
+fn stringify(c: *LocalConnection, buf: []u8, payload: client_to_server.MessagePayload) client_to_server.Message {
     std.debug.assert(c.format == .json);
+    std.debug.assert(buf.len == constants.payload_max_size);
 
-    const json = switch (payload) {
-        inline else => |p| try std.json.Stringify.valueAlloc(gpa, p, .{}),
-    };
+    var writer: Io.Writer = .fixed(buf);
+    switch (payload) {
+        inline else => |p| std.json.Stringify.value(p, .{}, &writer) catch unreachable,
+    }
+    const json = writer.buffered();
 
     const header: client_to_server.MessageHeader = .{
         .payload_len = @intCast(json.len),
@@ -91,9 +101,7 @@ fn stringify(c: *LocalConnection, gpa: std.mem.Allocator, payload: client_to_ser
     return .{ .header = header, .payload = json };
 }
 
-fn send(c: *LocalConnection, _: Io, gpa: std.mem.Allocator, message: client_to_server.Message) !void {
-    defer gpa.free(message.payload);
-
+fn send(c: *LocalConnection, _: Io, message: client_to_server.Message) !void {
     var buf: [4096]u8 = undefined;
     var writer = c.stream.writer(&buf);
 
@@ -109,3 +117,4 @@ const ptypes = @import("protocol").types;
 const client_to_server = @import("protocol").client_to_server;
 const server_to_client = @import("protocol").server_to_client;
 const zio = @import("zio");
+const constants = @import("constants");

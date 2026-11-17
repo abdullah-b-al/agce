@@ -132,7 +132,6 @@ pub const RemoteViewportHandle = opaque {
         if (pos.x != rvp.pos.x or pos.y != rvp.pos.y) {
             try rvp.embedded.connection.send_viewport_pos_set(
                 rvp.embedded.rt.io(),
-                rvp.embedded.gpa,
                 .{ .pos = pos, .viewport_key = key },
             );
         }
@@ -151,7 +150,6 @@ pub const RemoteViewportHandle = opaque {
         if (size.width != rvp.size.width or size.height != rvp.size.height) {
             try rvp.embedded.connection.send_viewport_size_set(
                 rvp.embedded.rt.io(),
-                rvp.embedded.gpa,
                 .{ .size = size, .viewport_key = vp_key },
             );
         }

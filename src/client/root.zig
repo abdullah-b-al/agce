@@ -38,7 +38,6 @@ pub fn init(
 
     try client.connection.send_register(
         io,
-        gpa,
         client.uuid,
         pid,
     );
@@ -210,7 +209,6 @@ pub const ClientHandle = opaque {
 
         try client.connection.send_cursor_shape_set(
             client.io,
-            client.gpa,
             .{ .viewport_id = viewport_id, .shape = shape },
         );
     }
@@ -249,7 +247,6 @@ pub const ViewportHandle = opaque {
 
         vp.client.connection.send_viewport_destroy(
             vp.client.io,
-            vp.client.gpa,
             .{ .viewport_id = vp.id },
         ) catch {};
 
@@ -302,7 +299,6 @@ pub const ViewportHandle = opaque {
         if (pos.x != vp.pos.x or pos.y != vp.pos.y) {
             try vp.client.connection.send_viewport_pos_set(
                 vp.client.io,
-                vp.client.gpa,
                 .{ .pos = pos, .viewport_key = key },
             );
         }
@@ -317,7 +313,6 @@ pub const ViewportHandle = opaque {
         if (s.width != vp.size.width or s.height != vp.size.height) {
             try vp.client.connection.send_viewport_size_set(
                 vp.client.io,
-                vp.client.gpa,
                 .{ .size = s, .viewport_key = key },
             );
         }
@@ -497,7 +492,6 @@ pub const RemoteViewportHandle = opaque {
         };
         try rvp.client.connection.send_viewport_close(
             rvp.client.io,
-            rvp.client.gpa,
             .{ .viewport_key = vp_key },
         );
     }
@@ -534,7 +528,6 @@ pub const RemoteViewportHandle = opaque {
         if (pos.x != rvp.pos.x or pos.y != rvp.pos.y) {
             try rvp.client.connection.send_viewport_pos_set(
                 rvp.client.io,
-                rvp.client.gpa,
                 .{ .pos = pos, .viewport_key = key },
             );
         }
@@ -553,7 +546,6 @@ pub const RemoteViewportHandle = opaque {
         if (size.width != rvp.size.width or size.height != rvp.size.height) {
             try rvp.client.connection.send_viewport_size_set(
                 rvp.client.io,
-                rvp.client.gpa,
                 .{ .size = size, .viewport_key = vp_key },
             );
         }
@@ -581,7 +573,6 @@ pub const RemoteViewportHandle = opaque {
 
         try rvp.client.connection.send_viewport_display_state_set(
             rvp.client.io,
-            rvp.client.gpa,
             .{ .viewport_key = vp_key, .state = s },
         );
 

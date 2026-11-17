@@ -154,81 +154,95 @@ pub fn receive_raw_with_reader_and_parse(
     };
 }
 
-pub fn send_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.Void) !void {
-    const message = try c.stringify(gpa, .{ .registered = payload });
-    try c.send(io, gpa, message);
+pub fn send_registered(c: *ClientConnection, io: Io, payload: server_to_client.Void) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .registered = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_create(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ViewportCreate) !void {
-    const message = try c.stringify(gpa, .{ .viewport_create = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_create(c: *ClientConnection, io: Io, payload: server_to_client.ViewportCreate) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_create = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_created(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ViewportCreated) !void {
-    const message = try c.stringify(gpa, .{ .viewport_created = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_created(c: *ClientConnection, io: Io, payload: server_to_client.ViewportCreated) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_created = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_resize(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ViewportResize) !void {
-    const message = try c.stringify(gpa, .{ .viewport_resize = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_resize(c: *ClientConnection, io: Io, payload: server_to_client.ViewportResize) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_resize = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_close(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ViewportClose) !void {
-    const message = try c.stringify(gpa, .{ .viewport_close = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_close(c: *ClientConnection, io: Io, payload: server_to_client.ViewportClose) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_close = payload });
+    try c.send(io, message);
 }
 
-pub fn send_viewport_display_state(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ViewportDisplayState) !void {
-    const message = try c.stringify(gpa, .{ .viewport_display_state = payload });
-    try c.send(io, gpa, message);
+pub fn send_viewport_display_state(c: *ClientConnection, io: Io, payload: server_to_client.ViewportDisplayState) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .viewport_display_state = payload });
+    try c.send(io, message);
 }
 
-pub fn send_remote_viewport_created(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportCreated) !void {
-    const message = try c.stringify(gpa, .{ .remote_viewport_created = payload });
-    try c.send(io, gpa, message);
+pub fn send_remote_viewport_created(c: *ClientConnection, io: Io, payload: server_to_client.RemoteViewportCreated) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .remote_viewport_created = payload });
+    try c.send(io, message);
 }
 
-pub fn send_remote_viewport_display_state(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportDisplayState) !void {
-    const message = try c.stringify(gpa, .{ .remote_viewport_display_state = payload });
-    try c.send(io, gpa, message);
+pub fn send_remote_viewport_display_state(c: *ClientConnection, io: Io, payload: server_to_client.RemoteViewportDisplayState) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .remote_viewport_display_state = payload });
+    try c.send(io, message);
 }
 
-pub fn send_remote_viewport_render_size(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportRenderSize) !void {
-    const message = try c.stringify(gpa, .{ .remote_viewport_render_size = payload });
-    try c.send(io, gpa, message);
+pub fn send_remote_viewport_render_size(c: *ClientConnection, io: Io, payload: server_to_client.RemoteViewportRenderSize) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .remote_viewport_render_size = payload });
+    try c.send(io, message);
 }
 
-pub fn send_remote_viewport_closed(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.RemoteViewportClosed) !void {
-    const message = try c.stringify(gpa, .{ .remote_viewport_closed = payload });
-    try c.send(io, gpa, message);
+pub fn send_remote_viewport_closed(c: *ClientConnection, io: Io, payload: server_to_client.RemoteViewportClosed) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .remote_viewport_closed = payload });
+    try c.send(io, message);
 }
 
-pub fn send_client_registered(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ClientRegistered) !void {
-    const message = try c.stringify(gpa, .{ .client_registered = payload });
-    try c.send(io, gpa, message);
+pub fn send_client_registered(c: *ClientConnection, io: Io, payload: server_to_client.ClientRegistered) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .client_registered = payload });
+    try c.send(io, message);
 }
 
-pub fn send_client_disconnected(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.ClientDisconnected) !void {
-    const message = try c.stringify(gpa, .{ .client_disconnected = payload });
-    try c.send(io, gpa, message);
+pub fn send_client_disconnected(c: *ClientConnection, io: Io, payload: server_to_client.ClientDisconnected) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .client_disconnected = payload });
+    try c.send(io, message);
 }
 
-pub fn send_buffer_released(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.BufferReleased) !void {
-    const message = try c.stringify(gpa, .{ .buffer_released = payload });
-    try c.send(io, gpa, message);
+pub fn send_buffer_released(c: *ClientConnection, io: Io, payload: server_to_client.BufferReleased) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .buffer_released = payload });
+    try c.send(io, message);
 }
 
-pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, const_payload: server_to_client.BufferCreatedCpu) !void {
+pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, const_payload: server_to_client.BufferCreatedCpu) !void {
     switch (os) {
         .linux => {
-            const message = try c.stringify(gpa, .{ .buffer_created_cpu = const_payload });
+            var buf: [constants.payload_max_size]u8 = undefined;
+            const message = c.stringify(&buf, .{ .buffer_created_cpu = const_payload });
             switch (const_payload) {
                 .success => |s| {
-                    try c.send_with_fd(ptypes.CpuBufferHandle, s.handle, gpa, message);
+                    try c.send_with_fd(ptypes.CpuBufferHandle, s.handle, message);
                 },
                 .failure => {
-                    try c.send(io, gpa, message);
+                    try c.send(io, message);
                 },
             }
         },
@@ -240,12 +254,14 @@ pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Alloca
                     errdefer _ = win32.foundation.CloseHandle(duplicate);
 
                     payload.success.handle = .from_HANDLE(duplicate);
-                    const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
-                    try c.send(io, gpa, message);
+                    var buf: [constants.payload_max_size]u8 = undefined;
+                    const message = c.stringify(&buf, .{ .buffer_created_cpu = payload });
+                    try c.send(io, message);
                 },
                 .failure => {
-                    const message = try c.stringify(gpa, .{ .buffer_created_cpu = payload });
-                    try c.send(io, gpa, message);
+                    var buf: [constants.payload_max_size]u8 = undefined;
+                    const message = c.stringify(&buf, .{ .buffer_created_cpu = payload });
+                    try c.send(io, message);
                 },
             }
         },
@@ -253,16 +269,17 @@ pub fn send_buffer_created_cpu(c: *ClientConnection, io: Io, gpa: std.mem.Alloca
     }
 }
 
-pub fn send_buffer_created_gbm_bo(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.BufferCreatedGbmBo) !void {
+pub fn send_buffer_created_gbm_bo(c: *ClientConnection, io: Io, payload: server_to_client.BufferCreatedGbmBo) !void {
     if (!constants.os_has_gbm) @compileError("OS does not support gbm");
 
-    const message = try c.stringify(gpa, .{ .buffer_created_gbm_bo = payload });
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .buffer_created_gbm_bo = payload });
     switch (payload) {
         .success => |s| {
-            try c.send_with_fd(ptypes.BufferAndTimelineFds, s.fds, gpa, message);
+            try c.send_with_fd(ptypes.BufferAndTimelineFds, s.fds, message);
         },
         .failure => {
-            try c.send(io, gpa, message);
+            try c.send(io, message);
         },
     }
 }
@@ -270,7 +287,6 @@ pub fn send_buffer_created_gbm_bo(c: *ClientConnection, io: Io, gpa: std.mem.All
 pub fn send_texture_created_d3d(
     c: *ClientConnection,
     io: Io,
-    gpa: std.mem.Allocator,
     const_payload: server_to_client.TextureCreatedD3D,
 ) !void {
     if (!constants.os_has_d3d) @compileError("OS does not support d3d");
@@ -291,75 +307,90 @@ pub fn send_texture_created_d3d(
             payload.success.acquire_fence_handle = .from_HANDLE(duplicate_acquire);
             payload.success.release_fence_handle = .from_HANDLE(duplicate_release);
 
-            const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
-            try c.send(io, gpa, message);
+            var buf: [constants.payload_max_size]u8 = undefined;
+            const message = c.stringify(&buf, .{ .texture_created_d3d = payload });
+            try c.send(io, message);
         },
         .failure => {
-            const message = try c.stringify(gpa, .{ .texture_created_d3d = payload });
-            try c.send(io, gpa, message);
+            var buf: [constants.payload_max_size]u8 = undefined;
+            const message = c.stringify(&buf, .{ .texture_created_d3d = payload });
+            try c.send(io, message);
         },
     }
 }
 
-pub fn send_frame_render(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.FrameRender) !void {
-    const message = try c.stringify(gpa, .{ .frame_render = payload });
-    try c.send(io, gpa, message);
+pub fn send_frame_render(c: *ClientConnection, io: Io, payload: server_to_client.FrameRender) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .frame_render = payload });
+    try c.send(io, message);
 }
 
-pub fn send_keyboard_enter(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardEnter) !void {
-    const message = try c.stringify(gpa, .{ .keyboard_enter = payload });
-    try c.send(io, gpa, message);
+pub fn send_keyboard_enter(c: *ClientConnection, io: Io, payload: server_to_client.KeyboardEnter) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .keyboard_enter = payload });
+    try c.send(io, message);
 }
 
-pub fn send_keyboard_leave(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardLeave) !void {
-    const message = try c.stringify(gpa, .{ .keyboard_leave = payload });
-    try c.send(io, gpa, message);
+pub fn send_keyboard_leave(c: *ClientConnection, io: Io, payload: server_to_client.KeyboardLeave) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .keyboard_leave = payload });
+    try c.send(io, message);
 }
 
-pub fn send_keyboard_char(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardChar) !void {
-    const message = try c.stringify(gpa, .{ .keyboard_char = payload });
-    try c.send(io, gpa, message);
+pub fn send_keyboard_char(c: *ClientConnection, io: Io, payload: server_to_client.KeyboardChar) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .keyboard_char = payload });
+    try c.send(io, message);
 }
 
-pub fn send_keyboard_key(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.KeyboardKey) !void {
-    const message = try c.stringify(gpa, .{ .keyboard_key = payload });
-    try c.send(io, gpa, message);
+pub fn send_keyboard_key(c: *ClientConnection, io: Io, payload: server_to_client.KeyboardKey) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .keyboard_key = payload });
+    try c.send(io, message);
 }
 
-pub fn send_mouse_enter(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.MouseEnter) !void {
-    const message = try c.stringify(gpa, .{ .mouse_enter = payload });
-    try c.send(io, gpa, message);
+pub fn send_mouse_enter(c: *ClientConnection, io: Io, payload: server_to_client.MouseEnter) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .mouse_enter = payload });
+    try c.send(io, message);
 }
 
-pub fn send_mouse_leave(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.MouseLeave) !void {
-    const message = try c.stringify(gpa, .{ .mouse_leave = payload });
-    try c.send(io, gpa, message);
+pub fn send_mouse_leave(c: *ClientConnection, io: Io, payload: server_to_client.MouseLeave) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .mouse_leave = payload });
+    try c.send(io, message);
 }
 
-pub fn send_mouse_motion(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.MouseMotion) !void {
-    const message = try c.stringify(gpa, .{ .mouse_motion = payload });
-    try c.send(io, gpa, message);
+pub fn send_mouse_motion(c: *ClientConnection, io: Io, payload: server_to_client.MouseMotion) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .mouse_motion = payload });
+    try c.send(io, message);
 }
 
-pub fn send_mouse_button(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.MouseButton) !void {
-    const message = try c.stringify(gpa, .{ .mouse_button = payload });
-    try c.send(io, gpa, message);
+pub fn send_mouse_button(c: *ClientConnection, io: Io, payload: server_to_client.MouseButton) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .mouse_button = payload });
+    try c.send(io, message);
 }
 
-pub fn send_mouse_scroll(c: *ClientConnection, io: Io, gpa: std.mem.Allocator, payload: server_to_client.MouseScroll) !void {
-    const message = try c.stringify(gpa, .{ .mouse_scroll = payload });
-    try c.send(io, gpa, message);
+pub fn send_mouse_scroll(c: *ClientConnection, io: Io, payload: server_to_client.MouseScroll) !void {
+    var buf: [constants.payload_max_size]u8 = undefined;
+    const message = c.stringify(&buf, .{ .mouse_scroll = payload });
+    try c.send(io, message);
 }
 
-fn stringify(c: *ClientConnection, gpa: std.mem.Allocator, payload: server_to_client.MessagePayload) !server_to_client.Message {
+fn stringify(c: *ClientConnection, buf: []u8, payload: server_to_client.MessagePayload) server_to_client.Message {
     std.debug.assert(c.format == .json);
+    std.debug.assert(buf.len == constants.payload_max_size);
 
-    const json = blk: switch (payload) {
+    var writer: Io.Writer = .fixed(buf);
+    switch (payload) {
         inline else => |_, tag| {
             const p = @field(payload, @tagName(tag));
-            break :blk try std.json.Stringify.valueAlloc(gpa, p, .{});
+            std.json.Stringify.value(p, .{}, &writer) catch unreachable;
         },
-    };
+    }
+    const json = writer.buffered();
 
     const header: server_to_client.MessageHeader = .{
         .payload_len = @intCast(json.len),
@@ -370,9 +401,7 @@ fn stringify(c: *ClientConnection, gpa: std.mem.Allocator, payload: server_to_cl
     return .{ .header = header, .data = json };
 }
 
-fn send(c: *ClientConnection, _: Io, gpa: std.mem.Allocator, message: server_to_client.Message) !void {
-    defer gpa.free(message.data);
-
+fn send(c: *ClientConnection, _: Io, message: server_to_client.Message) !void {
     var buf: [4096]u8 = undefined;
     var writer = c.stream.writer(&buf);
 
@@ -388,9 +417,8 @@ fn send(c: *ClientConnection, _: Io, gpa: std.mem.Allocator, message: server_to_
     };
 }
 
-fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, gpa: std.mem.Allocator, message: server_to_client.Message) !void {
+fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, message: server_to_client.Message) !void {
     if (!constants.os_supports_fd) @compileError("OS does not support function");
-    defer gpa.free(message.data);
 
     const header_bytes = std.mem.toBytes(message.header);
     var buf: [4096]u8 = undefined;

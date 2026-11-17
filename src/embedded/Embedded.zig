@@ -90,7 +90,7 @@ pub fn create(
         .tick_thread_exit = exit_event,
     };
 
-    try em.connection.send_register_local(io, gpa);
+    try em.connection.send_register_local(io);
 
     // TODO: Add a timeout and handle it
     while (!em.registered) {
@@ -102,9 +102,9 @@ pub fn create(
 
 pub fn destroy(em: *Embedded) void {
     em.tick_thread_exit.set(em.rt.io());
-    em.connection.send_wake_up(em.rt.io(), em.gpa) catch {
-        // TODO: Figure out a way to not return an error
-        return;
+    em.connection.send_wake_up(em.rt.io()) catch |err| switch (err) {
+        // TODO: Figure out a way to deal with this error
+        error.WriteFailed => {},
     };
 
     em.tick_thread_handle.join();
@@ -190,7 +190,7 @@ pub fn remote_viewport_create(em: *Embedded, remote: *RemoteClient, window_handl
         error.Closed => unreachable,
     };
 
-    try em.connection.send_queue_pop(em.rt.io(), em.gpa);
+    try em.connection.send_queue_pop(em.rt.io());
 
     em.remote_viewports.putAssumeCapacityNoClobber(remote_vp.id, remote_vp);
 

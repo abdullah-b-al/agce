@@ -542,7 +542,7 @@ pub fn send_viewport_create(
     std.debug.assert(!client.viewports.contains(viewport_id));
     std.debug.assert(parent_id != viewport_id);
 
-    try client.connection.send_viewport_create(client.io, client.gpa, .{
+    try client.connection.send_viewport_create(client.io, .{
         .parent_id = parent_id,
         .request_id = request_id,
         .viewport_id = viewport_id,
@@ -567,7 +567,7 @@ pub fn send_buffer_create(
         .cpu => {
             try client.connection.send_buffer_create_cpu(
                 client.io,
-                client.gpa,
+
                 .{
                     .request_id = request_id,
                     .format = format,
@@ -580,7 +580,7 @@ pub fn send_buffer_create(
 
             try client.connection.send_buffer_create_gbm_bo(
                 client.io,
-                client.gpa,
+
                 .{
                     .request_id = request_id,
                     .format = format,
@@ -593,7 +593,7 @@ pub fn send_buffer_create(
 
             try client.connection.send_texture_create_d3d(
                 client.io,
-                client.gpa,
+
                 .{
                     .request_id = request_id,
                     .format = format,
@@ -685,7 +685,7 @@ pub fn buffers_create_from_pending_into(
 pub fn send_buffer_destroy(client: *Client, buffer_id: BufferID) !void {
     try client.connection.send_buffer_destroy(
         client.io,
-        client.gpa,
+
         .{ .buffer_id = buffer_id },
     );
 }
@@ -707,7 +707,7 @@ pub fn remote_viewport_create(
 
     try client.connection.send_remote_viewport_create(
         client.io,
-        client.gpa,
+
         .{
             .client_uuid_to_embed = client_uuid_to_embed,
             .embeder_viewport_id = viewport_id,

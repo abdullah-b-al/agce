@@ -131,7 +131,7 @@ fn buffers_resize(vp: *Viewport, requested_size: ptypes.Size) !void {
                 buffer.deinit();
 
                 vp.client.send_buffer_destroy(buffer.id) catch |err| switch (err) {
-                    error.WriteFailed, error.OutOfMemory => {},
+                    error.WriteFailed => {},
                 };
 
                 _ = map.orderedRemove(buffer.id);
@@ -158,7 +158,6 @@ pub fn buffer_present(vp: *Viewport, comptime renderer: Renderer) !void {
 
             try vp.client.connection.send_buffer_present(
                 vp.client.io,
-                vp.client.gpa,
                 .{
                     .viewport_id = vp.id,
                     .buffer_id = buffer.id,
@@ -182,7 +181,6 @@ pub fn buffer_present(vp: *Viewport, comptime renderer: Renderer) !void {
 
             try vp.client.connection.send_buffer_present_with_sync(
                 vp.client.io,
-                vp.client.gpa,
                 .{
                     .viewport_id = vp.id,
                     .buffer_id = buffer.id,
