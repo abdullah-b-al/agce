@@ -275,11 +275,24 @@ pub fn client_disconnected(com: *Compositor, uuid: ClientUUID) void {
         return;
     };
 
-    var i = rs.viewports.count();
-    while (i > 0) {
-        i -= 1;
-        const id = rs.viewports.keys()[i];
-        com.viewport_destroy(rs.client_uuid.viewport_key(id));
+    {
+        var i = rs.viewports.count();
+        while (i > 0) {
+            i -= 1;
+            const id = rs.viewports.keys()[i];
+            com.viewport_destroy(rs.client_uuid.viewport_key(id));
+        }
+    }
+
+    {
+        var i = com.present_queue.items.len;
+        while (i > 0) {
+            i -= 1;
+            const item = com.present_queue.items[i];
+            if (item.client_uuid == uuid) {
+                _ = com.present_queue.orderedRemove(i);
+            }
+        }
     }
 
     rs.deinit(com);
