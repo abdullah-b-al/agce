@@ -386,7 +386,11 @@ fn stringify(c: *ClientConnection, buf: []u8, payload: server_to_client.MessageP
     var writer: Io.Writer = .fixed(buf);
     switch (payload) {
         inline else => |_, tag| {
-            const p = @field(payload, @tagName(tag));
+            var p = @field(payload, @tagName(tag));
+            if (constants.os_supports_fd) {
+                p = invalidate_fds_before_stringifying(tag, p);
+            }
+
             std.json.Stringify.value(p, .{}, &writer) catch unreachable;
         },
     }
@@ -399,6 +403,38 @@ fn stringify(c: *ClientConnection, buf: []u8, payload: server_to_client.MessageP
     };
 
     return .{ .header = header, .data = json };
+}
+
+fn invalidate_fds_before_stringifying(comptime tag: server_to_client.MessageTag, payload: anytype) @TypeOf(payload) {
+    comptime std.debug.assert(constants.os_supports_fd);
+
+    var p = payload;
+    switch (tag) {
+        .buffer_created_cpu => {
+            switch (p) {
+                .success => |*s| s.handle = .invalid,
+                .failure => {},
+            }
+        },
+        .buffer_created_gbm_bo => {
+            switch (p) {
+                .success => |*s| s.fds = .invalid,
+                .failure => {},
+            }
+        },
+
+        // zig fmt: off
+        .registered, .viewport_create, .viewport_created, .viewport_resize, .viewport_close,
+        .viewport_display_state, .remote_viewport_created, .remote_viewport_display_state,
+        .remote_viewport_render_size, .remote_viewport_closed, .client_registered,
+        .client_disconnected, .buffer_released, .texture_created_d3d, .frame_render,
+        .keyboard_enter, .keyboard_leave, .keyboard_char, .keyboard_key,
+        .mouse_enter, .mouse_leave, .mouse_motion, .mouse_button, .mouse_scroll,
+        // zig fmt: on
+        => {},
+    }
+
+    return p;
 }
 
 fn send(c: *ClientConnection, _: Io, message: server_to_client.Message) !void {
@@ -420,17 +456,33 @@ fn send(c: *ClientConnection, _: Io, message: server_to_client.Message) !void {
 fn send_with_fd(c: *ClientConnection, comptime Fd: type, fd: Fd, message: server_to_client.Message) !void {
     if (!constants.os_supports_fd) @compileError("OS does not support function");
 
-    const header_bytes = std.mem.toBytes(message.header);
-    var buf: [4096]u8 = undefined;
-    std.mem.copyForwards(u8, &buf, &header_bytes);
-    std.mem.copyForwards(u8, buf[header_bytes.len..], message.data);
+    var data_buf: [4096]u8 = undefined;
+    const data = blk: {
+        const header_bytes = std.mem.toBytes(message.header);
+        var data: Io.Writer = .fixed(&data_buf);
+        try data.writeAll(&header_bytes);
+        try data.writeAll(message.data);
+        break :blk data.buffered();
+    };
 
-    const len = @sizeOf(server_to_client.MessageHeader) + message.data.len;
+    var control_buf: [net.cmsg.space(@sizeOf(Fd))]u8 = @splat(0);
+    const control = blk: {
+        const cmsg_header: std.posix.cmsghdr = .{
+            .len = net.cmsg.len(@sizeOf(Fd)),
+            .level = std.posix.SOL.SOCKET,
+            .type = std.posix.SCM.RIGHTS,
+        };
 
-    const result = server_to_client.send_fd(c.stream.socket.handle, Fd, fd, buf[0..len]);
-    if (result < 0) {
-        return error.FailedToSendFds;
-    }
+        var control: Io.Writer = .fixed(&control_buf);
+        try control.writeStruct(cmsg_header, .native);
+        try control.writeAll(&std.mem.toBytes(fd));
+        break :blk &control_buf;
+    };
+
+    var storage: [1]zio.os.iovec_const = undefined;
+    const to_write = zio.ev.WriteBuf.fromSlice(data, &storage);
+
+    _ = try c.stream.socket.sendMsg(to_write, null, control, .none);
 }
 
 fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {

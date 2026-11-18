@@ -734,36 +734,39 @@ pub fn read_thread(
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
 
+    const size_per_fd = comptime net.cmsg.space(@sizeOf(std.posix.fd_t));
     var reader_buffer: [4096]u8 = undefined;
-    var reader = stream.reader(io, &reader_buffer);
+    var reader_control_buffer: [size_per_fd * 10]u8 align(net.cmsg_align) = undefined;
+    var reader = stream.readerWithControl(io, &reader_buffer, &reader_control_buffer);
     while (true) {
         _ = arena.reset(.{ .retain_with_limit = 1024 * 1024 }); // 1MB
 
-        const message = switch (os) {
-            .linux => ServerConnection.receive_linux(io, arena.allocator(), stream),
-            .windows => blk: {
-                const message = ServerConnection.receive_with_reader(
-                    io,
-                    arena.allocator(),
-                    &reader.interface,
-                ) catch |err| break :blk switch (err) {
-                    error.ReadFailed => reader.err.?,
-                    else => |e| break :blk e,
-                };
+        const message = ServerConnection.receive_with_reader(
+            io,
+            arena.allocator(),
+            &reader,
+        ) catch |err| switch (err) {
+            error.ReadFailed => switch (reader.err.?) {
+                error.Unexpected,
+                error.ConnectionResetByPeer,
+                error.Canceled,
+                => return,
 
-                break :blk message;
+                else => |e| {
+                    log.err("Receive {}", .{e});
+                    continue;
+                },
             },
-            else => comptime unreachable,
-        } catch |err| switch (err) {
+
             error.EndOfStream, error.OutOfMemory => continue,
 
-            error.Unexpected,
-            error.ConnectionResetByPeer,
-            error.Canceled,
-            => return,
-
-            else => |e| {
-                std.log.err("Receive {}", .{e});
+            error.HeaderInvalidLen,
+            error.HeaderInvalidFormat,
+            error.HeaderInvalidMessageTag,
+            error.ParseFailed,
+            error.HeaderWithoutPayload,
+            => |e| {
+                log.err("Receive {}", .{e});
                 continue;
             },
         };

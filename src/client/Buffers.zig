@@ -180,6 +180,9 @@ pub const GlLinux = if (!constants.os_has_gbm) UnreachableBuffer else struct {
             created.fds.release_timeline.close();
             created.fds.buffer.close();
         }
+        std.debug.assert(created.fds.acquire_timeline != .invalid); // client reader bug
+        std.debug.assert(created.fds.release_timeline != .invalid); // client reader bug
+        std.debug.assert(created.fds.buffer != .invalid); // client reader bug
 
         const gbm = client.gbm.?;
         const gl_context = client.gl_context.?;
@@ -475,6 +478,7 @@ const CpuLinux = struct {
 
     pub fn init(_: *Client, created: BufferCreatedCpu.Success) !CpuLinux {
         defer created.handle.close();
+        std.debug.assert(created.handle != .invalid); // client reader bug
 
         const s = created.size.width * created.size.height * created.format.bytes_per_pixel();
 

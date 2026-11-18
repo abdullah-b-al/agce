@@ -3,14 +3,14 @@ const ServerConnection = @This();
 format: ptypes.MessageFormat,
 stream: net.Stream,
 
-pub fn receive_with_reader(_: Io, arena: std.mem.Allocator, reader: *Io.Reader) !server_to_client.MessagePayload {
-    const header_bytes = try reader.take(@sizeOf(client_to_server.MessageHeader));
+pub fn receive_with_reader(_: Io, arena: std.mem.Allocator, reader: *net.Stream.Reader) !server_to_client.MessagePayload {
+    const header_bytes = try reader.interface.take(@sizeOf(client_to_server.MessageHeader));
 
     const header = try server_to_client.parse_message_header(header_bytes);
-    const err_data = if (header.payload_len > reader.buffer.len)
-        reader.readAlloc(arena, header.payload_len)
+    const err_data = if (header.payload_len > reader.interface.buffer.len)
+        reader.interface.readAlloc(arena, header.payload_len)
     else
-        reader.take(header.payload_len);
+        reader.interface.take(header.payload_len);
 
     const data = err_data catch |err| return switch (err) {
         error.EndOfStream => error.HeaderWithoutPayload,
@@ -23,14 +23,65 @@ pub fn receive_with_reader(_: Io, arena: std.mem.Allocator, reader: *Io.Reader) 
                 .json => {
                     @setEvalBranchQuota(2000);
                     const T = @FieldType(server_to_client.MessagePayload, @tagName(tag));
-                    const parsed = try std.json.parseFromSliceLeaky(T, arena, data, .{
+                    var parsed = std.json.parseFromSliceLeaky(T, arena, data, .{
                         .allocate = .alloc_if_needed,
-                    });
+                    }) catch |err| {
+                        log.err("ParseFailed: {}", .{err});
+                        return error.ParseFailed;
+                    };
+
+                    if (constants.os_supports_fd) {
+                        set_correct_fds(tag, &parsed, reader);
+                    }
 
                     return @unionInit(server_to_client.MessagePayload, @tagName(tag), parsed);
                 },
             }
         },
+    }
+}
+
+fn set_correct_fds(comptime tag: server_to_client.MessageTag, parsed: anytype, reader: *net.Stream.Reader) void {
+    comptime std.debug.assert(constants.os_supports_fd);
+
+    switch (tag) {
+        .buffer_created_cpu => {
+            switch (parsed.*) {
+                .success => |*s| {
+                    var iter = reader.controlIterator();
+                    const data = iter.next().?.data;
+                    std.debug.assert(@sizeOf(ptypes.CpuBufferHandle) == data.len);
+                    const ptr: *ptypes.CpuBufferHandle = @ptrCast(@alignCast(data.ptr));
+                    s.handle = ptr.*;
+                    reader.clearControl();
+                },
+
+                .failure => {},
+            }
+        },
+        .buffer_created_gbm_bo => {
+            switch (parsed.*) {
+                .success => |*s| {
+                    var iter = reader.controlIterator();
+                    const data = iter.next().?.data;
+                    std.debug.assert(@sizeOf(ptypes.BufferAndTimelineFds) == data.len);
+                    const ptr: *ptypes.BufferAndTimelineFds = @ptrCast(@alignCast(data.ptr));
+                    s.fds = ptr.*;
+                    reader.clearControl();
+                },
+                .failure => {},
+            }
+        },
+
+        // zig fmt: off
+        .registered, .viewport_create, .viewport_created, .viewport_resize, .viewport_close,
+        .viewport_display_state, .remote_viewport_created, .remote_viewport_display_state,
+        .remote_viewport_render_size, .remote_viewport_closed, .client_registered,
+        .client_disconnected, .buffer_released, .texture_created_d3d, .frame_render,
+        .keyboard_enter, .keyboard_leave, .keyboard_char, .keyboard_key,
+        .mouse_enter, .mouse_leave, .mouse_motion, .mouse_button, .mouse_scroll,
+        // zig fmt: on
+        => {},
     }
 }
 
@@ -167,22 +218,6 @@ fn send(c: *ServerConnection, io: Io, message: client_to_server.Message) !void {
     try writer.interface.flush();
 }
 
-pub fn receive_linux(io: Io, arena: std.mem.Allocator, stream: net.Stream) !server_to_client.MessagePayload {
-    if (os != .linux) @compileError("Linux only function");
-    var buf: [@sizeOf(server_to_client.MessageHeader)]u8 = undefined;
-    const peek = try server_to_client.operation_net_receive_peek(io, stream, .none, &buf);
-
-    if (peek.data.len == 0) {
-        return error.EndOfStream;
-    }
-
-    const header = try server_to_client.parse_message_header(peek.data);
-
-    const message_buf = try arena.alloc(u8, header.payload_len + @sizeOf(server_to_client.MessageHeader));
-    const message = try server_to_client.read_and_parse_data_json_linux(io, arena, stream, header, message_buf);
-    return message;
-}
-
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
@@ -196,3 +231,4 @@ const win32 = @import("win32");
 const win32_threading = win32.system.threading;
 const win_sock = win32.networking.win_sock;
 const Client = @import("Client.zig");
+const log = std.log.scoped(.Client);
