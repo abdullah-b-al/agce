@@ -172,36 +172,36 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
 
         return .{
             .bo = bo,
-            .acquire = @enumFromInt(acquire),
-            .release = @enumFromInt(release),
+            .acquire = @fromBackingInt(@intCast(acquire)),
+            .release = @fromBackingInt(@intCast(release)),
         };
     }
 
     pub fn deinit(bo: *GbmBo, gbm: Compositor.Gbm) void {
-        _ = c_linux.drmSyncobjDestroy(gbm.dri.handle, @intFromEnum(bo.acquire));
-        _ = c_linux.drmSyncobjDestroy(gbm.dri.handle, @intFromEnum(bo.release));
+        _ = c_linux.drmSyncobjDestroy(gbm.dri.handle, @backingInt(bo.acquire));
+        _ = c_linux.drmSyncobjDestroy(gbm.dri.handle, @backingInt(bo.release));
         c_linux.gbm_bo_destroy(bo.bo);
     }
 
     pub fn acquire_fd(bo: *const GbmBo, gbm: Compositor.Gbm) ptypes.DrmSyncobjAcquireTimelineFd {
-        return @enumFromInt(
+        return @fromBackingInt(@intCast(
             gbm.syncobj_fd_from_handle(
-                @intFromEnum(bo.acquire),
+                @backingInt(bo.acquire),
             ),
-        );
+        ));
     }
 
     pub fn release_fd(bo: *const GbmBo, gbm: Compositor.Gbm) ptypes.DrmSyncobjReleaseTimelineFd {
-        return @enumFromInt(
+        return @fromBackingInt(@intCast(
             gbm.syncobj_fd_from_handle(
-                @intFromEnum(bo.release),
+                @backingInt(bo.release),
             ),
-        );
+        ));
     }
 
     pub fn acquire_check_signaled(bo: *const GbmBo, gbm: Compositor.Gbm, point: ptypes.AcquireTimelinePoint) bool {
-        var handles = @intFromEnum(bo.acquire);
-        var points = @intFromEnum(point);
+        var handles = @backingInt(bo.acquire);
+        var points = @backingInt(point);
 
         const result = c_linux.drmSyncobjTimelineWait(
             gbm.dri.handle,
@@ -218,8 +218,8 @@ pub const GbmBo = if (!constants.os_has_gbm) void else struct {
     }
 
     pub fn signal_release_timeline(bo: *const GbmBo, gbm: Compositor.Gbm, point: ptypes.ReleaseTimelinePoint) void {
-        const handles = @intFromEnum(bo.release);
-        var points = @intFromEnum(point);
+        const handles = @backingInt(bo.release);
+        var points = @backingInt(point);
 
         const result = c_linux.drmSyncobjTimelineSignal(
             gbm.dri.handle,

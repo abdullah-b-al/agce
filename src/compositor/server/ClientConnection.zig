@@ -438,8 +438,8 @@ fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
     // TODO: Do not recreate the hande everytime
     const client_handle = win32.system.threading.OpenProcess(
         win32.system.threading.PROCESS_DUP_HANDLE,
-        @intFromEnum(std.os.windows.BOOL.FALSE),
-        @intFromEnum(client_pid),
+        @backingInt(std.os.windows.BOOL.FALSE),
+        @backingInt(client_pid),
     ) orelse return error.Win32OpenProcessFailed;
     defer _ = win32.foundation.CloseHandle(client_handle);
 
@@ -450,7 +450,7 @@ fn duplicate_handle(c: *ClientConnection, handle: *anyopaque) !*anyopaque {
         client_handle,
         &duplicated,
         0,
-        @intFromEnum(std.os.windows.BOOL.FALSE),
+        @backingInt(std.os.windows.BOOL.FALSE),
         win32.foundation.DUPLICATE_SAME_ACCESS,
     );
 

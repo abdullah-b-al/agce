@@ -2,35 +2,35 @@
     .name = .agce,
     .fingerprint = 0x9c4e3f6c80ca609f,
     .version = "0.0.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .wayland = .{
-            .url = "git+https://codeberg.org/ifreund/zig-wayland.git#a8e10e87e5ebb49ce518ac3d2198909c87ee615a",
-            .hash = "wayland-0.7.0-dev-lQa1kjT8AQDBstL61Gy3WCMtGwVaMN1p6w5wGfdDvP15",
+            .url = "git+https://github.com/ifreund/zig-wayland.git#94db7ba4e0a6b4780a16dbc74c7a2c88f1ebf502",
+            .hash = "wayland-0.8.0-dev-lQa1kuf8AQCeoam8G-XPyaIYvIOk3_wgsspwi4nT_L5q",
         },
         .win32 = .{
             .url = "git+https://github.com/marlersoft/zigwin32#ec98bb4d9eea532320a8551720a9e3ec6de64994",
             .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",
         },
         .zio = .{
-            .url = "https://github.com/lalinsky/zio/archive/refs/tags/v0.19.1.tar.gz",
-            .hash = "zio-0.19.1-xHbVVJXzKwAKLRAABWeDvQG9Dg1kf9FM3haWG0YqtScn",
+            .url = "https://github.com/lalinsky/zio/archive/refs/tags/v0.20.1.tar.gz",
+            .hash = "zio-0.20.1-xHbVVI0wLwDgE2dXWDCWH0UfCQYEhnBYHs1Td12oAGeR",
         },
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders.git#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
-            .hash = "known_folders-0.0.0-Fy-PJiDLAAB98m3uYUzatrTb2mO2fpvwx2zpSroEtfbO",
+            .url = "git+https://github.com/ziglibs/known-folders.git#c7a8a1974ccf8b5b022ee7f4b13fd734cdd89ae1",
+            .hash = "known_folders-0.0.0-Fy-PJiLLAABzqCdF6GWFmE36oCwioOh6Uxj4FF1Neanr",
         },
         .z2d = .{
-            .url = "git+https://github.com/vancluever/z2d.git#143ff5f45be885606b1694d0fcdad85a0c7dbb84",
-            .hash = "z2d-0.12.2-pre-j5P_HqdBEQCQcvxLJtL6TlM_VTYoPROntkls8YcYqTlt",
+            .url = "git+https://github.com/vancluever/z2d.git#8ba54182148ab249c2557ee079e6b25e9456976e",
+            .hash = "z2d-0.14.0-j5P_HoSjFAA6z_k-hWKzmFgxigDWdz7V_eaelzmoKYzN",
         },
         .sdl = .{
             .url = "git+https://github.com/castholm/SDL.git#88f45bb1621c4373dd3633280ca01446b3eb8b11",
             .hash = "sdl-0.6.1-dev+3.4.18-SDL--pegqAGHW2CzWPJalwfjV_8Q5qdmSjk3uPRTsFUE",
         },
         .uuid = .{
-            .url = "https://codeberg.org/r4gus/uuid-zig/archive/0.6.0.tar.gz",
-            .hash = "uuid-0.5.0-oOieIRSbAACFMLvr97X_oGqnr91fdthOrxzHaRI28bhJ",
+            .url = "git+https://github.com/r4gus/uuid-zig.git#e9baee2dfd30f6b73ceb501294ed406cd5ade40a",
+            .hash = "uuid-0.7.0-oOieIbyhAABqMPeIIudYPel_VBN4swvAsj4lOCV9NSbA",
         },
     },
     .paths = .{

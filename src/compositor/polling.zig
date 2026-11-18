@@ -119,15 +119,15 @@ fn poll_targets(target: []Pollable.Target, timeout: Io.Timeout) PollResult {
                 win32_win.MWMO_INPUTAVAILABLE,
             );
 
-            if (result == @intFromEnum(win32_foundation.WAIT_TIMEOUT))
+            if (result == @backingInt(win32_foundation.WAIT_TIMEOUT))
                 return .timeout
-            else if (result == @intFromEnum(win32_foundation.WAIT_FAILED)) {
+            else if (result == @backingInt(win32_foundation.WAIT_FAILED)) {
                 const err = win32_foundation.GetLastError();
                 log.err("Wait failed {}", .{err});
                 return .failed;
             }
 
-            const WAIT_OBJECT_0: u32 = @intFromEnum(win32_foundation.WAIT_OBJECT_0);
+            const WAIT_OBJECT_0: u32 = @backingInt(win32_foundation.WAIT_OBJECT_0);
             if (result == WAIT_OBJECT_0 + target.len)
                 return .win32_window_event;
 

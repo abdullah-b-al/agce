@@ -22,11 +22,11 @@ pub fn main(init: std.process.Init) !void {
 
     if (case_to_run) |case_string| {
         inline for (files) |file| {
-            inline for (@typeInfo(file).@"struct".decls) |decl| {
-                const function = @field(file, decl.name);
+            inline for (@typeInfo(file).@"struct".decl_names) |decl| {
+                const function = @field(file, decl);
                 if (@typeInfo(@TypeOf(function)) == .@"fn" and
-                    !std.mem.eql(u8, decl.name, "main") and
-                    std.mem.eql(u8, decl.name, case_string))
+                    !std.mem.eql(u8, decl, "main") and
+                    std.mem.eql(u8, decl, case_string))
                 {
                     try function(init);
                 }
@@ -109,10 +109,10 @@ fn show_tests(
         var y: i32 = line_size + padding;
 
         inline for (files) |file| {
-            inline for (@typeInfo(file).@"struct".decls) |decl| {
-                const function = @field(file, decl.name);
+            inline for (@typeInfo(file).@"struct".decl_names) |decl| {
+                const function = @field(file, decl);
                 if (@typeInfo(@TypeOf(function)) == .@"fn" and
-                    !std.mem.eql(u8, decl.name, "main"))
+                    !std.mem.eql(u8, decl, "main"))
                 {
                     context.setSourceToPixel(black);
 
@@ -126,7 +126,7 @@ fn show_tests(
                             _ = try std.process.spawn(
                                 io,
                                 .{
-                                    .argv = &.{ binary_path, decl.name },
+                                    .argv = &.{ binary_path, decl },
                                     .stdout = .inherit,
                                     .stderr = .inherit,
                                 },
@@ -134,7 +134,7 @@ fn show_tests(
                         }
                     }
 
-                    try context.showText(decl.name, 0, y);
+                    try context.showText(decl, 0, y);
                     y += line_size + padding;
                 }
             }

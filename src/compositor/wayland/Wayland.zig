@@ -613,7 +613,7 @@ pub fn buffer_create_cpu(
 ) !Buffer.Cpu {
     const stride = size.width * format.bytes_per_pixel();
     const byte_size = size.width * size.height * format.bytes_per_pixel();
-    const pool = try shm.createPool(@intFromEnum(fd), byte_size);
+    const pool = try shm.createPool(@backingInt(fd), byte_size);
     defer pool.destroy();
 
     const wl_format: cwl.Shm.Format = switch (format) {
@@ -703,7 +703,7 @@ pub fn buffer_create_and_register_gpu_async(
         .request_id = request_id,
         .wl = wl,
         .com = com,
-        .buffer_fd = @enumFromInt(buffer_fd),
+        .buffer_fd = @fromBackingInt(@intCast(buffer_fd)),
         .acquire_timeline = acquire_fd,
         .release_timeline = release_fd,
         .size = size,
@@ -817,7 +817,7 @@ pub const WlBufferID = enum(u32) {
     _,
 
     pub fn from_wl_buffer(wl_buffer: *cwl.Buffer) WlBufferID {
-        return @enumFromInt(wl_buffer.getId());
+        return @fromBackingInt(@intCast(wl_buffer.getId()));
     }
 };
 
@@ -825,7 +825,7 @@ pub const CallbackID = enum(u32) {
     _,
 
     pub fn from_callback(cb: *cwl.Callback) CallbackID {
-        return @enumFromInt(cb.getId());
+        return @fromBackingInt(@intCast(cb.getId()));
     }
 };
 

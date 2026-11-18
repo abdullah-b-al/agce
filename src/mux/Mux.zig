@@ -24,10 +24,10 @@ pub fn create(
     errdefer gpa.destroy(mux);
 
     const static_class = "agce-mux";
-    const class_of_window_utf8 = try gpa.dupeZ(u8, static_class);
+    const class_of_window_utf8 = try gpa.dupeSentinel(u8, static_class, 0);
     errdefer gpa.free(class_of_window_utf8);
 
-    const class_of_window_utf16 = try gpa.dupeZ(u16, std.unicode.utf8ToUtf16LeStringLiteral(static_class));
+    const class_of_window_utf16 = try gpa.dupeSentinel(u16, std.unicode.utf8ToUtf16LeStringLiteral(static_class), 0);
     errdefer gpa.free(class_of_window_utf16);
 
     const create_args: Compositor.CreateArgs = .{

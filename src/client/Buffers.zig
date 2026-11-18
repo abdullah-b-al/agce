@@ -79,7 +79,7 @@ pub fn get_d11(buffers: *Buffers) !*D11 {
 
     for (buffers.d11.values(), 0..) |b, i| {
         const hr = b.release.fence.release.SetEventOnCompletion(
-            @intFromEnum(b.release.point),
+            @backingInt(b.release.point),
             b.release.fence_event,
         );
 
@@ -93,11 +93,11 @@ pub fn get_d11(buffers: *Buffers) !*D11 {
     const wait_result = win32_threading.WaitForMultipleObjects(
         events.len,
         &events,
-        @intFromEnum(std.os.windows.BOOL.FALSE), // wait for at least one
+        @backingInt(std.os.windows.BOOL.FALSE), // wait for at least one
         win32_programming.INFINITE,
     );
-    const result = @intFromEnum(wait_result);
-    const WAIT_OBJECT_0 = @intFromEnum(win32_foundation.WAIT_OBJECT_0);
+    const result = @backingInt(wait_result);
+    const WAIT_OBJECT_0 = @backingInt(win32_foundation.WAIT_OBJECT_0);
 
     const buffer: *D11 =
         if (result >= WAIT_OBJECT_0 and
@@ -133,8 +133,8 @@ pub fn get_gl_linux(buffers: *Buffers, gbm: Client.Gbm, timeout_ns: i64) error{T
     var points: std.ArrayList(u64) = .initBuffer(&points_buffer);
 
     for (buffers.gl_linux.values()) |buffer| {
-        timelines.appendBounded(@intFromEnum(buffer.release.handle)) catch unreachable;
-        points.appendBounded(@intFromEnum(buffer.release.point)) catch unreachable;
+        timelines.appendBounded(@backingInt(buffer.release.handle)) catch unreachable;
+        points.appendBounded(@backingInt(buffer.release.point)) catch unreachable;
     }
 
     var index: u32 = undefined;
@@ -185,7 +185,7 @@ pub const GlLinux = if (!constants.os_has_gbm) UnreachableBuffer else struct {
         const gl_context = client.gl_context.?;
 
         var import_data: c_linux.gbm_import_fd_data = .{
-            .fd = @intFromEnum(created.fds.buffer),
+            .fd = @backingInt(created.fds.buffer),
             .width = @intCast(created.size.width),
             .height = @intCast(created.size.height),
             .stride = created.stride,
@@ -258,8 +258,8 @@ pub const GlLinux = if (!constants.os_has_gbm) UnreachableBuffer else struct {
 
         const transfer_result = c_linux.drmSyncobjTransfer(
             gbm.dri.handle,
-            @intFromEnum(buffer.acquire.handle),
-            @intFromEnum(buffer.acquire.point),
+            @backingInt(buffer.acquire.handle),
+            @backingInt(buffer.acquire.point),
             tmp_syncobj,
             0,
             0,
@@ -273,12 +273,12 @@ pub const GlLinux = if (!constants.os_has_gbm) UnreachableBuffer else struct {
 
         pub fn from_fd(gbm: Client.Gbm, fd: ptypes.DrmSyncobjAcquireTimelineFd) AcquireTimeline {
             var handle: u32 = undefined;
-            const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @intFromEnum(fd), &handle);
+            const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @backingInt(fd), &handle);
             std.debug.assert(result == 0);
 
             return .{
-                .point = @enumFromInt(0),
-                .handle = @enumFromInt(handle),
+                .point = @fromBackingInt(@intCast(0)),
+                .handle = @fromBackingInt(@intCast(handle)),
             };
         }
     };
@@ -289,12 +289,12 @@ pub const GlLinux = if (!constants.os_has_gbm) UnreachableBuffer else struct {
 
         pub fn from_fd(gbm: Client.Gbm, fd: ptypes.DrmSyncobjReleaseTimelineFd) ReleaseTimeline {
             var handle: u32 = undefined;
-            const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @intFromEnum(fd), &handle);
+            const result = c_linux.drmSyncobjFDToHandle(gbm.dri.handle, @backingInt(fd), &handle);
             std.debug.assert(result == 0);
 
             return .{
-                .point = @enumFromInt(0),
-                .handle = @enumFromInt(handle),
+                .point = @fromBackingInt(@intCast(0)),
+                .handle = @fromBackingInt(@intCast(handle)),
             };
         }
     };
@@ -376,8 +376,8 @@ pub const D11 = if (!constants.os_has_d3d) UnreachableBuffer else struct {
 
         const release_event = win32_threading.CreateEventA(
             null,
-            @intFromEnum(std.os.windows.BOOL.TRUE), // manual reset
-            @intFromEnum(std.os.windows.BOOL.FALSE),
+            @backingInt(std.os.windows.BOOL.TRUE), // manual reset
+            @backingInt(std.os.windows.BOOL.FALSE),
             null,
         ) orelse return error.FailedToCreateFenceEvent;
         errdefer _ = win32_foundation.CloseHandle(release_event);
@@ -385,7 +385,7 @@ pub const D11 = if (!constants.os_has_d3d) UnreachableBuffer else struct {
         const texture = blk: {
             var texture: *d3d11.ID3D11Texture2D = undefined;
             const open_result = device.device1.OpenSharedResource1(
-                @ptrFromInt(@intFromEnum(created.texture_handle)),
+                @ptrFromInt(@backingInt(created.texture_handle)),
                 d3d11.IID_ID3D11Texture2D,
                 @ptrCast(&texture),
             );
@@ -424,12 +424,12 @@ pub const D11 = if (!constants.os_has_d3d) UnreachableBuffer else struct {
             .rtv = rtv,
 
             .acquire = .{
-                .point = @enumFromInt(0),
+                .point = @fromBackingInt(@intCast(0)),
                 .fence = acquire_fence,
             },
 
             .release = .{
-                .point = @enumFromInt(0),
+                .point = @fromBackingInt(@intCast(0)),
                 .fence = release_fence,
                 .fence_event = release_event,
             },
@@ -483,7 +483,7 @@ const CpuLinux = struct {
             @intCast(s),
             .{ .READ = true, .WRITE = true },
             .{ .TYPE = .SHARED },
-            @intFromEnum(created.handle),
+            @backingInt(created.handle),
             0,
         );
 
@@ -514,7 +514,7 @@ const CpuWindows = struct {
         const size_bytes = created.size.width * created.size.height * created.format.bytes_per_pixel();
 
         const buffer = win32.system.memory.MapViewOfFile(
-            @ptrFromInt(@intFromEnum(created.handle)),
+            @ptrFromInt(@backingInt(created.handle)),
             win32.system.memory.FILE_MAP_ALL_ACCESS,
             0,
             0,

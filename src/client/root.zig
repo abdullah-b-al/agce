@@ -32,7 +32,7 @@ pub fn init(
 
     const pid: ?ptypes.PID = switch (os) {
         .linux => null,
-        .windows => @enumFromInt(win32.system.threading.GetCurrentProcessId()),
+        .windows => @fromBackingInt(@intCast(win32.system.threading.GetCurrentProcessId())),
         else => comptime unreachable,
     };
 
@@ -434,7 +434,7 @@ pub const ViewportHandle = opaque {
         // TODO: is this really the right time to signal ?
         const hr = d11_device.context4.Signal(
             buffer.acquire.fence.acquire,
-            @intFromEnum(buffer.acquire.point),
+            @backingInt(buffer.acquire.point),
         );
         std.debug.assert(hr == win32_foundation.S_OK);
 

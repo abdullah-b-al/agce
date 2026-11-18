@@ -60,7 +60,7 @@ fn create_undefined_backend(args: CreateArgs) !*Compositor {
     const server = try Server.create(args.io, args.environ_map, args.gpa, args.socket_owner);
     errdefer server.destroy();
 
-    const class_window_dupe = try args.gpa.dupeZ(u8, args.class);
+    const class_window_dupe = try args.gpa.dupeSentinel(u8, args.class, 0);
     errdefer args.gpa.free(class_window_dupe);
     const class_viewport = try std.fmt.allocPrintSentinel(args.gpa, "{s}-viewport", .{class_window_dupe}, 0);
     errdefer args.gpa.free(class_viewport);
@@ -435,10 +435,10 @@ fn buffer_create_cpu_inner(
         .wayland => |tag| {
             const wl = tag.compositor(com);
             const fd: ptypes.CpuBufferHandle =
-                @enumFromInt(try std.posix.memfd_createZ("agce-buffer", 0));
+                @fromBackingInt(@intCast(try std.posix.memfd_createZ("agce-buffer", 0)));
             errdefer fd.close();
 
-            const ftruncate = std.posix.system.ftruncate(@intFromEnum(fd), @intCast(size_bytes));
+            const ftruncate = std.posix.system.ftruncate(@backingInt(fd), @intCast(size_bytes));
             if (std.posix.errno(ftruncate) != .SUCCESS) {
                 log.err("ftruncate failed {}", .{std.posix.errno(ftruncate)});
                 return error.FtruncateFailed;
@@ -1580,18 +1580,18 @@ pub const BufferKey = struct {
 };
 
 pub const WindowID = enum(u32) {
-    pub const first: @This() = @enumFromInt(1);
+    pub const first: @This() = @fromBackingInt(@intCast(1));
 
     _,
 
     pub fn increment(this: *@This()) @This() {
-        const int = @intFromEnum(this.*);
-        this.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(this.*);
+        this.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("WindowID({})", .{@intFromEnum(self)});
+        try writer.print("WindowID({})", .{@backingInt(self)});
     }
 };
 

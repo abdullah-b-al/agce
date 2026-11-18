@@ -255,7 +255,7 @@ fn poll_process_message(client: *Client, message: server_to_client.MessagePayloa
 
             // TODO: Maybe these shouldn't trust the server and should error instead of asserting
             std.debug.assert(
-                @intFromEnum(e.viewport_id) >= @intFromEnum(ViewportID.first_for_server),
+                @backingInt(e.viewport_id) >= @backingInt(ViewportID.first_for_server),
             );
             client.viewports_from_server.putAssumeCapacityNoClobber(
                 e.viewport_id,

@@ -100,7 +100,7 @@ fn viewport_proc(
 
         win32_win.WM_KEYDOWN => {
             const truncate: @typeInfo(kbm.VIRTUAL_KEY).@"enum".tag_type = @truncate(wparam);
-            const key: kbm.VIRTUAL_KEY = @enumFromInt(truncate);
+            const key: kbm.VIRTUAL_KEY = @fromBackingInt(@intCast(truncate));
 
             const pkey = to_protocol_key(key) orelse return 0;
             const flags: KeyDownLParam = .from_lparam(msg, lparam);
@@ -119,7 +119,7 @@ fn viewport_proc(
 
         win32_win.WM_KEYUP => {
             const truncate: @typeInfo(kbm.VIRTUAL_KEY).@"enum".tag_type = @truncate(wparam);
-            const key: kbm.VIRTUAL_KEY = @enumFromInt(truncate);
+            const key: kbm.VIRTUAL_KEY = @fromBackingInt(@intCast(truncate));
             const pkey = to_protocol_key(key) orelse return 0;
             com.backend_events.append(com.gpa, .{
                 .keyboard_key = .{
@@ -281,7 +281,7 @@ fn present_queue_check_ready_to_copy(_: *Win32, com: *Compositor, comptime backe
             .cpu => item.state.advance(),
             .d11 => |*b| {
                 const sync = item.sync.?;
-                if (b.acquire.acquire.GetCompletedValue() >= @intFromEnum(sync.acquire_point)) {
+                if (b.acquire.acquire.GetCompletedValue() >= @backingInt(sync.acquire_point)) {
                     item.state.advance();
                 }
             },
@@ -385,7 +385,7 @@ fn present_queue_present_if_ready(win32: *Win32, com: *Compositor, comptime back
                 // TODO: Is this really the right time to signal release ?
                 _ = win32.d11_context.device_context4.Signal(
                     b.release.release,
-                    @intFromEnum(sync.release_point),
+                    @backingInt(sync.release_point),
                 );
             },
         }
@@ -669,7 +669,7 @@ fn get_modifires() pinput.Modifiers {
         down: u1,
 
         pub fn get(key: kbm.VIRTUAL_KEY) @This() {
-            return @bitCast(kbm.GetKeyState(@intFromEnum(key)));
+            return @bitCast(kbm.GetKeyState(@backingInt(key)));
         }
     };
 

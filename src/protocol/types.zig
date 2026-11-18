@@ -6,11 +6,11 @@ pub const ClientUUID = enum(uuid.Uuid) {
     _,
 
     pub fn new(io: std.Io) ClientUUID {
-        return @enumFromInt(uuid.v4.new(io));
+        return @fromBackingInt(@intCast(uuid.v4.fromIo(io)));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ClientUUID({s})", .{uuid.urn.serialize(@intFromEnum(self))});
+        try writer.print("ClientUUID({s})", .{uuid.urn.serialize(@backingInt(self))});
     }
 
     pub fn jsonParse(_: std.mem.Allocator, source: *std.json.Scanner, _: std.json.ParseOptions) std.json.ParseError(std.json.Scanner)!ClientUUID {
@@ -34,11 +34,11 @@ pub const ClientUUID = enum(uuid.Uuid) {
     }
 
     pub fn serialize(id: ClientUUID) uuid.urn.Urn {
-        return uuid.urn.serialize(@intFromEnum(id));
+        return uuid.urn.serialize(@backingInt(id));
     }
 
     pub fn deserialize(slice: []const u8) !ClientUUID {
-        return @enumFromInt(try uuid.urn.deserialize(slice));
+        return @fromBackingInt(@intCast(try uuid.urn.deserialize(slice)));
     }
 };
 
@@ -46,21 +46,21 @@ pub const PID = enum(u32) {
     _,
 
     pub fn increment(id: *PID) PID {
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(id.*);
+        id.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 };
 
 pub const RequestID = enum(u32) {
-    pub const first: @This() = @enumFromInt(1);
+    pub const first: @This() = @fromBackingInt(@intCast(1));
 
     _,
 
     pub fn increment(id: *RequestID) RequestID {
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(id.*);
+        id.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 };
 
@@ -73,57 +73,57 @@ pub const ViewportID = enum(u32) {
     pub fn increment_for_client(id: *ViewportID) ViewportID {
         std.debug.assert(!id.is_server_id());
 
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(id.*);
+        id.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 
     pub fn increment_for_server(id: *ViewportID) ViewportID {
         std.debug.assert(id.is_server_id());
 
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(id.*);
+        id.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 
     pub fn is_server_id(id: ViewportID) bool {
-        return @intFromEnum(id) >= @intFromEnum(ViewportID.first_for_server);
+        return @backingInt(id) >= @backingInt(ViewportID.first_for_server);
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ViewportID({})", .{@intFromEnum(self)});
+        try writer.print("ViewportID({})", .{@backingInt(self)});
     }
 };
 
 pub const RemoteViewportID = enum(u32) {
-    pub const first: @This() = @enumFromInt(1);
+    pub const first: @This() = @fromBackingInt(@intCast(1));
 
     _,
 
     pub fn increment(id: *RemoteViewportID) RemoteViewportID {
-        const int = @intFromEnum(id.*);
-        id.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(id.*);
+        id.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("RemoteViewportID({})", .{@intFromEnum(self)});
+        try writer.print("RemoteViewportID({})", .{@backingInt(self)});
     }
 };
 
 pub const BufferID = enum(u32) {
-    pub const first: @This() = @enumFromInt(1);
+    pub const first: @This() = @fromBackingInt(@intCast(1));
 
     _,
 
     pub fn increment(this: *@This()) @This() {
-        const int = @intFromEnum(this.*);
-        this.* = @enumFromInt(int + 1);
-        return @enumFromInt(int);
+        const int = @backingInt(this.*);
+        this.* = @fromBackingInt(@intCast(int + 1));
+        return @fromBackingInt(@intCast(int));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("BufferID({})", .{@intFromEnum(self)});
+        try writer.print("BufferID({})", .{@backingInt(self)});
     }
 };
 
@@ -142,12 +142,12 @@ pub const AcquireTimelinePoint = enum(u64) {
     _,
 
     pub fn advance(p: *AcquireTimelinePoint) void {
-        const int = @intFromEnum(p.*);
-        p.* = @enumFromInt(int + 1);
+        const int = @backingInt(p.*);
+        p.* = @fromBackingInt(@intCast(int + 1));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("AcquireTimelinePoint({})", .{@intFromEnum(self)});
+        try writer.print("AcquireTimelinePoint({})", .{@backingInt(self)});
     }
 };
 
@@ -155,12 +155,12 @@ pub const ReleaseTimelinePoint = enum(u64) {
     _,
 
     pub fn advance(p: *ReleaseTimelinePoint) void {
-        const int = @intFromEnum(p.*);
-        p.* = @enumFromInt(int + 1);
+        const int = @backingInt(p.*);
+        p.* = @fromBackingInt(@intCast(int + 1));
     }
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("ReleaseTimelinePoint({})", .{@intFromEnum(self)});
+        try writer.print("ReleaseTimelinePoint({})", .{@backingInt(self)});
     }
 };
 
@@ -311,7 +311,7 @@ pub fn Fd(comptime Opaque: type) type {
         _,
 
         pub fn close(fd: @This()) void {
-            _ = std.os.linux.close(@intFromEnum(fd));
+            _ = std.os.linux.close(@backingInt(fd));
         }
 
         comptime {
@@ -338,13 +338,13 @@ pub fn WindowsHandle(comptime Opaque: type) type {
         pub fn to_HANDLE(h: @This()) std.os.windows.HANDLE {
             if (os != .windows) @compileError("Windows only");
 
-            return @ptrFromInt(@intFromEnum(h));
+            return @ptrFromInt(@backingInt(h));
         }
 
         pub fn from_HANDLE(h: std.os.windows.HANDLE) @This() {
             if (os != .windows) @compileError("Windows only");
 
-            return @enumFromInt(@intFromPtr(h));
+            return @fromBackingInt(@intCast(@intFromPtr(h)));
         }
 
         pub fn close(h: @This()) void {

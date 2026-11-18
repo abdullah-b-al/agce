@@ -39,16 +39,16 @@ pub fn init(
 
     const format: ptypes.BufferFormat = .argb8888;
     const size = width * height * format.bytes_per_pixel();
-    const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-wayland", 0));
+    const fd: ptypes.CpuBufferHandle = @fromBackingInt(@intCast(try std.posix.memfd_create("agce-wayland", 0)));
     defer fd.close();
 
-    if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), size)) != .SUCCESS) return error.FtruncateFailed;
+    if (std.posix.errno(std.posix.system.ftruncate(@backingInt(fd), size)) != .SUCCESS) return error.FtruncateFailed;
     const pixels = try std.posix.mmap(
         null,
         @intCast(size),
         .{ .READ = true, .WRITE = true },
         .{ .TYPE = .SHARED },
-        @intFromEnum(fd),
+        @backingInt(fd),
         0,
     );
 
@@ -105,17 +105,17 @@ pub fn resize(win: *WaylandWindow, mux: *Mux, requested_size: ptypes.Size) !bool
     }
 
     const new_size = width * height * win.buffer.format.bytes_per_pixel();
-    const fd: ptypes.CpuBufferHandle = @enumFromInt(try std.posix.memfd_create("agce-mux-wayland", 0));
+    const fd: ptypes.CpuBufferHandle = @fromBackingInt(@intCast(try std.posix.memfd_create("agce-mux-wayland", 0)));
     defer fd.close();
 
-    if (std.posix.errno(std.posix.system.ftruncate(@intFromEnum(fd), new_size)) != .SUCCESS) return error.FtruncateFailed;
+    if (std.posix.errno(std.posix.system.ftruncate(@backingInt(fd), new_size)) != .SUCCESS) return error.FtruncateFailed;
 
     const pixels = try std.posix.mmap(
         null,
         @intCast(new_size),
         .{ .READ = true, .WRITE = true },
         .{ .TYPE = .SHARED },
-        @intFromEnum(fd),
+        @backingInt(fd),
         0,
     );
     errdefer std.posix.munmap(pixels);
@@ -275,7 +275,7 @@ pub const CpuBuffer = struct {
     ) !CpuBuffer {
         const stride = size.width * format.bytes_per_pixel();
         const byte_size = size.width * size.height * format.bytes_per_pixel();
-        const pool = try shm.createPool(@intFromEnum(fd), byte_size);
+        const pool = try shm.createPool(@backingInt(fd), byte_size);
         defer pool.destroy();
 
         const wl_format: cwl.Shm.Format = switch (format) {
